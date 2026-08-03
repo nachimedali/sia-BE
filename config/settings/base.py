@@ -51,6 +51,10 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "common",
     "accounts",
+    "workspaces",
+    "categories",
+    "billing",
+    "onboarding",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -184,6 +188,9 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_RESULT_EXTENDED = True
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# Public URL of the frontend. Email links point here, not at the API.
+SITE_URL = env("SITE_URL", default="http://localhost:3000")
 
 # -----------------------------------------------------------------------------
 # Encryption — design.md §11. Built now even though v1 stores no platform

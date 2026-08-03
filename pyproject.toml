@@ -38,6 +38,13 @@ known-first-party = [
 # (PermissionDenied, NotFound, Throttled) do not use one, and these names are
 # the vocabulary design.md §7.1 uses for the status codes they map to.
 "common/exceptions.py" = ["N818"]
+# RUF012 asks for ClassVar on DRF's declarative class attributes
+# (permission_classes, throttle_classes, ...). django-stubs types them as
+# instance variables, so mypy rejects ClassVar and the two tools cannot both be
+# satisfied. mypy wins; none of these lists is ever mutated.
+"**/views.py" = ["RUF012"]
+"**/admin.py" = ["RUF012"]
+"common/health.py" = ["RUF012"]
 
 [tool.ruff.lint.flake8-bugbear]
 # DRF and Django idiomatically use callables in argument defaults.
@@ -90,7 +97,7 @@ django_settings_module = "config.settings.test"
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
-testpaths = ["tests", "common", "accounts", "config"]
+testpaths = ["tests", "common", "accounts", "workspaces", "categories", "billing", "onboarding", "config"]
 addopts = [
     "--strict-markers",
     "--strict-config",

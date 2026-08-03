@@ -49,6 +49,9 @@ app.conf.task_routes = {
     "scheduling.tasks.publish*": {"queue": "publish_q"},
     "content.tasks.publish*": {"queue": "publish_q"},
     "reminders.tasks.*": {"queue": "remind_q"},
+    # Transactional auth mail shares the reminder pool: same profile —
+    # high priority, retried, and someone is waiting on it.
+    "accounts.tasks.*": {"queue": "remind_q"},
     "scheduling.tasks.remind*": {"queue": "remind_q"},
     "content.tasks.media*": {"queue": "media_q"},
     "ai.tasks.video*": {"queue": "media_q"},
