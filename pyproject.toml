@@ -1,0 +1,98 @@
+[project]
+name = "occs-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+# =============================================================================
+# ruff — lint + format (implementation.md §3.3)
+# =============================================================================
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["migrations", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "DJ",   # flake8-django
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "accounts", "analytics", "ai", "billing", "categories", "channels",
+    "common", "config", "content", "onboarding", "products", "reminders",
+    "scheduling", "tools", "trends", "workspaces",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# DRF and Django idiomatically use callables in argument defaults.
+extend-immutable-calls = ["django.utils.translation.gettext_lazy"]
+
+# =============================================================================
+# mypy (implementation.md §3.3)
+# =============================================================================
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["mypy_django_plugin.main"]
+exclude = ['/migrations/', '\.venv/']
+
+[[tool.mypy.overrides]]
+# Generated schema/migration modules are not worth annotating.
+module = ["*.migrations.*"]
+ignore_errors = true
+
+[tool.django-stubs]
+django_settings_module = "config.settings"
+
+# =============================================================================
+# pytest (implementation.md §3.3, §5)
+# =============================================================================
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    # Schedules, TTLs and cadence are tested with time-machine/freezegun, never
+    # sleeps (implementation.md §5), so a slow test means a real problem.
+    "--durations=10",
+]
+markers = [
+    # Real provider adapters run only when credentials are present; the
+    # deterministic fakes cover everything else (design.md §9, A8).
+    "integration: hits a real external provider; skipped without credentials",
+]
+# Coverage floors are applied in CI, where the whole suite runs at once:
+#   pytest --cov --cov-fail-under=85
+# with billing/ ai/ scheduling/ reminders/ held to 95%.
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    ".venv/*",
+    "manage.py",
+    "config/asgi.py",
+    "config/wsgi.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
