@@ -49,10 +49,8 @@ def check_redis() -> None:
 
 
 class HealthView(APIView):
-    # RUF012 is suppressed below: DRF declares both as instance variables,
-    # so annotating them ClassVar is rejected by mypy. Neither is mutated.
-    authentication_classes: list[Any] = []  # noqa: RUF012
-    permission_classes: list[Any] = [AllowAny]  # noqa: RUF012
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
 
     @extend_schema(
         operation_id="health",

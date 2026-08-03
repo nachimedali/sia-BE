@@ -9,6 +9,7 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
 INSTALLED_APPS = [*INSTALLED_APPS]  # noqa: F405
 
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "OCCS <no-reply@localhost>"
 
 # Convenience only: never let a dev machine's browsability leak into prod.
 REST_FRAMEWORK = {

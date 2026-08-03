@@ -1,0 +1,8 @@
+Confirm your email
+
+Welcome to OCCS. Confirm {{ email }} to finish setting up your workspace:
+
+{{ verify_url }}
+
+This link expires in 3 days and can be used once. If you didn't create an
+account, you can ignore this email.

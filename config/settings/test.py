@@ -29,6 +29,10 @@ CACHES = {
 }
 RATELIMIT_REDIS_URL = _test_redis_url
 
+# Mail goes to the in-process fake (design.md §9, A8) so no test depends on an
+# SMTP server being reachable.
+USE_FAKE_MAIL = True
+
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
