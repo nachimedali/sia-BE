@@ -1,0 +1,15 @@
+-r requirements.txt
+
+pytest
+pytest-django
+pytest-cov
+pytest-xdist
+
+factory-boy
+freezegun
+respx
+time-machine
+
+ruff
+mypy
+django-stubs
