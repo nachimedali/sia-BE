@@ -18,3 +18,4 @@ django-storages[s3]
 
 structlog
 sentry-sdk
+django-cors-headers

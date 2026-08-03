@@ -33,6 +33,12 @@ known-first-party = [
     "scheduling", "tools", "trends", "workspaces",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# N818 wants an "Error" suffix on exception names. DRF's own exceptions
+# (PermissionDenied, NotFound, Throttled) do not use one, and these names are
+# the vocabulary design.md §7.1 uses for the status codes they map to.
+"common/exceptions.py" = ["N818"]
+
 [tool.ruff.lint.flake8-bugbear]
 # DRF and Django idiomatically use callables in argument defaults.
 extend-immutable-calls = ["django.utils.translation.gettext_lazy"]
@@ -44,24 +50,47 @@ extend-immutable-calls = ["django.utils.translation.gettext_lazy"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-plugins = ["mypy_django_plugin.main"]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
 exclude = ['/migrations/', '\.venv/']
+
+[[tool.mypy.overrides]]
+# Third-party packages that ship no stubs and no py.typed marker.
+module = ["celery.*", "kombu.*", "environ.*", "time_machine.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Celery's task decorators are untyped upstream, which would otherwise make
+# every task body untyped too. The bodies themselves stay annotated.
+module = ["*.tasks", "config.celery"]
+disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 # Generated schema/migration modules are not worth annotating.
 module = ["*.migrations.*"]
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+# Application code stays strict. Test modules do not: annotating every fixture
+# and assertion helper adds noise without catching anything the assertions
+# themselves would miss.
+module = ["*.tests.*", "tests.*", "*.conftest"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+warn_return_any = false
+disable_error_code = ["misc"]
+
 [tool.django-stubs]
-django_settings_module = "config.settings"
+django_settings_module = "config.settings.test"
 
 # =============================================================================
 # pytest (implementation.md §3.3, §5)
 # =============================================================================
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "config.settings"
+DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
-testpaths = ["tests"]
+testpaths = ["tests", "common", "accounts", "config"]
 addopts = [
     "--strict-markers",
     "--strict-config",

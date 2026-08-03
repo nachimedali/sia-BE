@@ -13,3 +13,5 @@ time-machine
 ruff
 mypy
 django-stubs
+djangorestframework-stubs
+pyyaml
