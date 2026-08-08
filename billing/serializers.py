@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 
 from rest_framework import serializers
 
-from billing.models import CreditLedger, Plan, VideoLedger
+from billing.models import CreditLedger, Pack, Plan, VideoLedger
 
 
 class PlanSerializer(serializers.ModelSerializer[Plan]):
@@ -80,6 +80,29 @@ class VideoLedgerSerializer(serializers.ModelSerializer[VideoLedger]):
             "created_at",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = fields
+
+
+class PackSerializer(serializers.ModelSerializer[Pack]):
+    """Same rule as `PlanSerializer` (I8): the size and the price the user is
+    shown are the row that will be charged and credited."""
+
+    class Meta:
+        model = Pack
+        fields = (
+            "code",
+            "display_name",
+            "tagline",
+            "kind",
+            "units",
+            "price_cents",
+            "currency",
+            "sort_order",
+        )
+        read_only_fields: ClassVar[tuple[str, ...]] = fields
+
+
+class PurchaseRequestSerializer(serializers.Serializer[Any]):
+    pack_code = serializers.SlugField()
 
 
 class CheckoutRequestSerializer(serializers.Serializer[Any]):

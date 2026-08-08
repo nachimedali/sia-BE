@@ -134,6 +134,75 @@ QUOTA_FIELDS = frozenset(
 )
 
 
+class PackKind(models.TextChoices):
+    CREDITS = "CREDITS", "Credits"
+    VIDEO = "VIDEO", "Video units"
+
+
+class Pack(models.Model):
+    """A one-off top-up: credits, or prepaid video units (§4.3, D16).
+
+    A row for the same reason a `Plan` is one (I8): the size of a pack and what
+    it costs are commercial numbers an operator retunes, and a literal in code
+    would keep working while quietly ignoring the edit.
+
+    Packs are bought outright rather than billed in arrears — there is no path
+    to a surprise invoice, and the balance simply stops.
+    """
+
+    code = models.SlugField(unique=True, help_text="Immutable after creation, as for Plan (D13).")
+    display_name = models.CharField(max_length=64)
+    tagline = models.CharField(max_length=200, blank=True)
+
+    kind = models.CharField(max_length=8, choices=PackKind.choices)
+    units = models.IntegerField(help_text="Credits, or video units, granted on payment.")
+    price_cents = models.IntegerField()
+    currency = models.CharField(max_length=3, default="USD")
+
+    stripe_price_id = models.CharField(max_length=64, blank=True)
+
+    is_public = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["sort_order", "id"]
+
+    def __str__(self) -> str:
+        return self.display_name
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.full_clean(exclude=None, validate_unique=False)
+        super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        super().clean()
+        errors: dict[str, str] = {}
+
+        # UNLIMITED has no meaning for something you buy a fixed amount of, and
+        # a pack of -1 units would credit a negative balance.
+        if self.units < 1:
+            errors["units"] = "A pack must grant at least one unit."
+        if self.price_cents < 0:
+            errors["price_cents"] = "A pack cannot have a negative price."
+
+        if self.pk:
+            previous = Pack.objects.filter(pk=self.pk).values_list("code", flat=True).first()
+            if previous is not None and previous != self.code:
+                errors["code"] = "Pack.code is immutable after creation (D13)."
+
+        if errors:
+            raise ValidationError(errors)
+
+    @property
+    def unit_price_cents(self) -> int:
+        """What one unit in this pack cost. Recorded on the ledger row so a
+        revenue question does not have to reconstruct it from the pack."""
+        return self.price_cents // self.units
+
+
 class SubscriptionStatus(models.TextChoices):
     """Mirrors Stripe's subscription statuses — the webhook is the source of
     truth (implementation.md Phase 3.5), so inventing our own vocabulary would
@@ -297,7 +366,11 @@ class VideoLedger(LedgerEntry):
 
     reason = models.CharField(max_length=16, choices=VideoReason.choices)
     unit_cost_cents = models.IntegerField(
-        default=0, help_text="COGS at the time of the entry; overage is billed at cost + $2 (D16)."
+        default=0,
+        help_text=(
+            "Per-unit money for this entry: COGS on a generation, price paid on a "
+            "purchase. Overage is sold at cost + $2 (D16)."
+        ),
     )
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

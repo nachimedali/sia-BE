@@ -1,0 +1,32 @@
+# --- secrets & env ---
+# Never commit .env: it carries SECRET_KEY, FIELD_ENCRYPTION_KEY and the
+# provider credentials. `.env.example` is the checked-in template.
+.env
+.env.*
+!.env.example
+
+# --- python / django ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.sqlite3
+/media/
+/staticfiles/
+# The file-based mail outbox the E2E suite reads verification links from (A31).
+/.e2e-mail/
+
+# --- tooling caches & reports ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+/test-results/
+
+# --- os / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/

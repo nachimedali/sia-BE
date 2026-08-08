@@ -39,6 +39,24 @@ class BillingGateway(Protocol):
         cancel_url: str,
     ) -> CheckoutSession: ...
 
+    def create_payment_session(
+        self,
+        *,
+        workspace_id: int,
+        customer_id: str | None,
+        customer_email: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+    ) -> CheckoutSession:
+        """A one-off payment rather than a subscription — the prepaid packs.
+
+        `metadata` travels to the webhook, which is where the units are actually
+        credited: nothing is granted because a browser reached the success URL.
+        """
+        ...
+
     def create_portal_session(self, *, customer_id: str, return_url: str) -> PortalSession: ...
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:

@@ -190,6 +190,16 @@ def grant_credits(
 
 
 @transaction.atomic
+def purchase_credits(workspace: Workspace, amount: int, *, note: str) -> CreditLedger:
+    """Adds bought credits. Never expires them first — a purchase is not a
+    grant, so `grant_credits`' no-rollover reset does not apply to it."""
+    if amount < 1:
+        raise ValueError("A purchase must add at least one credit.")
+    _lock_workspace(workspace)
+    return _append(CreditLedger, workspace, delta=amount, reason=CreditReason.PURCHASE, note=note)
+
+
+@transaction.atomic
 def adjust_credits(workspace: Workspace, delta: int, *, actor: Any, note: str) -> CreditLedger:
     """An operator correction. Attributed on purpose — an unattributed
     adjustment is indistinguishable from a bug in the debit path."""
@@ -289,6 +299,29 @@ def grant_video_units(
 
     rows.append(_append(VideoLedger, workspace, delta=amount, reason=reason, note=note))
     return rows
+
+
+@transaction.atomic
+def purchase_video_units(
+    workspace: Workspace, amount: int, *, unit_cost_cents: int = 0, note: str
+) -> VideoLedger:
+    """Adds prepaid video units (§4.3, D16).
+
+    Written with `reason=PURCHASE` on purpose: the monthly reset only takes back
+    what `MONTHLY_GRANT` put there, so bought units survive the rollover — which
+    is the whole difference between an allowance and a pack.
+    """
+    if amount < 1:
+        raise ValueError("A purchase must add at least one video unit.")
+    _lock_workspace(workspace)
+    return _append(
+        VideoLedger,
+        workspace,
+        delta=amount,
+        reason=VideoReason.PURCHASE,
+        unit_cost_cents=unit_cost_cents,
+        note=note,
+    )
 
 
 def _granted_video_units(workspace: Workspace) -> int:

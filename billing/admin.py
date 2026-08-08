@@ -14,7 +14,7 @@ from django import forms
 from django.contrib import admin, messages
 from django.http import HttpRequest
 
-from billing.models import CreditLedger, Plan, StripeEvent, Subscription, VideoLedger
+from billing.models import CreditLedger, Pack, Plan, StripeEvent, Subscription, VideoLedger
 from billing.services import ledger
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,28 @@ class PlanAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
                 },
             )
         super().save_model(request, obj, form, change)
+
+
+@admin.register(Pack)
+class PackAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Pack size and price are editable here for the same reason plan quotas
+    are (I8). Withdraw a pack by unsetting `is_public`: deleting it would leave
+    the ledger rows it produced pointing at nothing an operator can name."""
+
+    list_display = (
+        "code",
+        "display_name",
+        "kind",
+        "units",
+        "price_cents",
+        "is_public",
+        "sort_order",
+    )
+    list_filter = ("kind", "is_public")
+    search_fields = ("code", "display_name")
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> tuple[str, ...]:
+        return ("code",) if obj else ()
 
 
 @admin.register(Subscription)
