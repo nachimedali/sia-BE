@@ -68,10 +68,3 @@ class SessionSerializer(serializers.Serializer[Any]):
     access = serializers.CharField(read_only=True)
     refresh = serializers.CharField(read_only=True)
     user = UserSerializer(read_only=True)
-
-    def to_representation(self, instance: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "access": instance["access"],
-            "refresh": instance["refresh"],
-            "user": UserSerializer(instance["user"]).data,
-        }

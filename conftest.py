@@ -15,6 +15,8 @@ import pytest
 from common.mail import _fake_sender
 from common.redis import get_redis
 
+PASSWORD = "correct-horse-battery-staple"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_redis() -> Iterator[None]:
@@ -53,3 +55,20 @@ def category(db: None) -> Any:
     from categories.models import Category
 
     return Category.objects.create(name="Homeware & Ceramics", slug="homeware-ceramics")
+
+
+@pytest.fixture
+def user(db: None) -> Any:
+    from django.contrib.auth import get_user_model
+
+    return get_user_model().objects.create_user(email="jordan@example.com", password=PASSWORD)
+
+
+@pytest.fixture
+def auth_client(user: Any) -> Any:
+    """An APIClient carrying `user`'s identity, bypassing the login endpoint."""
+    from rest_framework.test import APIClient
+
+    api = APIClient()
+    api.force_authenticate(user)
+    return api

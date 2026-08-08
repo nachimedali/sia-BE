@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -188,6 +189,37 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_RESULT_EXTENDED = True
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# Periodic billing bookkeeping. Declared here rather than only in the database
+# scheduler so a fresh environment gets the schedule without a manual step;
+# django_celery_beat syncs these into editable rows on first run.
+CELERY_BEAT_SCHEDULE = {
+    # Daily rather than monthly: each workspace's period is anchored on its own
+    # signup date, so grants are due on every day of the month, not just the 1st.
+    "billing-grant-monthly-allowances": {
+        "task": "billing.tasks.grant_monthly_allowances",
+        "schedule": crontab(hour=2, minute=15),
+    },
+    "billing-expire-trials": {
+        "task": "billing.tasks.expire_trials",
+        "schedule": crontab(hour=2, minute=45),
+    },
+    # Runs after the two writers above, so drift they introduce is caught the
+    # same night rather than a day later.
+    "billing-reconcile-ledgers": {
+        "task": "billing.tasks.reconcile_ledgers",
+        "schedule": crontab(hour=3, minute=30),
+    },
+}
+
+# -----------------------------------------------------------------------------
+# Stripe — design.md §9, D13. The webhook is the source of truth for
+# subscription state, so the signing secret is not optional in production.
+# -----------------------------------------------------------------------------
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+USE_FAKE_BILLING = env.bool("USE_FAKE_BILLING", default=not STRIPE_SECRET_KEY)
 
 # Public URL of the frontend. Email links point here, not at the API.
 SITE_URL = env("SITE_URL", default="http://localhost:3000")

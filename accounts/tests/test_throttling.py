@@ -8,24 +8,16 @@ from __future__ import annotations
 
 import pytest
 import time_machine
-from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
 from common.throttling import LoginThrottle, RegisterThrottle
+from conftest import PASSWORD
 
 pytestmark = pytest.mark.django_db
-
-User = get_user_model()
-PASSWORD = "correct-horse-battery-staple"
 
 LOGIN_URL = "/api/v1/auth/login/"
 REGISTER_URL = "/api/v1/auth/register/"
 RESET_URL = "/api/v1/auth/password/reset/"
-
-
-@pytest.fixture
-def user():
-    return User.objects.create_user(email="jordan@example.com", password=PASSWORD)
 
 
 def attempt_login(client: APIClient, password: str = "wrong", ip: str = "203.0.113.9"):

@@ -11,7 +11,6 @@ from typing import ClassVar
 
 from django.conf import settings
 from django.db import models
-from django.utils import timezone
 from django.utils.text import slugify
 
 
@@ -91,10 +90,6 @@ class Workspace(models.Model):
 
     def __str__(self) -> str:
         return self.name
-
-    @property
-    def is_on_trial(self) -> bool:
-        return self.trial_ends_at is not None and self.trial_ends_at > timezone.now()
 
     @staticmethod
     def unique_slug(name: str) -> str:

@@ -6,13 +6,13 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from conftest import PASSWORD
 from workspaces.models import Membership, Role, Workspace
 
 pytestmark = pytest.mark.django_db
 
 User = get_user_model()
 REGISTER_URL = "/api/v1/auth/register/"
-PASSWORD = "correct-horse-battery-staple"
 
 
 def register(client: APIClient | None = None, **overrides):

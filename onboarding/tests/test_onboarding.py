@@ -17,10 +17,8 @@ COMPLETE_URL = "/api/v1/onboarding/complete/"
 
 
 @pytest.fixture
-def account(plans):
-    user = User.objects.create_user(email="jordan@example.com", password="x")
-    workspace = provision_workspace(user, name="Acme Studio")
-    return user, workspace
+def account(plans, user):
+    return user, provision_workspace(user, name="Acme Studio")
 
 
 @pytest.fixture

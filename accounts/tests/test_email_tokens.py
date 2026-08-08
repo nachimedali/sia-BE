@@ -6,26 +6,18 @@ import datetime as dt
 
 import pytest
 import time_machine
-from django.contrib.auth import get_user_model
 from django.db import connection
 from rest_framework.test import APIClient
 
 from accounts.models import EmailToken, EmailTokenPurpose
+from conftest import PASSWORD
 
 pytestmark = pytest.mark.django_db
-
-User = get_user_model()
-PASSWORD = "correct-horse-battery-staple"
 
 VERIFY_URL = "/api/v1/auth/verify-email/"
 RESEND_URL = "/api/v1/auth/resend-verify/"
 RESET_URL = "/api/v1/auth/password/reset/"
 RESET_CONFIRM_URL = "/api/v1/auth/password/reset/confirm/"
-
-
-@pytest.fixture
-def user():
-    return User.objects.create_user(email="jordan@example.com", password=PASSWORD)
 
 
 def test_email_token_single_use_and_expiring(user) -> None:
