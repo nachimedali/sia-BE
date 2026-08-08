@@ -22,6 +22,7 @@ class FakeBillingGateway:
 
     def __init__(self) -> None:
         self.checkout_calls: list[dict[str, Any]] = []
+        self.payment_calls: list[dict[str, Any]] = []
         self.portal_calls: list[dict[str, Any]] = []
 
     def create_checkout_session(
@@ -47,6 +48,29 @@ class FakeBillingGateway:
         session_id = f"cs_fake_{workspace_id}_{len(self.checkout_calls)}"
         return CheckoutSession(id=session_id, url=f"https://checkout.test/{session_id}")
 
+    def create_payment_session(
+        self,
+        *,
+        workspace_id: int,
+        customer_id: str | None,
+        customer_email: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+    ) -> CheckoutSession:
+        self.payment_calls.append(
+            {
+                "workspace_id": workspace_id,
+                "customer_id": customer_id,
+                "customer_email": customer_email,
+                "price_id": price_id,
+                "metadata": metadata,
+            }
+        )
+        session_id = f"cs_fake_pay_{workspace_id}_{len(self.payment_calls)}"
+        return CheckoutSession(id=session_id, url=f"https://checkout.test/{session_id}")
+
     def create_portal_session(self, *, customer_id: str, return_url: str) -> PortalSession:
         self.portal_calls.append({"customer_id": customer_id, "return_url": return_url})
         return PortalSession(url=f"https://portal.test/{customer_id}")
@@ -63,6 +87,7 @@ class FakeBillingGateway:
 
     def clear(self) -> None:
         self.checkout_calls.clear()
+        self.payment_calls.clear()
         self.portal_calls.clear()
 
 

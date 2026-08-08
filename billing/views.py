@@ -19,17 +19,19 @@ from rest_framework.views import APIView
 
 from billing.gateways.base import WebhookVerificationError
 from billing.gateways.stripe import get_billing_gateway
-from billing.models import CreditLedger, Plan, VideoLedger
+from billing.models import CreditLedger, Pack, Plan, VideoLedger
 from billing.serializers import (
     CheckoutRequestSerializer,
     CheckoutResponseSerializer,
     CreditLedgerSerializer,
     EntitlementsSerializer,
+    PackSerializer,
     PlanSerializer,
     PortalResponseSerializer,
+    PurchaseRequestSerializer,
     VideoLedgerSerializer,
 )
-from billing.services import subscriptions, webhooks
+from billing.services import purchases, subscriptions, webhooks
 from billing.services.entitlements import entitlements_for
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
@@ -115,6 +117,49 @@ class SubscribeView(APIView):
             cycle=payload.validated_data["cycle"],
             success_url=f"{settings.SITE_URL}/app/billing?checkout=success",
             cancel_url=f"{settings.SITE_URL}/app/billing?checkout=cancelled",
+        )
+        return Response({"checkout_url": session.url})
+
+
+class PackListView(ListAPIView):  # type: ignore[type-arg]
+    """The prepaid packs on offer (§4.3).
+
+    Authenticated, unlike the plans: packs are a top-up for someone already
+    using the product, and they are never part of the public pricing pitch.
+    """
+
+    serializer_class = PackSerializer
+    queryset = Pack.objects.filter(is_public=True)
+    pagination_class = None
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(summary="List purchasable packs", responses={200: PackSerializer(many=True)})
+    def get(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return super().get(request, *args, **kwargs)
+
+
+class PurchaseView(APIView):
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        request=PurchaseRequestSerializer,
+        responses={200: CheckoutResponseSerializer},
+        summary="Buy a credit or video pack",
+        description=(
+            "Returns a hosted Stripe Checkout URL for a one-off payment. The "
+            "units are credited by the webhook once the payment clears, never "
+            "on the redirect back."
+        ),
+    )
+    def post(self, request: Request) -> Response:
+        payload = PurchaseRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        session = purchases.start_purchase(
+            active_workspace(request),
+            pack_code=payload.validated_data["pack_code"],
+            success_url=f"{settings.SITE_URL}/app/billing?purchase=success",
+            cancel_url=f"{settings.SITE_URL}/app/billing?purchase=cancelled",
         )
         return Response({"checkout_url": session.url})
 

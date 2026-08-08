@@ -29,7 +29,7 @@ from billing.models import (
     Subscription,
     SubscriptionStatus,
 )
-from billing.services import ledger, subscriptions
+from billing.services import ledger, purchases, subscriptions
 from billing.services.subscriptions import STRIPE_STATUS
 from workspaces.models import Workspace
 
@@ -110,11 +110,15 @@ def _dispatch(event_type: str, event: dict[str, Any]) -> None:
 # Handlers
 # -----------------------------------------------------------------------------
 def _on_checkout_completed(session: dict[str, Any]) -> None:
-    """Attaches the Stripe customer to the workspace.
+    """Attaches the Stripe customer, and delivers a pack if this was one.
 
-    The subscription itself arrives on `customer.subscription.created`, which
-    may land before or after this — Stripe does not order deliveries — so this
-    handler deliberately does nothing but record the customer id.
+    For a subscription this handler deliberately does nothing else: the
+    subscription arrives on `customer.subscription.created`, which may land
+    before or after this — Stripe does not order deliveries.
+
+    A `mode=payment` session is a prepaid pack (§4.3), and this is the only
+    place its units are credited. Nothing is granted because a browser reached
+    the success URL.
     """
     workspace = _workspace_from(session.get("client_reference_id"))
     if workspace is None:
@@ -124,6 +128,27 @@ def _on_checkout_completed(session: dict[str, Any]) -> None:
     if customer_id and workspace.stripe_customer_id != customer_id:
         workspace.stripe_customer_id = customer_id
         workspace.save(update_fields=["stripe_customer_id", "updated_at"])
+
+    if session.get("mode") != "payment":
+        return
+
+    if session.get("payment_status") != "paid":
+        # Delayed payment methods complete the session before the money clears.
+        # We only enable cards, so this is a configuration surprise worth seeing.
+        logger.warning(
+            "checkout completed without payment; nothing credited",
+            extra={"session": session.get("id"), "payment_status": session.get("payment_status")},
+        )
+        return
+
+    pack_code = (session.get("metadata") or {}).get("pack_code")
+    if not pack_code:
+        logger.error(
+            "paid checkout session carries no pack_code", extra={"session": session.get("id")}
+        )
+        return
+
+    purchases.fulfil_purchase(workspace, pack_code=str(pack_code))
 
 
 def _on_subscription_change(subscription: dict[str, Any], *, deleted: bool) -> None:

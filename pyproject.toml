@@ -62,7 +62,7 @@ exclude = ['/migrations/', '\.venv/']
 
 [[tool.mypy.overrides]]
 # Third-party packages that ship no stubs and no py.typed marker.
-module = ["celery.*", "kombu.*", "environ.*", "time_machine.*"]
+module = ["celery.*", "kombu.*", "environ.*", "time_machine.*", "django_celery_beat.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

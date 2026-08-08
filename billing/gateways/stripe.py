@@ -67,6 +67,37 @@ class StripeBillingGateway:
         session = stripe.checkout.Session.create(**params)
         return CheckoutSession(id=session["id"], url=session["url"])
 
+    def create_payment_session(
+        self,
+        *,
+        workspace_id: int,
+        customer_id: str | None,
+        customer_email: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+    ) -> CheckoutSession:
+        stripe = _stripe()
+        params: dict[str, Any] = {
+            "mode": "payment",
+            # Fixed quantity: the pack is the unit of sale, and an adjustable
+            # quantity would make the webhook's fulfilment depend on a number the
+            # browser could have changed.
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "client_reference_id": str(workspace_id),
+            "metadata": {**metadata, "workspace_id": str(workspace_id)},
+        }
+        if customer_id:
+            params["customer"] = customer_id
+        else:
+            params["customer_email"] = customer_email
+
+        session = stripe.checkout.Session.create(**params)
+        return CheckoutSession(id=session["id"], url=session["url"])
+
     def create_portal_session(self, *, customer_id: str, return_url: str) -> PortalSession:
         stripe = _stripe()
         session = stripe.billing_portal.Session.create(customer=customer_id, return_url=return_url)
