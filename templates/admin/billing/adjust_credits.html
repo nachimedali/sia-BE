@@ -1,0 +1,23 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  <h1>Adjust credits</h1>
+  <p>
+    This writes a <code>MANUAL_ADJUST</code> row attributed to you. It does not
+    edit any existing row — the ledger is append-only (I4).
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+
+    {% for entry in queryset %}
+      <input type="hidden" name="_selected_action" value="{{ entry.pk }}">
+    {% endfor %}
+    <input type="hidden" name="action" value="adjust_credits">
+
+    <p>Applies to {{ workspace_ids|length }} workspace(s).</p>
+    <input type="submit" name="apply" value="Apply adjustment" class="default">
+    <a href="{% url 'admin:billing_creditledger_changelist' %}" class="button cancel-link">Cancel</a>
+  </form>
+{% endblock %}

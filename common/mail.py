@@ -10,7 +10,6 @@ No mail is ever sent inline in a request/response cycle (implementation.md §4.3
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -32,8 +31,7 @@ class MailSender(Protocol):
 
 
 class DjangoMailSender:
-    """Renders `<template>.txt` (and `.html` when present) and sends via the
-    configured Django email backend."""
+    """Renders `<template>.txt` and sends via the configured Django backend."""
 
     def send(self, email: Email) -> None:
         context = {**email.context, "site_url": getattr(settings, "SITE_URL", "")}
@@ -45,12 +43,6 @@ class DjangoMailSender:
             from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@localhost"),
             to=[email.to],
         )
-        # An HTML variant is optional; text/plain is always sent.
-        with contextlib.suppress(Exception):
-            message.attach_alternative(
-                render_to_string(f"email/{email.template}.html", context), "text/html"
-            )
-
         message.send(fail_silently=False)
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from rest_framework.test import APIClient
 
@@ -11,20 +10,12 @@ from categories.models import Category
 
 pytestmark = pytest.mark.django_db
 
-User = get_user_model()
 CATEGORIES_URL = "/api/v1/categories/"
 
 
 @pytest.fixture
 def seeded():
     call_command("seed_categories", verbosity=0)
-
-
-@pytest.fixture
-def client():
-    api = APIClient()
-    api.force_authenticate(User.objects.create_user(email="a@example.com", password="x"))
-    return api
 
 
 def test_seed_covers_the_wizard_choices(seeded) -> None:
@@ -77,27 +68,27 @@ def test_all_slugs_are_unique(seeded) -> None:
     assert len(slugs) == len(set(slugs))
 
 
-def test_list_endpoint_returns_the_whole_tree_unpaginated(seeded, client) -> None:
-    body = client.get(CATEGORIES_URL).json()
+def test_list_endpoint_returns_the_whole_tree_unpaginated(seeded, auth_client) -> None:
+    body = auth_client.get(CATEGORIES_URL).json()
     # The wizard renders the tree in one go; paging it would be a worse API.
     assert isinstance(body, list)
     assert len(body) == Category.objects.count()
 
 
-def test_roots_only_filter(seeded, client) -> None:
-    body = client.get(f"{CATEGORIES_URL}?roots_only=true").json()
+def test_roots_only_filter(seeded, auth_client) -> None:
+    body = auth_client.get(f"{CATEGORIES_URL}?roots_only=true").json()
     assert all(row["parent"] is None for row in body)
 
 
-def test_children_filter(seeded, client) -> None:
+def test_children_filter(seeded, auth_client) -> None:
     beauty = Category.objects.get(name="Beauty & Wellness")
-    body = client.get(f"{CATEGORIES_URL}?parent={beauty.id}").json()
+    body = auth_client.get(f"{CATEGORIES_URL}?parent={beauty.id}").json()
     assert {row["name"] for row in body} >= {"Skincare", "Haircare"}
 
 
-def test_inactive_categories_are_hidden(seeded, client) -> None:
+def test_inactive_categories_are_hidden(seeded, auth_client) -> None:
     Category.objects.filter(name="Skincare").update(is_active=False)
-    names = {row["name"] for row in client.get(CATEGORIES_URL).json()}
+    names = {row["name"] for row in auth_client.get(CATEGORIES_URL).json()}
     assert "Skincare" not in names
 
 

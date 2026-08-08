@@ -1,4 +1,8 @@
-"""Onboarding endpoints (design.md §7)."""
+"""Onboarding endpoints (design.md §7).
+
+Views parse and serialise; `onboarding.services.wizard` decides
+(implementation.md §4.1).
+"""
 
 from __future__ import annotations
 
@@ -10,43 +14,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import User
-from common.exceptions import OCCSError
-from onboarding.serializers import (
-    REQUIRED_TO_COMPLETE,
-    OnboardingSerializer,
-)
-from workspaces.models import Workspace
-
-
-def authenticated_user(request: Request) -> User:
-    """Narrows request.user for the type checker.
-
-    Every caller sits behind IsAuthenticated, so AnonymousUser is unreachable —
-    but DRF types the attribute as the union and mypy is right to insist.
-    """
-    user = request.user
-    if not isinstance(user, User):
-        raise OCCSError("Authentication required.", code="not_authenticated")
-    return user
-
-
-def active_workspace(request: Request) -> Workspace:
-    """The workspace this request acts on.
-
-    Phase 2 has exactly one workspace per user, so the owned workspace is
-    unambiguous. Multi-workspace switching arrives with invitations in a later
-    phase; this is the single place that will need to change.
-    """
-    workspace = (
-        Workspace.objects.filter(memberships__user=authenticated_user(request))
-        .select_related("plan", "category")
-        .order_by("created_at")
-        .first()
-    )
-    if workspace is None:
-        raise OCCSError("This account has no workspace.", code="no_workspace")
-    return workspace
+from common.workspaces import active_workspace, authenticated_user
+from onboarding.serializers import OnboardingSerializer
+from onboarding.services.wizard import complete_onboarding
 
 
 class OnboardingView(APIView):
@@ -94,28 +64,5 @@ class OnboardingCompleteView(APIView):
         ),
     )
     def post(self, request: Request) -> Response:
-        workspace = active_workspace(request)
-
-        if not authenticated_user(request).is_email_verified:
-            raise OCCSError(
-                "Confirm your email address before finishing setup.",
-                code="email_not_verified",
-            )
-
-        missing = [
-            field
-            for field in REQUIRED_TO_COMPLETE
-            if not OnboardingSerializer._filled(workspace, field)
-        ]
-        if missing:
-            raise OCCSError(
-                "Some required details are still missing.",
-                code="onboarding_incomplete",
-                detail={"missing": missing},
-            )
-
-        if not workspace.onboarding_complete:
-            workspace.onboarding_complete = True
-            workspace.save(update_fields=["onboarding_complete", "updated_at"])
-
+        workspace = complete_onboarding(active_workspace(request), authenticated_user(request))
         return Response(OnboardingSerializer(workspace, context={"request": request}).data)

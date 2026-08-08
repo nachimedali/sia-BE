@@ -36,15 +36,18 @@ def client_ip(request: Request) -> str:
 class IPTokenBucketThrottle(BaseThrottle):
     """Base class: subclasses set `scope`, `capacity` and `refill_per_second`.
 
-    Both are overridable per scope via the `AUTH_THROTTLES` setting, so an
+    Declared without defaults on purpose — a subclass that forgets one fails
+    loudly rather than silently sharing a bucket with everything else.
+
+    All three are overridable per scope via the `AUTH_THROTTLES` setting, so an
     operator can loosen or tighten a limit without a deploy — and so the E2E
     suite, which drives many registrations from one address, is not fighting
     the limiter it is not there to test.
     """
 
-    scope: str = "default"
-    capacity: int = 30
-    refill_per_second: float = 0.5
+    scope: str
+    capacity: int
+    refill_per_second: float
 
     def _override(self, key: str, fallback: float) -> float:
         overrides = getattr(settings, "AUTH_THROTTLES", {})

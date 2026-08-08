@@ -58,6 +58,9 @@ app.conf.task_routes = {
     "ai.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
+    # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody
+    # is waiting on them, and they must never delay a scheduled publish.
+    "billing.tasks.*": {"queue": "metrics_q"},
 }
 
 app.autodiscover_tasks()

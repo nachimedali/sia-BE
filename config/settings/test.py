@@ -29,9 +29,10 @@ CACHES = {
 }
 RATELIMIT_REDIS_URL = _test_redis_url
 
-# Mail goes to the in-process fake (design.md §9, A8) so no test depends on an
-# SMTP server being reachable.
+# Mail and Stripe go to the in-process fakes (design.md §9, A8) so no test
+# depends on an external service being reachable or on test-mode keys existing.
 USE_FAKE_MAIL = True
+USE_FAKE_BILLING = True
 
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True

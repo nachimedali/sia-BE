@@ -17,6 +17,15 @@ from accounts.views import (
     ThrottledTokenObtainPairView,
     VerifyEmailView,
 )
+from billing.views import (
+    BillingPortalView,
+    CreditLedgerView,
+    EntitlementsView,
+    PlanListView,
+    StripeWebhookView,
+    SubscribeView,
+    VideoLedgerView,
+)
 from categories.views import CategoryListView
 from common.health import HealthView
 from onboarding.views import OnboardingCompleteView, OnboardingView
@@ -46,6 +55,14 @@ urlpatterns = [
     # --- onboarding ---
     path("onboarding/", OnboardingView.as_view(), name="onboarding"),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
+    # --- billing ---
+    path("billing/plans/", PlanListView.as_view(), name="billing-plans"),
+    path("billing/entitlements/", EntitlementsView.as_view(), name="billing-entitlements"),
+    path("billing/ledger/", CreditLedgerView.as_view(), name="billing-ledger"),
+    path("billing/video-ledger/", VideoLedgerView.as_view(), name="billing-video-ledger"),
+    path("billing/subscribe/", SubscribeView.as_view(), name="billing-subscribe"),
+    path("billing/portal/", BillingPortalView.as_view(), name="billing-portal"),
+    path("billing/webhook/stripe/", StripeWebhookView.as_view(), name="billing-webhook-stripe"),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
 ]

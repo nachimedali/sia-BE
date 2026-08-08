@@ -46,11 +46,6 @@ class EmailTokenPurpose(models.TextChoices):
     INVITE = "INVITE", "Workspace invitation"
 
 
-class EmailTokenQuerySet(models.QuerySet["EmailToken"]):
-    def usable(self) -> EmailTokenQuerySet:
-        return self.filter(used_at__isnull=True, expires_at__gt=timezone.now())
-
-
 class EmailToken(models.Model):
     """Single-use, expiring tokens delivered by email (design.md §6.1).
 
@@ -76,8 +71,6 @@ class EmailToken(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
-    objects = EmailTokenQuerySet.as_manager()
-
     class Meta:
         ordering: ClassVar[list[str]] = ["-created_at"]
         indexes: ClassVar[list[models.Index]] = [
@@ -92,12 +85,7 @@ class EmailToken(models.Model):
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @classmethod
-    def issue(
-        cls,
-        user: Any,
-        purpose: str,
-        ttl: dt.timedelta | None = None,
-    ) -> tuple[EmailToken, str]:
+    def issue(cls, user: Any, purpose: str) -> tuple[EmailToken, str]:
         """Mints a token, invalidating any outstanding one for the same purpose.
 
         Superseding matters: without it, a "resend verification" leaves the
@@ -113,7 +101,7 @@ class EmailToken(models.Model):
             user=user,
             purpose=purpose,
             token_hash=cls.hash_token(raw),
-            expires_at=timezone.now() + (ttl or cls.DEFAULT_TTL[purpose]),
+            expires_at=timezone.now() + cls.DEFAULT_TTL[purpose],
         )
         return token, raw
 

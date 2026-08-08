@@ -30,10 +30,6 @@ class Category(models.Model):
     def __str__(self) -> str:
         return self.name
 
-    @property
-    def is_root(self) -> bool:
-        return self.parent_id is None
-
     def ancestors(self) -> list[Category]:
         """Root-first path to this category, excluding itself."""
         chain: list[Category] = []

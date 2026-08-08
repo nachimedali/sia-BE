@@ -3,44 +3,28 @@
 Six steps, resumable: each step PATCHes the fields it owns, and the resource
 reports which step the user should be on. Resumability is the point — a wizard
 that loses progress on a refresh is a wizard people abandon.
+
+What counts as done lives in `onboarding.services.wizard`; this renders it.
 """
 
 from __future__ import annotations
 
+import functools
+import zoneinfo
 from typing import Any, ClassVar
 
 from rest_framework import serializers
 
 from categories.models import Category
+from onboarding.services import wizard
 from workspaces.models import BrandVoice, BusinessType, Workspace
 
-# design.md §10.4. What makes a step *done* — deliberately only the one thing
-# each step exists to collect, not every field on it.
-#
-# Requiring the optional fields too (website, target audience) made pressing
-# Continue advance the user while `current_step` stayed put, so resuming sent
-# them backwards. Steps 1 and 5 are satisfied by email verification and plan
-# assignment rather than by a workspace field, and step 6 by the flag itself.
-STEP_COMPLETION_FIELDS: dict[int, tuple[str, ...]] = {
-    1: (),
-    # Not `name`: registration always derives a placeholder from the email, so
-    # keying on it would mark the Brand step done before the user saw it.
-    # `description` is the one thing here only the user can supply — and it is
-    # what grounds every later generation.
-    2: ("description",),
-    3: ("category",),
-    # timezone always carries a default, so it cannot signal engagement;
-    # choosing where to post can only have come from the user.
-    4: ("platforms",),
-    5: (),
-    6: (),
-}
 
-# What `complete/` insists on. Deliberately short: D14 says nobody hits a
-# paywall or a wall of required fields before seeing the product.
-REQUIRED_TO_COMPLETE: tuple[str, ...] = ("name", "category", "timezone")
-
-TOTAL_STEPS = 6
+@functools.lru_cache(maxsize=1)
+def _known_timezones() -> frozenset[str]:
+    """`available_timezones()` walks TZPATH and rebuilds its set on every call —
+    ~6ms, which is not something to spend per save on the wizard's own path."""
+    return frozenset(zoneinfo.available_timezones())
 
 
 class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
@@ -91,39 +75,15 @@ class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
         return obj.plan.code if obj.plan is not None else None
 
     def get_completed_steps(self, obj: Workspace) -> list[int]:
-        done: list[int] = []
-        if self._user().is_email_verified:
-            done.append(1)
-        for step in (2, 3, 4):
-            fields = STEP_COMPLETION_FIELDS[step]
-            if fields and all(self._filled(obj, name) for name in fields):
-                done.append(step)
-        if obj.plan_id:
-            done.append(5)
-        if obj.onboarding_complete:
-            done.append(6)
-        return done
+        return wizard.completed_steps(obj, self._user())
 
     def get_current_step(self, obj: Workspace) -> int:
         """The first step not yet satisfied — this is what makes it resumable."""
-        completed = set(self.get_completed_steps(obj))
-        for step in range(1, TOTAL_STEPS + 1):
-            if step not in completed:
-                return step
-        return TOTAL_STEPS
-
-    @staticmethod
-    def _filled(obj: Workspace, field: str) -> bool:
-        value = getattr(obj, f"{field}_id", None) if field == "category" else getattr(obj, field)
-        if isinstance(value, (list, dict)):
-            return len(value) > 0
-        return value not in (None, "")
+        return wizard.current_step(obj, self._user())
 
     # --- validation ------------------------------------------------------
     def validate_timezone(self, value: str) -> str:
-        import zoneinfo
-
-        if value and value not in zoneinfo.available_timezones():
+        if value and value not in _known_timezones():
             raise serializers.ValidationError(f"'{value}' is not a recognised IANA timezone.")
         return value
 
@@ -150,7 +110,3 @@ class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
         if not value.strip():
             raise serializers.ValidationError("Business name cannot be blank.")
         return value.strip()
-
-
-class OnboardingCompleteSerializer(serializers.Serializer[Any]):
-    """No input. `complete/` validates the workspace it already has."""
