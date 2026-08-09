@@ -58,6 +58,35 @@ def test_feature_edit_visible_immediately(workspace, plans) -> None:
     assert entitlements_for(workspace).feature("approval_workflow") is True
 
 
+def test_entitlement_cache_busted_on_plan_write(workspace, plans) -> None:
+    """The named Phase 6 cache-tier test (design.md §11). Same guarantee
+    `test_quota_edit_visible_in_entitlements_immediately` proves behaviourally,
+    asserted here directly against Redis: a plan write mints a new key (A35)
+    rather than mutating or deleting the old one, which is what makes the old
+    snapshot unreachable without a fan-out over every workspace on the plan."""
+    from common.redis import get_redis
+
+    _on_plan(workspace, plans, "pro")
+    entitlements_for(workspace).quota("max_products")  # populates the cache
+
+    client = get_redis()
+    keys_before = client.keys("entitlements:*")
+    assert len(keys_before) == 1
+
+    plan = plans["pro"]
+    plan.max_products = 7
+    plan.save()
+    workspace.refresh_from_db()
+
+    assert entitlements_for(workspace).quota("max_products") == 7
+
+    keys_after = client.keys("entitlements:*")
+    assert len(keys_after) == 2
+    # The old key is still sitting in Redis until its TTL lapses — orphaned,
+    # not overwritten — but nothing will ever read it again.
+    assert set(keys_before) < set(keys_after)
+
+
 def test_snapshot_is_cached_between_resolvers(workspace, plans) -> None:
     """Two resolvers in one request-cycle must not both hit Postgres."""
     _on_plan(workspace, plans, "pro")

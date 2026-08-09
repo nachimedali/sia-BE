@@ -325,11 +325,28 @@ class CreditLedger(LedgerEntry):
         related_name="credit_adjustments",
         help_text="Set for MANUAL_ADJUST so an operator action is attributable.",
     )
-    # The row this one compensates. `generation` (design.md §6.8) arrives with
-    # the model in Phase 7; until then this is what ties a refund to its debit,
-    # which is what `test_refund_nets_to_zero` asserts on.
+    # The row this one compensates — answers "which row does this reverse",
+    # distinct from `generation` below (A32).
     reverses = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="reversals"
+    )
+    # design.md §6.8, lands now that Phase 7's model exists (A32). Answers
+    # "which generations did this cost", which `reverses` cannot: one
+    # generation can produce several ledger rows (a debit, then a refund).
+    #
+    # RESTRICT, not SET_NULL (design.md §15.8 A75): the append-only trigger
+    # (A34) forbids UPDATE on this table unconditionally, so SET_NULL's
+    # attempt to null this column out on a Generation delete would not
+    # degrade gracefully — it would crash with a raw Postgres exception
+    # instead of Django's own `RestrictedError`. RESTRICT still permits a
+    # Generation to be deleted together with the ledger rows that reference
+    # it, in the same collected delete, unlike PROTECT.
+    generation = models.ForeignKey(
+        "ai.Generation",
+        null=True,
+        blank=True,
+        on_delete=models.RESTRICT,
+        related_name="credit_ledger_entries",
     )
 
     class Meta(LedgerEntry.Meta):
@@ -375,6 +392,14 @@ class VideoLedger(LedgerEntry):
     )
     reverses = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="reversals"
+    )
+    # RESTRICT — see the identical note on `CreditLedger.generation` (A75).
+    generation = models.ForeignKey(
+        "ai.Generation",
+        null=True,
+        blank=True,
+        on_delete=models.RESTRICT,
+        related_name="video_ledger_entries",
     )
 
     class Meta(LedgerEntry.Meta):

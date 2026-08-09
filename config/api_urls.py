@@ -23,6 +23,7 @@ from accounts.views import (
     ThrottledTokenObtainPairView,
     VerifyEmailView,
 )
+from ai.views import GenerateView, GenerationViewSet, VoiceProfileViewSet
 from billing.views import (
     BillingPortalView,
     CreditLedgerView,
@@ -44,6 +45,8 @@ router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
 router.register("media", MediaAssetViewSet, basename="media-asset")
 router.register("products", ProductViewSet, basename="product")
+router.register("ai/generations", GenerationViewSet, basename="generation")
+router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
@@ -82,6 +85,8 @@ urlpatterns = [
     path("billing/webhook/stripe/", StripeWebhookView.as_view(), name="billing-webhook-stripe"),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
+    # --- ai ---
+    path("ai/generate/", GenerateView.as_view(), name="ai-generate"),
     # --- content ---
     path("", include(router.urls)),
 ]
