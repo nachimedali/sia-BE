@@ -7,10 +7,13 @@ test fail somewhere unrelated.
 
 from __future__ import annotations
 
+import io
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 
 from common.mail import _fake_sender
 from common.redis import get_redis
@@ -81,3 +84,15 @@ def workspace(plans: dict[str, Any], user: Any) -> Any:
     from workspaces.services.provisioning import provision_workspace
 
     return provision_workspace(user, name="Acme Studio")
+
+
+@pytest.fixture
+def make_png_upload() -> Any:
+    """Moved here from content/tests/conftest.py once products needed it too."""
+
+    def _make(name: str = "photo.png", size: tuple[int, int] = (600, 600)) -> SimpleUploadedFile:
+        buffer = io.BytesIO()
+        Image.new("RGB", size, color=(120, 130, 200)).save(buffer, format="PNG")
+        return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
+
+    return _make

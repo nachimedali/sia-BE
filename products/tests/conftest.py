@@ -1,10 +1,17 @@
-"""Fixtures shared by the content suite."""
+"""Fixtures shared by the products suite."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
+
+
+@pytest.fixture
+def product(workspace: Any) -> Any:
+    from products.services.products import create_product
+
+    return create_product(workspace=workspace, name="Aurora Ceramic Mug")
 
 
 @pytest.fixture

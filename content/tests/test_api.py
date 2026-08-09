@@ -11,6 +11,7 @@ from config.api_urls import router
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post
+from products.services.products import create_product
 from workspaces.services.provisioning import provision_workspace
 
 pytestmark = pytest.mark.django_db
@@ -213,7 +214,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 2
+    assert len(router.registry) == 3
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -229,8 +230,9 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
     # ViewSet must 404 on it, not merely decline it.
     post = create_post(workspace=other_workspace, author=other_owner, master_body="not yours")
     media_asset = ingest_media(workspace=other_workspace, upload=make_png_upload())
+    product = create_product(workspace=other_workspace, name="Not yours either")
 
-    objects_by_basename = {"post": post, "media-asset": media_asset}
+    objects_by_basename = {"post": post, "media-asset": media_asset, "product": product}
 
     for prefix, _viewset, basename in router.registry:
         obj = objects_by_basename[basename]
