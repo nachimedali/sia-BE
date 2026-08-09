@@ -1,11 +1,10 @@
 """Content core (design.md §6.3, §6.4 media half).
 
 `Post` is the data spine every later generation and schedule writes into
-(implementation.md Phase 4). Three fields design.md §6.3 lists are deliberately
-absent until the app they point at exists — `product→Product` (Phase 5),
-`generation→Generation` (Phase 7), `recipe→CreativeRecipe` (Phase 14) — each
-lands as that phase's own nullable column, the same shape the billing ledgers
-used for `generation` before Phase 7 (design.md A32, A48).
+(implementation.md Phase 4). `Post.product` and `Post.generation` land in this
+module now that Phase 7 exists; `Post.recipe→CreativeRecipe` stays absent until
+Phase 14 — each lands as that phase's own nullable column, the same shape the
+billing ledgers used for `generation` before Phase 7 (design.md A32, A48).
 
 `PostTarget.platform` is a plain choice field rather than `social_account→
 SocialAccount`: that model does not exist until channels/ lands in Phase 9, and
@@ -100,6 +99,20 @@ class Post(models.Model):
         on_delete=models.SET_NULL,
         related_name="posts",
     )
+    product = models.ForeignKey(
+        "products.Product",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="posts",
+    )
+    generation = models.ForeignKey(
+        "ai.Generation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="posts",
+    )
     origin_post = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="repurposed_posts"
     )
@@ -178,9 +191,8 @@ def media_asset_upload_to(instance: MediaAsset, filename: str) -> str:
 
 
 class MediaAsset(models.Model):
-    """design.md §6.3/§6.4. `generation→Generation` is absent for the same
-    reason as on `Post` — that model does not exist until Phase 7 (A48).
-    """
+    """design.md §6.3/§6.4. `generation→Generation` lands now that Phase 7
+    exists (A48)."""
 
     workspace = models.ForeignKey(
         "workspaces.Workspace", on_delete=models.CASCADE, related_name="media_assets"
@@ -194,6 +206,13 @@ class MediaAsset(models.Model):
     checksum = models.CharField(max_length=64, blank=True, help_text="sha256 hex digest.")
     source = models.CharField(
         max_length=16, choices=MediaSource.choices, default=MediaSource.UPLOAD
+    )
+    generation = models.ForeignKey(
+        "ai.Generation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="generated_assets",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

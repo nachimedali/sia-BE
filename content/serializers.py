@@ -8,35 +8,20 @@ system-controlled until the phases that own their transitions — scheduling
 
 from __future__ import annotations
 
-import contextlib
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from rest_framework import serializers
-from rest_framework.relations import ManyRelatedField
 from rest_framework.request import Request
 
-from common.exceptions import OCCSError
+from common.workspaces import scope_related_field_to_workspace
 from content.models import MediaAsset, Platform, Post
 
 
 def _scope_media_field(field: Any, request: Request | None) -> None:
     """Restricts a `media_asset_ids` field's choices to the caller's own
-    workspace.
-
-    Falls back to empty rather than raising when the workspace cannot be
-    resolved — schema generation instantiates every serializer with a request
-    that carries no authenticated user, and that has to produce a schema, not
-    a 401. `many=True` makes the field a `ManyRelatedField` wrapping a
-    `PrimaryKeyRelatedField` as `child_relation` — the queryset lives on the
-    child, not the wrapper (DRF has no `.queryset` on `ManyRelatedField`).
-    """
-    queryset = MediaAsset.objects.none()
-    if request is not None:
-        from common.workspaces import active_workspace
-
-        with contextlib.suppress(OCCSError):
-            queryset = MediaAsset.objects.filter(workspace=active_workspace(request))
-    cast(ManyRelatedField, field).child_relation.queryset = queryset
+    workspace — a bare model-wide queryset would let one workspace reference
+    another's media."""
+    scope_related_field_to_workspace(field, request, MediaAsset)
 
 
 class MediaAssetSerializer(serializers.ModelSerializer[MediaAsset]):

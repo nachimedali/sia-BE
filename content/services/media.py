@@ -22,6 +22,7 @@ from django.core.files.uploadedfile import UploadedFile
 from PIL import Image, UnidentifiedImageError
 
 from common.exceptions import OCCSError
+from common.media import probe_image_integrity
 from content.models import MediaAsset, MediaKind, MediaSource
 from workspaces.models import Workspace
 
@@ -76,10 +77,13 @@ def ingest_media(
         # Anything not declared as video is validated as an image by actually
         # opening it — a declared content-type is only a hint, and an empty one
         # (some clients send none) still has to resolve to something.
+        integrity_ok, _detail = probe_image_integrity(upload)
+        if not integrity_ok:
+            raise UnsupportedMediaError(
+                f"Unsupported file type: {content_type or 'unknown'}.", code="invalid_media_type"
+            )
+        upload.seek(0)
         try:
-            with Image.open(upload) as probe:
-                probe.verify()
-            upload.seek(0)
             with Image.open(upload) as image:
                 width, height = image.size
                 mime = Image.MIME.get(image.format or "", content_type or "image/*")

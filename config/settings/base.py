@@ -58,6 +58,7 @@ LOCAL_APPS = [
     "onboarding",
     "content",
     "products",
+    "ai",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -215,6 +216,9 @@ SPECTACULAR_SETTINGS = {
         # (top-level and the nested per-post view); spectacular otherwise
         # can't tell the two `kind` enums apart and mangles the name.
         "MediaKindEnum": "content.models.MediaKind",
+        # Same collision, `GenerationKind` on both `Generation.kind` and
+        # `GenerationVariant.kind`.
+        "GenerationKindEnum": "ai.models.GenerationKind",
     },
 }
 
@@ -264,6 +268,30 @@ USE_FAKE_BILLING = env.bool("USE_FAKE_BILLING", default=not STRIPE_SECRET_KEY)
 
 # Public URL of the frontend. Email links point here, not at the API.
 SITE_URL = env("SITE_URL", default="http://localhost:3000")
+
+# -----------------------------------------------------------------------------
+# AI providers — design.md §9, D8/D9. Text targets a generic OpenAI-Chat-
+# Completions-compatible endpoint (design.md names "LLM provider" without
+# pinning a vendor); image targets Nano Banana 2 / Gemini 3.1 Flash Image
+# (D8). Same USE_FAKE_* shape as billing/storage: no keys configured means no
+# provider to fake around.
+# -----------------------------------------------------------------------------
+LLM_PROVIDER = env("LLM_PROVIDER", default="openai")
+LLM_BASE_URL = env("LLM_BASE_URL", default="https://api.openai.com/v1")
+LLM_API_KEY = env("LLM_API_KEY", default="")
+LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="gpt-4o-mini")
+LLM_TIMEOUT_SECONDS = env.int("LLM_TIMEOUT_SECONDS", default=30)
+
+IMAGE_PROVIDER = env("IMAGE_PROVIDER", default="nanobanana")
+IMAGE_PROVIDER_BASE_URL = env(
+    "IMAGE_PROVIDER_BASE_URL", default="https://generativelanguage.googleapis.com/v1beta"
+)
+IMAGE_PROVIDER_API_KEY = env("IMAGE_PROVIDER_API_KEY", default="")
+IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-image")
+
+USE_FAKE_AI_PROVIDERS = env.bool(
+    "USE_FAKE_AI_PROVIDERS", default=not (LLM_API_KEY and IMAGE_PROVIDER_API_KEY)
+)
 
 # -----------------------------------------------------------------------------
 # Encryption — design.md §11. Built now even though v1 stores no platform

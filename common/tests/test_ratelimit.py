@@ -88,3 +88,41 @@ def test_uses_wall_clock_when_now_is_not_supplied() -> None:
     bucket = TokenBucket("test:wall", capacity=1, refill_per_second=1)
     assert bucket.consume(now=time.time()).allowed
     assert not bucket.consume().allowed
+
+
+# -----------------------------------------------------------------------------
+# Reserve floor (implementation.md Phase 6) — the primitive ProviderRateLimiter
+# is built on. Covered here at the TokenBucket level because it is a plain
+# consume() argument, independent of the (platform, social_account) keying
+# ProviderRateLimiter adds; see test_provider_ratelimit.py for that.
+# -----------------------------------------------------------------------------
+def test_reserve_of_zero_behaves_like_a_plain_bucket() -> None:
+    with time_machine.travel(0, tick=False):
+        bucket = TokenBucket("test:reserve-zero", capacity=3, refill_per_second=1)
+        for _ in range(3):
+            assert bucket.consume(reserve=0).allowed
+        assert not bucket.consume(reserve=0).allowed
+
+
+def test_reserve_refuses_before_the_floor_is_crossed() -> None:
+    with time_machine.travel(0, tick=False):
+        bucket = TokenBucket("test:reserve", capacity=10, refill_per_second=0.001)
+
+        # A caller with a reserve of 4 may only take the 6 tokens above it.
+        allowed = sum(bucket.consume(reserve=4).allowed for _ in range(20))
+        assert allowed == 6
+
+        # The 4 reserved tokens are still sitting in the bucket, untouched.
+        assert bucket.consume(reserve=0).allowed
+
+
+def test_reserve_retry_after_accounts_for_the_floor() -> None:
+    with time_machine.travel(0, tick=False):
+        bucket = TokenBucket("test:reserve-retry", capacity=10, refill_per_second=2)
+        bucket.consume(6, reserve=0)  # tokens: 4
+
+        # Wants 3 with a reserve of 4: needs tokens to reach 7, i.e. 3 more
+        # than the 4 currently sitting there, at 2/sec.
+        refused = bucket.consume(3, reserve=4)
+        assert not refused.allowed
+        assert refused.retry_after == pytest.approx(1.5, abs=0.01)

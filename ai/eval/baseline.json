@@ -1,0 +1,31 @@
+{
+  "pass_rate": 1.0,
+  "mean_identity_score": 0.9688,
+  "mean_attempts": 1,
+  "cases": {
+    "text_idea_no_product": {
+      "passed": true,
+      "attempts": 1,
+      "identity_score": null,
+      "credits_charged": 1
+    },
+    "text_product_with_restriction": {
+      "passed": true,
+      "attempts": 1,
+      "identity_score": null,
+      "credits_charged": 1
+    },
+    "image_product_on_table": {
+      "passed": true,
+      "attempts": 1,
+      "identity_score": 0.96875,
+      "credits_charged": 3
+    },
+    "image_product_with_hard_constraint": {
+      "passed": true,
+      "attempts": 1,
+      "identity_score": 0.96875,
+      "credits_charged": 3
+    }
+  }
+}

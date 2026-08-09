@@ -85,6 +85,7 @@ def debit_credits(
     reason: str = CreditReason.GENERATION,
     quota: int,
     note: str = "",
+    generation: Any = None,
 ) -> CreditLedger:
     """Spends `cost` credits, or raises 402 (design.md §8.2).
 
@@ -114,6 +115,7 @@ def debit_credits(
         delta=0 if unlimited else -cost,
         reason=reason,
         note=note or (f"unlimited plan; nominal cost {cost}" if unlimited else ""),
+        generation=generation,
     )
     logger.info(
         "credits debited",
@@ -140,6 +142,7 @@ def refund_credits(entry: CreditLedger, *, note: str = "") -> CreditLedger:
         delta=-entry.delta,
         reason=CreditReason.REFUND,
         reverses=entry,
+        generation=entry.generation,
         note=note or "quality gate failed",
     )
 
@@ -227,6 +230,7 @@ def debit_video_units(
     quota: int,
     unit_cost_cents: int = 0,
     note: str = "",
+    generation: Any = None,
 ) -> VideoLedger:
     if units < 0:
         raise ValueError("Use refund_video_units() to return units.")
@@ -248,6 +252,7 @@ def debit_video_units(
         reason=VideoReason.GENERATION,
         unit_cost_cents=unit_cost_cents,
         note=note,
+        generation=generation,
     )
 
 
@@ -265,6 +270,7 @@ def refund_video_units(entry: VideoLedger, *, note: str = "") -> VideoLedger:
         reason=VideoReason.REFUND,
         reverses=entry,
         unit_cost_cents=entry.unit_cost_cents,
+        generation=entry.generation,
         note=note or "generation failed",
     )
 
