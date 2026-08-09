@@ -72,3 +72,12 @@ def auth_client(user: Any) -> Any:
     api = APIClient()
     api.force_authenticate(user)
     return api
+
+
+@pytest.fixture
+def workspace(plans: dict[str, Any], user: Any) -> Any:
+    """Moved here from billing/tests/conftest.py once content needed it too —
+    the same one-copy-per-file collapse that file's own docstring describes."""
+    from workspaces.services.provisioning import provision_workspace
+
+    return provision_workspace(user, name="Acme Studio")

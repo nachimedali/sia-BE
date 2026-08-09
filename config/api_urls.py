@@ -2,10 +2,16 @@
 
 Routes are added phase by phase; everything lives under /api/v1/ and appears in
 the OpenAPI schema, which is what the frontend client is generated from.
+
+`router` is the one place a ViewSet is registered. `test_cross_workspace_
+access_returns_404_on_every_viewset` (Phase 4) walks `router.registry` and
+asserts its length, so a ViewSet added anywhere else escapes the tenancy sweep
+silently (design.md A52) — there is no second router.
 """
 
-from django.urls import path
+from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenBlacklistView, TokenRefreshView
 
 from accounts.views import (
@@ -30,7 +36,12 @@ from billing.views import (
 )
 from categories.views import CategoryListView
 from common.health import HealthView
+from content.views import MediaAssetViewSet, PostViewSet
 from onboarding.views import OnboardingCompleteView, OnboardingView
+
+router = DefaultRouter()
+router.register("posts", PostViewSet, basename="post")
+router.register("media", MediaAssetViewSet, basename="media-asset")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
@@ -69,4 +80,6 @@ urlpatterns = [
     path("billing/webhook/stripe/", StripeWebhookView.as_view(), name="billing-webhook-stripe"),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
+    # --- content ---
+    path("", include(router.urls)),
 ]
