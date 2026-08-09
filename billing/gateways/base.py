@@ -8,7 +8,9 @@ depends on Stripe being reachable or on test-mode keys being present.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+CheckoutMode = Literal["subscription", "payment"]
 
 
 class WebhookVerificationError(Exception):
@@ -30,30 +32,27 @@ class BillingGateway(Protocol):
     def create_checkout_session(
         self,
         *,
+        mode: CheckoutMode,
         workspace_id: int,
         customer_id: str | None,
         customer_email: str,
         price_id: str,
-        trial_days: int,
         success_url: str,
         cancel_url: str,
-    ) -> CheckoutSession: ...
-
-    def create_payment_session(
-        self,
-        *,
-        workspace_id: int,
-        customer_id: str | None,
-        customer_email: str,
-        price_id: str,
-        metadata: dict[str, str],
-        success_url: str,
-        cancel_url: str,
+        trial_days: int = 0,
+        metadata: dict[str, str] | None = None,
     ) -> CheckoutSession:
-        """A one-off payment rather than a subscription — the prepaid packs.
+        """One hosted Checkout, in either mode: a subscription, or the one-off
+        payment behind a prepaid pack (§4.3).
 
-        `metadata` travels to the webhook, which is where the units are actually
-        credited: nothing is granted because a browser reached the success URL.
+        The two modes share everything that matters — how the customer is
+        attached, how the workspace id travels, how the session is read back —
+        so they are one method: a change to any of that must not be able to
+        reach only one of the two flows.
+
+        `trial_days` applies to `subscription` only; `metadata` travels to the
+        webhook, which is where a pack's units are actually credited. Nothing is
+        granted because a browser reached the success URL.
         """
         ...
 

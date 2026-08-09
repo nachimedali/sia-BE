@@ -18,13 +18,6 @@ from billing.services import ledger
 pytestmark = pytest.mark.django_db
 
 
-@pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
 # -----------------------------------------------------------------------------
 # Tasks — thin wrappers, so what is tested is that they are wired to the service
 # -----------------------------------------------------------------------------

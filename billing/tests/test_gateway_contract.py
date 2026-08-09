@@ -79,6 +79,7 @@ def gateway(request, stripe_stub):
 
 def test_checkout_returns_a_usable_url(gateway) -> None:
     session = gateway.create_checkout_session(
+        mode="subscription",
         workspace_id=7,
         customer_id=None,
         customer_email="jordan@example.com",
@@ -105,6 +106,7 @@ def test_the_workspace_id_travels_through_checkout(stripe_stub) -> None:
     """`client_reference_id` is how the webhook attributes a completed session
     without trusting anything the browser sends back on the success URL."""
     StripeBillingGateway().create_checkout_session(
+        mode="subscription",
         workspace_id=42,
         customer_id=None,
         customer_email="jordan@example.com",
@@ -123,6 +125,7 @@ def test_the_workspace_id_travels_through_checkout(stripe_stub) -> None:
 def test_no_trial_means_no_trial_key_at_all(stripe_stub) -> None:
     """`trial_period_days=0` is not the same as omitting it — Stripe rejects it."""
     StripeBillingGateway().create_checkout_session(
+        mode="subscription",
         workspace_id=42,
         customer_id=None,
         customer_email="jordan@example.com",
@@ -139,6 +142,7 @@ def test_a_known_customer_is_reused_rather_than_duplicated(stripe_stub) -> None:
     """Passing `customer_email` for an existing customer creates a second one,
     and the portal then shows them the wrong subscription."""
     StripeBillingGateway().create_checkout_session(
+        mode="subscription",
         workspace_id=42,
         customer_id="cus_existing",
         customer_email="jordan@example.com",
@@ -150,6 +154,29 @@ def test_a_known_customer_is_reused_rather_than_duplicated(stripe_stub) -> None:
 
     assert stripe_stub.created["customer"] == "cus_existing"
     assert "customer_email" not in stripe_stub.created
+
+
+def test_a_payment_carries_its_metadata_on_the_session(stripe_stub) -> None:
+    """A one-off payment has no subscription to hang metadata on, so the pack
+    code rides on the session — which is what `checkout.session.completed`
+    delivers, and the only thing fulfilment has to go on."""
+    StripeBillingGateway().create_checkout_session(
+        mode="payment",
+        workspace_id=42,
+        customer_id=None,
+        customer_email="jordan@example.com",
+        price_id="price_credits_500",
+        metadata={"pack_code": "credits-500"},
+        success_url="s",
+        cancel_url="c",
+    )
+
+    assert stripe_stub.created["mode"] == "payment"
+    assert stripe_stub.created["metadata"] == {
+        "pack_code": "credits-500",
+        "workspace_id": "42",
+    }
+    assert "subscription_data" not in stripe_stub.created
 
 
 @override_settings(STRIPE_WEBHOOK_SECRET="whsec_test")
@@ -201,6 +228,7 @@ def test_live_stripe_test_mode_accepts_a_checkout_session() -> None:
         pytest.skip("no Stripe test-mode key configured")
 
     session = StripeBillingGateway().create_checkout_session(
+        mode="subscription",
         workspace_id=1,
         customer_id=None,
         customer_email="integration@example.com",

@@ -7,7 +7,12 @@ import hmac
 import json
 from typing import Any
 
-from billing.gateways.base import CheckoutSession, PortalSession, WebhookVerificationError
+from billing.gateways.base import (
+    CheckoutMode,
+    CheckoutSession,
+    PortalSession,
+    WebhookVerificationError,
+)
 
 FAKE_WEBHOOK_SECRET = "whsec_fake"
 
@@ -22,53 +27,36 @@ class FakeBillingGateway:
 
     def __init__(self) -> None:
         self.checkout_calls: list[dict[str, Any]] = []
-        self.payment_calls: list[dict[str, Any]] = []
         self.portal_calls: list[dict[str, Any]] = []
 
     def create_checkout_session(
         self,
         *,
+        mode: CheckoutMode,
         workspace_id: int,
         customer_id: str | None,
         customer_email: str,
         price_id: str,
-        trial_days: int,
         success_url: str,
         cancel_url: str,
+        trial_days: int = 0,
+        metadata: dict[str, str] | None = None,
     ) -> CheckoutSession:
+        # One list for both modes, with `mode` recorded: a second list would let
+        # a test keep passing against `checkout_calls` after the flow it covers
+        # had moved to the other mode.
         self.checkout_calls.append(
             {
+                "mode": mode,
                 "workspace_id": workspace_id,
                 "customer_id": customer_id,
                 "customer_email": customer_email,
                 "price_id": price_id,
                 "trial_days": trial_days,
+                "metadata": metadata or {},
             }
         )
         session_id = f"cs_fake_{workspace_id}_{len(self.checkout_calls)}"
-        return CheckoutSession(id=session_id, url=f"https://checkout.test/{session_id}")
-
-    def create_payment_session(
-        self,
-        *,
-        workspace_id: int,
-        customer_id: str | None,
-        customer_email: str,
-        price_id: str,
-        metadata: dict[str, str],
-        success_url: str,
-        cancel_url: str,
-    ) -> CheckoutSession:
-        self.payment_calls.append(
-            {
-                "workspace_id": workspace_id,
-                "customer_id": customer_id,
-                "customer_email": customer_email,
-                "price_id": price_id,
-                "metadata": metadata,
-            }
-        )
-        session_id = f"cs_fake_pay_{workspace_id}_{len(self.payment_calls)}"
         return CheckoutSession(id=session_id, url=f"https://checkout.test/{session_id}")
 
     def create_portal_session(self, *, customer_id: str, return_url: str) -> PortalSession:
@@ -87,7 +75,6 @@ class FakeBillingGateway:
 
     def clear(self) -> None:
         self.checkout_calls.clear()
-        self.payment_calls.clear()
         self.portal_calls.clear()
 
 

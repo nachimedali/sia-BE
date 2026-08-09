@@ -25,20 +25,6 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
-@pytest.fixture(autouse=True)
-def _reset_gateway():
-    _fake_gateway.clear()
-    yield
-    _fake_gateway.clear()
-
-
-@pytest.fixture
 def priced_plans(plans):
     """Stripe price ids, which `seed_plans` deliberately leaves blank — they
     differ per Stripe account and are configuration, not seed data."""

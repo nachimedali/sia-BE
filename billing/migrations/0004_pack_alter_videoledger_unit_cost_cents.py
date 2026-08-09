@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
             name='Pack',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('code', models.SlugField(help_text='Immutable after creation, as for Plan (D13).', unique=True)),
+                ('code', models.SlugField(help_text='Immutable after creation (D13).', unique=True)),
                 ('display_name', models.CharField(max_length=64)),
                 ('tagline', models.CharField(blank=True, max_length=200)),
                 ('kind', models.CharField(choices=[('CREDITS', 'Credits'), ('VIDEO', 'Video units')], max_length=8)),

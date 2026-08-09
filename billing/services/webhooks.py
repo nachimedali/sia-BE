@@ -141,7 +141,7 @@ def _on_checkout_completed(session: dict[str, Any]) -> None:
         )
         return
 
-    pack_code = (session.get("metadata") or {}).get("pack_code")
+    pack_code = (session.get("metadata") or {}).get(purchases.PACK_CODE_KEY)
     if not pack_code:
         logger.error(
             "paid checkout session carries no pack_code", extra={"session": session.get("id")}

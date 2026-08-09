@@ -39,6 +39,18 @@ from common.pagination import DefaultPagination
 from common.workspaces import active_workspace
 
 
+def _billing_page() -> str:
+    return f"{settings.SITE_URL}/app/billing"
+
+
+def _return_urls(outcome: str) -> tuple[str, str]:
+    """The success and cancel URLs for a hosted Stripe page, tagged with the
+    flow the user is coming back from. One place, so the billing screen can move
+    without a grep across three views."""
+    page = _billing_page()
+    return f"{page}?{outcome}=success", f"{page}?{outcome}=cancelled"
+
+
 class PlanListView(ListAPIView):  # type: ignore[type-arg]
     """Public: the pricing page renders straight from these rows (I8)."""
 
@@ -111,12 +123,13 @@ class SubscribeView(APIView):
         payload = CheckoutRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
+        success_url, cancel_url = _return_urls("checkout")
         session = subscriptions.start_checkout(
             active_workspace(request),
             plan_code=payload.validated_data["plan_code"],
             cycle=payload.validated_data["cycle"],
-            success_url=f"{settings.SITE_URL}/app/billing?checkout=success",
-            cancel_url=f"{settings.SITE_URL}/app/billing?checkout=cancelled",
+            success_url=success_url,
+            cancel_url=cancel_url,
         )
         return Response({"checkout_url": session.url})
 
@@ -155,11 +168,12 @@ class PurchaseView(APIView):
         payload = PurchaseRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
+        success_url, cancel_url = _return_urls("purchase")
         session = purchases.start_purchase(
             active_workspace(request),
             pack_code=payload.validated_data["pack_code"],
-            success_url=f"{settings.SITE_URL}/app/billing?purchase=success",
-            cancel_url=f"{settings.SITE_URL}/app/billing?purchase=cancelled",
+            success_url=success_url,
+            cancel_url=cancel_url,
         )
         return Response({"checkout_url": session.url})
 
@@ -173,9 +187,7 @@ class BillingPortalView(APIView):
         summary="Open the Stripe customer portal",
     )
     def post(self, request: Request) -> Response:
-        session = subscriptions.open_portal(
-            active_workspace(request), return_url=f"{settings.SITE_URL}/app/billing"
-        )
+        session = subscriptions.open_portal(active_workspace(request), return_url=_billing_page())
         return Response({"portal_url": session.url})
 
 

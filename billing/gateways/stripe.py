@@ -16,6 +16,7 @@ from django.conf import settings
 
 from billing.gateways.base import (
     BillingGateway,
+    CheckoutMode,
     CheckoutSession,
     PortalSession,
     WebhookVerificationError,
@@ -35,61 +36,43 @@ class StripeBillingGateway:
     def create_checkout_session(
         self,
         *,
+        mode: CheckoutMode,
         workspace_id: int,
         customer_id: str | None,
         customer_email: str,
         price_id: str,
-        trial_days: int,
         success_url: str,
         cancel_url: str,
-    ) -> CheckoutSession:
-        stripe = _stripe()
-        subscription_data: dict[str, Any] = {"metadata": {"workspace_id": str(workspace_id)}}
-        if trial_days > 0:
-            subscription_data["trial_period_days"] = trial_days
-
-        params: dict[str, Any] = {
-            "mode": "subscription",
-            "line_items": [{"price": price_id, "quantity": 1}],
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "client_reference_id": str(workspace_id),
-            "subscription_data": subscription_data,
-            # Stripe enforces "one trial per customer" for us; the workspace-level
-            # rule is enforced in `subscriptions.start_checkout`.
-            "allow_promotion_codes": True,
-        }
-        if customer_id:
-            params["customer"] = customer_id
-        else:
-            params["customer_email"] = customer_email
-
-        session = stripe.checkout.Session.create(**params)
-        return CheckoutSession(id=session["id"], url=session["url"])
-
-    def create_payment_session(
-        self,
-        *,
-        workspace_id: int,
-        customer_id: str | None,
-        customer_email: str,
-        price_id: str,
-        metadata: dict[str, str],
-        success_url: str,
-        cancel_url: str,
+        trial_days: int = 0,
+        metadata: dict[str, str] | None = None,
     ) -> CheckoutSession:
         stripe = _stripe()
         params: dict[str, Any] = {
-            "mode": "payment",
-            # Fixed quantity: the pack is the unit of sale, and an adjustable
-            # quantity would make the webhook's fulfilment depend on a number the
+            "mode": mode,
+            # Fixed quantity: the plan or the pack is the unit of sale, and an
+            # adjustable quantity would make fulfilment depend on a number the
             # browser could have changed.
             "line_items": [{"price": price_id, "quantity": 1}],
             "success_url": success_url,
             "cancel_url": cancel_url,
             "client_reference_id": str(workspace_id),
-            "metadata": {**metadata, "workspace_id": str(workspace_id)},
         }
+
+        # Where the metadata has to live differs: the renewal webhooks carry the
+        # subscription, not the session that started it, so a subscription's
+        # workspace id has to ride on the subscription itself.
+        workspace_metadata = {**(metadata or {}), "workspace_id": str(workspace_id)}
+        if mode == "subscription":
+            subscription_data: dict[str, Any] = {"metadata": workspace_metadata}
+            if trial_days > 0:
+                subscription_data["trial_period_days"] = trial_days
+            params["subscription_data"] = subscription_data
+            # Stripe enforces "one trial per customer" for us; the workspace-level
+            # rule is enforced in `subscriptions.start_checkout`.
+            params["allow_promotion_codes"] = True
+        else:
+            params["metadata"] = workspace_metadata
+
         if customer_id:
             params["customer"] = customer_id
         else:

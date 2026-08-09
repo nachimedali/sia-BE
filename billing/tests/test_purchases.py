@@ -20,21 +20,6 @@ pytestmark = pytest.mark.django_db
 
 PURCHASE_URL = "/api/v1/billing/purchase/"
 PACKS_URL = "/api/v1/billing/packs/"
-WEBHOOK_URL = "/api/v1/billing/webhook/stripe/"
-
-
-@pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
-@pytest.fixture(autouse=True)
-def _reset_gateway():
-    _fake_gateway.clear()
-    yield
-    _fake_gateway.clear()
 
 
 @pytest.fixture
@@ -131,8 +116,8 @@ def test_starting_a_purchase_credits_nothing(workspace, packs) -> None:
 
     assert session.url
     assert ledger.credit_balance(workspace) == before
-    assert _fake_gateway.payment_calls[-1]["price_id"] == "price_credits-500"
-    assert _fake_gateway.payment_calls[-1]["metadata"] == {"pack_code": "credits-500"}
+    assert _fake_gateway.checkout_calls[-1]["price_id"] == "price_credits-500"
+    assert _fake_gateway.checkout_calls[-1]["metadata"] == {"pack_code": "credits-500"}
 
 
 def test_an_unknown_or_withdrawn_pack_is_refused(workspace, packs) -> None:
@@ -174,7 +159,7 @@ def test_free_cannot_buy_video_because_it_has_no_way_to_spend_it(workspace, pack
 
 def test_a_paid_plan_can_buy_video(pro_workspace, packs) -> None:
     purchases.start_purchase(pro_workspace, pack_code="videos-4", success_url="s", cancel_url="c")
-    assert _fake_gateway.payment_calls[-1]["price_id"] == "price_videos-4"
+    assert _fake_gateway.checkout_calls[-1]["price_id"] == "price_videos-4"
 
 
 # -----------------------------------------------------------------------------

@@ -45,20 +45,63 @@ FEATURE_KEYS = frozenset(
 )
 
 
-class Plan(models.Model):
+class CatalogueItem(models.Model):
+    """What `Plan` and `Pack` have in common: a commercial row an operator
+    retunes in admin (I8), joined to Stripe and to analytics by its `code`.
+
+    The D13 immutability guard lives here rather than once per model for the
+    same reason `LedgerEntry` holds the I4 append-only guard for both ledgers:
+    a copy that gets missed fails silently — the code changes, and fulfilment
+    stops finding the row without anything being raised.
+    """
+
     code = models.SlugField(unique=True, help_text="Immutable after creation (D13).")
     display_name = models.CharField(max_length=64)
     tagline = models.CharField(max_length=200, blank=True)
-
-    price_monthly_cents = models.IntegerField(default=0)
-    price_annual_cents = models.IntegerField(default=0)
     currency = models.CharField(max_length=3, default="USD")
-
-    stripe_price_id_monthly = models.CharField(max_length=64, blank=True)
-    stripe_price_id_annual = models.CharField(max_length=64, blank=True)
 
     is_public = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+        ordering: ClassVar[list[str]] = ["sort_order", "id"]
+
+    def __str__(self) -> str:
+        return self.display_name
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.full_clean(exclude=None, validate_unique=False)
+        super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        super().clean()
+        errors = self.validation_errors()
+        if errors:
+            raise ValidationError(errors)
+
+    def validation_errors(self) -> dict[str, str]:
+        """Collected rather than raised, so a subclass's rules and the shared
+        ones are reported in one pass instead of one screen at a time."""
+        errors: dict[str, str] = {}
+        if self.pk:
+            manager = type(self)._default_manager
+            previous = manager.filter(pk=self.pk).values_list("code", flat=True).first()
+            # D13: the code is the join key for Stripe mapping and analytics.
+            if previous is not None and previous != self.code:
+                errors["code"] = f"{type(self).__name__}.code is immutable after creation (D13)."
+        return errors
+
+
+class Plan(CatalogueItem):
+    price_monthly_cents = models.IntegerField(default=0)
+    price_annual_cents = models.IntegerField(default=0)
+
+    stripe_price_id_monthly = models.CharField(max_length=64, blank=True)
+    stripe_price_id_annual = models.CharField(max_length=64, blank=True)
 
     monthly_ai_credits = models.IntegerField(default=0)
     included_videos = models.IntegerField(default=0)
@@ -72,22 +115,8 @@ class Plan(models.Model):
 
     features = models.JSONField(default=dict, blank=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering: ClassVar[list[str]] = ["sort_order", "id"]
-
-    def __str__(self) -> str:
-        return self.display_name
-
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        self.full_clean(exclude=None, validate_unique=False)
-        super().save(*args, **kwargs)
-
-    def clean(self) -> None:
-        super().clean()
-        errors: dict[str, str] = {}
+    def validation_errors(self) -> dict[str, str]:
+        errors = super().validation_errors()
 
         # I6: "unlimited" is never permitted for social accounts. Every account
         # is per-seat COGS with the publishing provider, so an unbounded cap
@@ -103,14 +132,7 @@ class Plan(models.Model):
         if unknown:
             errors["features"] = f"Unknown feature keys: {', '.join(sorted(unknown))}."
 
-        if self.pk:
-            previous = Plan.objects.filter(pk=self.pk).values_list("code", flat=True).first()
-            # D13: the code is the join key for Stripe mapping and analytics.
-            if previous is not None and previous != self.code:
-                errors["code"] = "Plan.code is immutable after creation (D13)."
-
-        if errors:
-            raise ValidationError(errors)
+        return errors
 
     def feature(self, key: str) -> Any:
         """Raw flag read. Callers should go through `Entitlements` instead —
@@ -139,7 +161,7 @@ class PackKind(models.TextChoices):
     VIDEO = "VIDEO", "Video units"
 
 
-class Pack(models.Model):
+class Pack(CatalogueItem):
     """A one-off top-up: credits, or prepaid video units (§4.3, D16).
 
     A row for the same reason a `Plan` is one (I8): the size of a pack and what
@@ -150,36 +172,14 @@ class Pack(models.Model):
     to a surprise invoice, and the balance simply stops.
     """
 
-    code = models.SlugField(unique=True, help_text="Immutable after creation, as for Plan (D13).")
-    display_name = models.CharField(max_length=64)
-    tagline = models.CharField(max_length=200, blank=True)
-
     kind = models.CharField(max_length=8, choices=PackKind.choices)
     units = models.IntegerField(help_text="Credits, or video units, granted on payment.")
     price_cents = models.IntegerField()
-    currency = models.CharField(max_length=3, default="USD")
 
     stripe_price_id = models.CharField(max_length=64, blank=True)
 
-    is_public = models.BooleanField(default=True)
-    sort_order = models.IntegerField(default=0)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering: ClassVar[list[str]] = ["sort_order", "id"]
-
-    def __str__(self) -> str:
-        return self.display_name
-
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        self.full_clean(exclude=None, validate_unique=False)
-        super().save(*args, **kwargs)
-
-    def clean(self) -> None:
-        super().clean()
-        errors: dict[str, str] = {}
+    def validation_errors(self) -> dict[str, str]:
+        errors = super().validation_errors()
 
         # UNLIMITED has no meaning for something you buy a fixed amount of, and
         # a pack of -1 units would credit a negative balance.
@@ -188,13 +188,7 @@ class Pack(models.Model):
         if self.price_cents < 0:
             errors["price_cents"] = "A pack cannot have a negative price."
 
-        if self.pk:
-            previous = Pack.objects.filter(pk=self.pk).values_list("code", flat=True).first()
-            if previous is not None and previous != self.code:
-                errors["code"] = "Pack.code is immutable after creation (D13)."
-
-        if errors:
-            raise ValidationError(errors)
+        return errors
 
     @property
     def unit_price_cents(self) -> int:

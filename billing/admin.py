@@ -37,8 +37,20 @@ class ReadOnlyAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         return False
 
 
+class ImmutableCodeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """The admin half of D13, for the `CatalogueItem` models.
+
+    The model refuses a changed code anyway; greying the field out is what stops
+    an operator discovering that by way of a validation error.
+    """
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> tuple[str, ...]:
+        # D13: the code is the join key for Stripe mapping and analytics.
+        return ("code",) if obj else ()
+
+
 @admin.register(Plan)
-class PlanAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class PlanAdmin(ImmutableCodeAdmin):
     list_display = (
         "code",
         "display_name",
@@ -52,10 +64,6 @@ class PlanAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     list_filter = ("is_public",)
     search_fields = ("code", "display_name")
     save_on_top = True
-
-    def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> tuple[str, ...]:
-        # D13: the code is the join key for Stripe mapping and analytics.
-        return ("code",) if obj else ()
 
     def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         """Deleting a plan with subscribers would orphan live workspaces.
@@ -83,7 +91,7 @@ class PlanAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
 
 @admin.register(Pack)
-class PackAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+class PackAdmin(ImmutableCodeAdmin):
     """Pack size and price are editable here for the same reason plan quotas
     are (I8). Withdraw a pack by unsetting `is_public`: deleting it would leave
     the ledger rows it produced pointing at nothing an operator can name."""
@@ -99,9 +107,6 @@ class PackAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     )
     list_filter = ("kind", "is_public")
     search_fields = ("code", "display_name")
-
-    def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> tuple[str, ...]:
-        return ("code",) if obj else ()
 
 
 @admin.register(Subscription)
