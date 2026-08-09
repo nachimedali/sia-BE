@@ -34,6 +34,10 @@ EXEMPT = (
     "/conftest.py",
     # Declares the columns, so it necessarily carries their schema defaults.
     "/billing/models.py",
+    # Platform character limits (design.md §8.6), not Plan quotas — YouTube's
+    # and Facebook's really is 5000, the same digits as Advanced's
+    # max_autopublish_posts by coincidence, not by either one reading the other.
+    "/content/services/rules.py",
 )
 
 # From the §4.1 matrix. Restricted to values distinctive enough that a match is

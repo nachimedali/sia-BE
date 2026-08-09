@@ -56,6 +56,7 @@ LOCAL_APPS = [
     "categories",
     "billing",
     "onboarding",
+    "content",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -133,6 +134,40 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # -----------------------------------------------------------------------------
+# Media storage — design.md §11, implementation.md Phase 4. MinIO in dev, S3 in
+# prod, addressed through django-storages either way (implementation.md §1.2).
+#
+# Falls back to the local filesystem whenever no endpoint is configured, the
+# same shape as USE_FAKE_BILLING: CI and a fresh checkout have no MinIO to talk
+# to, and media storage is not a business rule worth faking behind a port
+# (design.md §9) — swapping the Django storage backend already is the fake.
+# -----------------------------------------------------------------------------
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="occs-media")
+AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", default="")
+AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", default="")
+AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default="")
+AWS_S3_ADDRESSING_STYLE = "path"  # MinIO serves buckets path-style, not vhost-style.
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None
+AWS_QUERYSTRING_AUTH = True  # Media is workspace-private; URLs are signed, not public.
+
+USE_FAKE_STORAGE = env.bool("USE_FAKE_STORAGE", default=not AWS_S3_ENDPOINT_URL)
+
+STORAGES = {
+    "default": {
+        "BACKEND": (
+            "django.core.files.storage.FileSystemStorage"
+            if USE_FAKE_STORAGE
+            else "storages.backends.s3.S3Storage"
+        )
+    },
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+# -----------------------------------------------------------------------------
 # DRF — design.md §7
 # -----------------------------------------------------------------------------
 REST_FRAMEWORK = {
@@ -174,7 +209,12 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
     "COMPONENT_SPLIT_REQUEST": True,
-    "ENUM_NAME_OVERRIDES": {},
+    "ENUM_NAME_OVERRIDES": {
+        # `MediaAsset.kind` is serialised by two different serializers
+        # (top-level and the nested per-post view); spectacular otherwise
+        # can't tell the two `kind` enums apart and mangles the name.
+        "MediaKindEnum": "content.models.MediaKind",
+    },
 }
 
 # -----------------------------------------------------------------------------

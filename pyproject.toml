@@ -97,7 +97,10 @@ django_settings_module = "config.settings.test"
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
-testpaths = ["tests", "common", "accounts", "workspaces", "categories", "billing", "onboarding", "config"]
+testpaths = [
+    "tests", "common", "accounts", "workspaces", "categories", "billing", "onboarding",
+    "content", "config",
+]
 addopts = [
     "--strict-markers",
     "--strict-config",
