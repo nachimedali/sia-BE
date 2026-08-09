@@ -38,10 +38,12 @@ from categories.views import CategoryListView
 from common.health import HealthView
 from content.views import MediaAssetViewSet, PostViewSet
 from onboarding.views import OnboardingCompleteView, OnboardingView
+from products.views import ProductViewSet
 
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
 router.register("media", MediaAssetViewSet, basename="media-asset")
+router.register("products", ProductViewSet, basename="product")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
