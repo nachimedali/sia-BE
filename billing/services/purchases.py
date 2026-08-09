@@ -27,10 +27,10 @@ from workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
 
-# Video is the one pack with an entitlement in front of it: Free is 0 videos
-# with no overage path (§4.3), so selling it a video pack would sell something
-# it cannot spend.
-VIDEO_FEATURE = "video_generation"
+# The Checkout metadata key that carries the pack from `start_purchase` to
+# `fulfil_purchase`. Shared with the webhook rather than spelled twice: the two
+# ends of this contract are written three files apart.
+PACK_CODE_KEY = "pack_code"
 
 
 def start_purchase(
@@ -41,19 +41,23 @@ def start_purchase(
         raise OCCSError("That pack is not available.", code="invalid_pack")
 
     if pack.kind == PackKind.VIDEO:
-        entitlements_for(workspace).require_feature(VIDEO_FEATURE)
+        # Video is the one pack with an entitlement in front of it: Free is 0
+        # videos with no overage path (§4.3), so selling it a video pack would
+        # sell something it cannot spend.
+        entitlements_for(workspace).require_feature("video_generation")
 
     if not pack.stripe_price_id:
         # A pack with no Stripe price is a configuration error, not a user error.
         logger.error("pack has no Stripe price id", extra={"pack": pack.code})
         raise OCCSError("This pack is not available for purchase yet.", code="pack_not_purchasable")
 
-    session = get_billing_gateway().create_payment_session(
+    session = get_billing_gateway().create_checkout_session(
+        mode="payment",
         workspace_id=workspace.pk,
         customer_id=workspace.stripe_customer_id or None,
         customer_email=workspace.owner.email,
         price_id=pack.stripe_price_id,
-        metadata={"pack_code": pack.code},
+        metadata={PACK_CODE_KEY: pack.code},
         success_url=success_url,
         cancel_url=cancel_url,
     )
@@ -73,7 +77,7 @@ def fulfil_purchase(workspace: Workspace, *, pack_code: str) -> None:
     """
     pack = Pack.objects.filter(code=pack_code).first()
     if pack is None:
-        # Recorded rather than raised: the caller records the error on the
+        # Raised, not swallowed: `webhooks.process_event` records it on the
         # StripeEvent row, and someone has paid for something we cannot name.
         raise OCCSError(f"Paid pack '{pack_code}' does not exist.", code="unknown_pack")
 

@@ -28,13 +28,6 @@ from common.exceptions import InsufficientCredits, InsufficientVideoUnits
 pytestmark = pytest.mark.django_db
 
 
-@pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
 # -----------------------------------------------------------------------------
 # I4 — append-only, balance_after == SUM(delta)
 # -----------------------------------------------------------------------------

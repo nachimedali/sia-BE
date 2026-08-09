@@ -88,6 +88,7 @@ def start_checkout(
     trial_days = plan.trial_days if workspace.trial_ends_at is None else 0
 
     session = get_billing_gateway().create_checkout_session(
+        mode="subscription",
         workspace_id=workspace.pk,
         customer_id=workspace.stripe_customer_id or None,
         customer_email=workspace.owner.email,

@@ -27,13 +27,6 @@ class PlaybookView(APIView):
         return Response({"ok": True})
 
 
-@pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
 def _call(user):
     request = APIRequestFactory().get("/playbook/")
     force_authenticate(request, user=user)

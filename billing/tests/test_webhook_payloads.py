@@ -19,13 +19,6 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
-@pytest.fixture
 def pro(plans):
     plan = plans["pro"]
     plan.stripe_price_id_monthly = "price_pro_monthly"

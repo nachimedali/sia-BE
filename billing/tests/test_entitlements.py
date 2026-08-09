@@ -20,13 +20,6 @@ from common.exceptions import (
 pytestmark = pytest.mark.django_db
 
 
-@pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
 def _on_plan(workspace, plans, code):
     workspace.plan = plans[code]
     workspace.save(update_fields=["plan", "updated_at"])

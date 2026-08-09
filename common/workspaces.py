@@ -40,7 +40,9 @@ def active_workspace(request: Request) -> Workspace:
 
     workspace = (
         Workspace.objects.filter(memberships__user=authenticated_user(request))
-        .select_related("plan", "category")
+        # `owner` joins because both checkout flows read `owner.email` to hand
+        # Stripe a billing identity, and it is one row either way.
+        .select_related("plan", "category", "owner")
         .order_by("created_at")
         .first()
     )

@@ -22,20 +22,6 @@ PORTAL_URL = "/api/v1/billing/portal/"
 WEBHOOK_URL = "/api/v1/billing/webhook/stripe/"
 
 
-@pytest.fixture
-def workspace(plans, user):
-    from workspaces.services.provisioning import provision_workspace
-
-    return provision_workspace(user, name="Acme Studio")
-
-
-@pytest.fixture(autouse=True)
-def _reset_gateway():
-    _fake_gateway.clear()
-    yield
-    _fake_gateway.clear()
-
-
 # -----------------------------------------------------------------------------
 # Plans — public, and the source the pricing page renders from (I8)
 # -----------------------------------------------------------------------------
