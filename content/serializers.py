@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.request import Request
 
 from common.workspaces import scope_related_field_to_workspace
-from content.models import MediaAsset, Platform, Post
+from content.models import DeliveryMode, MediaAsset, Platform, Post
 
 
 def _scope_media_field(field: Any, request: Request | None) -> None:
@@ -120,6 +121,22 @@ class PostPreviewRequestSerializer(serializers.Serializer[Any]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         _scope_media_field(self.fields["media_asset_ids"], self.context.get("request"))
+
+
+class PostScheduleRequestSerializer(serializers.Serializer[Any]):
+    """`POST /posts/{id}/schedule/` (implementation.md Phase 8). Shape only —
+    the horizon check against `Plan.scheduling_horizon_days` is an
+    entitlement, not a validation rule, so it lives in
+    `scheduling.services.schedule_post`, not here (design.md A2: 402 is
+    reserved for entitlement failures)."""
+
+    delivery_mode = serializers.ChoiceField(choices=DeliveryMode.choices)
+    scheduled_at = serializers.DateTimeField()
+
+    def validate_scheduled_at(self, value: Any) -> Any:
+        if value <= timezone.now():
+            raise serializers.ValidationError("scheduled_at must be in the future.")
+        return value
 
 
 class AdaptedMediaSerializer(serializers.Serializer[Any]):

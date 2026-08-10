@@ -30,11 +30,13 @@ from content.serializers import (
     MediaAssetUploadSerializer,
     PostPreviewRequestSerializer,
     PostPreviewResponseSerializer,
+    PostScheduleRequestSerializer,
     PostSerializer,
 )
 from content.services.adaptation import render_payloads
 from content.services.media import ingest_media
 from content.services.posts import create_post, update_post
+from scheduling.services import schedule_post
 
 # `Post.ordered_media()` reads `media_attachments`, not the `media_assets` M2M
 # manager directly (content/models.py) — the Prefetch has to target the same
@@ -104,6 +106,29 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             platforms=platforms,
         )
         return Response({"payloads": {p: payload.as_dict() for p, payload in payloads.items()}})
+
+    @extend_schema(
+        request=PostScheduleRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Schedule a post for reminder or auto-publish delivery",
+        description=(
+            "Validates `scheduled_at` against the workspace's "
+            "`Plan.scheduling_horizon_days` (402 past the horizon, D13/I8) "
+            "and, for `delivery_mode=REMINDER`, arms the Reminder that Beat "
+            "sends on time (implementation.md Phase 8)."
+        ),
+    )
+    @action(detail=True, methods=["post"])
+    def schedule(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PostScheduleRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+
+        post = schedule_post(
+            post=post, delivery_mode=data["delivery_mode"], scheduled_at=data["scheduled_at"]
+        )
+        return Response(PostSerializer(post, context={"request": request}).data)
 
 
 class MediaAssetViewSet(

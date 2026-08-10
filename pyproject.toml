@@ -99,7 +99,7 @@ DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
 testpaths = [
     "tests", "common", "accounts", "workspaces", "categories", "billing", "onboarding",
-    "content", "products", "ai", "config",
+    "content", "products", "ai", "reminders", "scheduling", "config",
 ]
 addopts = [
     "--strict-markers",

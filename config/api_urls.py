@@ -40,6 +40,13 @@ from common.health import HealthView
 from content.views import MediaAssetViewSet, PostViewSet
 from onboarding.views import OnboardingCompleteView, OnboardingView
 from products.views import ProductViewSet
+from reminders.views import (
+    ReminderConfirmView,
+    ReminderPacketView,
+    ReminderSkipView,
+    ReminderSnoozeView,
+    ReminderViewSet,
+)
 
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
@@ -47,6 +54,7 @@ router.register("media", MediaAssetViewSet, basename="media-asset")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
+router.register("reminders", ReminderViewSet, basename="reminder")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
@@ -87,6 +95,16 @@ urlpatterns = [
     path("categories/", CategoryListView.as_view(), name="categories"),
     # --- ai ---
     path("ai/generate/", GenerateView.as_view(), name="ai-generate"),
+    # --- reminders: public, token-scoped, no login (design.md §8.5) ---
+    # Not on `router` — a token is not a workspace-scoped pk, so the
+    # cross-workspace tenancy sweep (A52) has nothing to walk here;
+    # `reminders.services.resolve_token` is the access control instead.
+    path("reminders/<str:token>/packet/", ReminderPacketView.as_view(), name="reminder-packet"),
+    path(
+        "reminders/<str:token>/confirm/", ReminderConfirmView.as_view(), name="reminder-confirm"
+    ),
+    path("reminders/<str:token>/snooze/", ReminderSnoozeView.as_view(), name="reminder-snooze"),
+    path("reminders/<str:token>/skip/", ReminderSkipView.as_view(), name="reminder-skip"),
     # --- content ---
     path("", include(router.urls)),
 ]

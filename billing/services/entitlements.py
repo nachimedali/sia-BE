@@ -21,6 +21,7 @@ spend the workspace cannot cover.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import math
@@ -182,6 +183,22 @@ class Entitlements:
             raise InsufficientVideoUnits(
                 f"This needs {amount} video unit(s); {available} remaining.",
                 detail={"required": amount, "available": available},
+                suggested_plan=self._suggested_plan(),
+            )
+
+    def require_scheduling_horizon(self, scheduled_at: dt.datetime) -> None:
+        """`implementation.md` Phase 8: `POST /posts/{id}/schedule/` rejects a
+        date beyond `Plan.scheduling_horizon_days` with 402, not 400 — it is
+        an entitlement the workspace can upgrade past, not a malformed
+        request."""
+        horizon_days = self.quota("scheduling_horizon_days")
+        if horizon_days == UNLIMITED:
+            return
+        limit = timezone.now() + dt.timedelta(days=horizon_days)
+        if scheduled_at > limit:
+            raise QuotaExceeded(
+                f"Your plan allows scheduling up to {horizon_days} days ahead.",
+                detail={"quota": "scheduling_horizon_days", "limit_days": horizon_days},
                 suggested_plan=self._suggested_plan(),
             )
 
