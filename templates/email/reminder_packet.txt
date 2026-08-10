@@ -1,0 +1,8 @@
+Time to post
+
+Your post is scheduled for now. Open your publish packet to copy the caption
+and hashtags, grab your media, and mark it posted once it's live:
+
+{{ packet_url }}
+
+This link is yours alone — don't forward it.

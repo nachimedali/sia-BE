@@ -59,6 +59,8 @@ LOCAL_APPS = [
     "content",
     "products",
     "ai",
+    "reminders",
+    "scheduling",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -254,6 +256,17 @@ CELERY_BEAT_SCHEDULE = {
     "billing-reconcile-ledgers": {
         "task": "billing.tasks.reconcile_ledgers",
         "schedule": crontab(hour=3, minute=30),
+    },
+    # Every minute, not daily like the billing jobs above: a reminder armed
+    # for now+2m has to fire within that window, not by end of day
+    # (implementation.md Phase 8's own done-when gate).
+    "reminders-send-due": {
+        "task": "reminders.tasks.send_due_reminders",
+        "schedule": crontab(minute="*"),
+    },
+    "reminders-expire-stale": {
+        "task": "reminders.tasks.expire_stale_reminders",
+        "schedule": crontab(hour=4, minute=0),
     },
 }
 
