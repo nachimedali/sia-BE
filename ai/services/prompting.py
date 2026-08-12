@@ -2,14 +2,17 @@
 
 design.md names three retrieved contexts: category signal (a trend cluster or
 `CreativeRecipe`), voice, and performance (the workspace's own top-percentile
-posts). Only voice is available in Phase 7 — category signal needs Phase 10's
-`TrendCluster`/Phase 14's `CreativeRecipe`, and performance needs Phase 11's
-percentile analytics. This is the documented, intentional gap implementation.md
-§9's build-order rationale describes: "Trends (P10) after generation (P7), so
-grounding is a measurable upgrade to a working generator rather than an
-unfalsifiable bet." `GroundedPrompt.grounding` records which sources actually
-fired, so Phase 10/11 slot into `_category_signal`/`_performance_signal` below
-without changing this function's shape (design.md §15.8 A70).
+posts). Two of the three are live: voice since Phase 7, and category signal
+since Phase 10 wired `_category_signal` to the real `TrendCluster` corpus —
+the measurable upgrade implementation.md §9's build-order rationale describes
+("Trends (P10) after generation (P7), so grounding is a measurable upgrade to a
+working generator rather than an unfalsifiable bet"). Performance still needs
+Phase 11's percentile analytics and stays stubbed, with the same
+fails-when-you-wire-it-in test holding the slot (design.md §15.8 A70).
+
+`GroundedPrompt.grounding` records which sources actually fired, so a caller —
+or the eval harness — can assert that a prompt was grounded without re-deriving
+it from the objects.
 
 Product `restrictions` are injected as hard constraints, never as a
 suggestion — the quality gate's brand-constraint check (design.md §8.3)
@@ -41,8 +44,30 @@ class GroundedPrompt:
 
 
 def _category_signal(workspace: Workspace) -> str | None:
-    """Deferred to Phase 10 (`TrendCluster`) / Phase 14 (`CreativeRecipe`)."""
-    return None
+    """The strongest fresh trend cluster for this workspace's category.
+
+    Read-only against the cache: `top_cluster` never triggers an extraction, so
+    a generation cannot be made slow — or made to fail — by a trend vendor
+    being down. No corpus yet means an ungrounded prompt, which is exactly what
+    Phases 7-9 shipped, rather than an error.
+
+    Descriptive, not prescriptive: the cluster's label and how many independent
+    sources it was drawn from. That framing matters — the model is told what is
+    *working* in the category, not handed something to copy, which is the same
+    line design.md §8.4's synthesis rule draws for recipes.
+    """
+    from trends.services import top_cluster
+
+    if workspace.category_id is None or not workspace.platforms:
+        return None
+    cluster = top_cluster(int(workspace.category_id), str(workspace.platforms[0]))
+    if cluster is None:
+        return None
+    return (
+        f"Currently working in this category on {cluster.get_platform_display()}: "
+        f"{cluster.label} (observed across {cluster.item_count} independent posts). "
+        "Take the approach, not the wording."
+    )
 
 
 def _performance_signal(workspace: Workspace) -> str | None:

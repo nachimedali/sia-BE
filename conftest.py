@@ -43,6 +43,50 @@ def outbox() -> list[Any]:
     return _fake_sender.outbox
 
 
+@pytest.fixture(autouse=True)
+def _isolate_platform_adapter() -> Iterator[None]:
+    """The fake publishing adapter is module-level, like the fake mail sender
+    and the fake AI providers — so its recorded calls and its idempotency
+    memory have to be reset between tests or a replay from one leaks into the
+    next."""
+    from channels.adapters.fake import _fake_adapter
+
+    _fake_adapter.clear()
+    yield
+    _fake_adapter.clear()
+
+
+@pytest.fixture
+def platform_adapter() -> Any:
+    from channels.adapters.fake import _fake_adapter
+
+    return _fake_adapter
+
+
+@pytest.fixture
+def paid_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
+    """Auto-publish is a paid feature (D4), so every connect and publish test
+    needs a plan that has it. Pro rather than Advanced: five social accounts
+    is the smaller cap of the two, which is what makes the I6 account-cap test
+    meaningful without seeding ten accounts first."""
+    workspace.plan = plans["pro"]
+    workspace.save(update_fields=["plan"])
+    return workspace
+
+
+@pytest.fixture
+def social_account(paid_workspace: Any) -> Any:
+    from channels.models import SocialAccount
+
+    return SocialAccount.objects.create(
+        workspace=paid_workspace,
+        platform="instagram",
+        handle="@acme",
+        display_name="Acme Studio",
+        provider_account_id="acct-instagram-1",
+    )
+
+
 @pytest.fixture
 def plans(db: None) -> dict[str, Any]:
     from django.core.management import call_command

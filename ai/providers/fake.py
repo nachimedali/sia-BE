@@ -15,7 +15,9 @@ reference entirely, so identity similarity comes out low on purpose.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import math
 import zlib
 from typing import Any
 
@@ -27,6 +29,7 @@ from ai.providers.base import (
     TextGenerationResult,
     TextVariant,
 )
+from common.text import content_tokens
 
 FORCE_VIOLATION_SENTINEL = "FORCE_VIOLATION"
 FORCE_LOW_SIMILARITY_SENTINEL = "FORCE_LOW_SIMILARITY"
@@ -161,7 +164,58 @@ class FakeImageProvider:
         self.calls.clear()
 
 
+class FakeEmbeddingProvider:
+    """Feature hashing, not a stub.
+
+    Tokens are hashed into dimensions and the vector is L2-normalised, so two
+    texts that share vocabulary genuinely come out close and two that share
+    none genuinely come out far apart. That matters more here than for the
+    other fakes: `trends.services.clustering` groups by cosine distance, so a
+    fake returning arbitrary vectors would make every clustering test a test of
+    nothing. The trade-off is honest — no semantics, only overlap — which is
+    the same trade-off the image fake makes by drawing a real PNG that is not a
+    real photograph.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:
+        self.calls.append(list(texts))
+        return [self._vector(text) for text in texts]
+
+    @staticmethod
+    def _vector(text: str) -> list[float]:
+        # Imported here so the module keeps working without the trends app
+        # installed — the other two fakes have no such dependency either.
+        from trends.models import EMBEDDING_DIMENSIONS
+
+        vector = [0.0] * EMBEDDING_DIMENSIONS
+        # Content words only. Two posts about the same thing share their nouns,
+        # not their articles — counting "the" would put every English sentence
+        # within a hair of every other, which is the opposite of what a real
+        # embedding does and would make the similarity threshold meaningless.
+        for token in dict.fromkeys(content_tokens(text)):
+            digest = hashlib.blake2b(token.encode(), digest_size=8).digest()
+            index = int.from_bytes(digest[:4], "big") % EMBEDDING_DIMENSIONS
+            # The sign bit spreads tokens across the space instead of piling
+            # every one into the positive orthant, where everything correlates.
+            sign = 1.0 if digest[4] % 2 else -1.0
+            vector[index] += sign
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0:
+            # An empty or punctuation-only body still needs a unit vector, or
+            # cosine distance is undefined against it.
+            vector[0] = 1.0
+            return vector
+        return [value / norm for value in vector]
+
+    def clear(self) -> None:
+        self.calls.clear()
+
+
 # Module-level so tests can inspect calls after a service/view has run
 # (mirrors `billing.gateways.fake._fake_gateway`).
 _fake_text_provider = FakeTextProvider()
 _fake_image_provider = FakeImageProvider()
+_fake_embedding_provider = FakeEmbeddingProvider()

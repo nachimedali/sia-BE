@@ -1,0 +1,142 @@
+{
+  "_comment": [
+    "Fixture corpus behind FakeTrendVendor (implementation.md Phase 10:",
+    "'fixture-backed fakes'). Shaped to exercise the pipeline, not just to",
+    "satisfy it: each kind carries a near-duplicate pair, at least one",
+    "non-English item, and one spam item, so stage 2's language filter,",
+    "dedup and spam heuristics all have something real to reject. The",
+    "'unboxing' items in each kind share vocabulary on purpose — they are",
+    "what stage 4 is expected to cluster together."
+  ],
+  "CREATIVE_CENTER": [
+    {
+      "external_id": "cc-1",
+      "posted_at": "2026-08-04T09:00:00+00:00",
+      "body": "Slow unboxing of the ceramic mug, one hand, natural window light",
+      "modality": "VIDEO",
+      "author_handle": "@studio.clay",
+      "author_followers": 48000,
+      "media_url": "https://cdn.example.test/cc-1.mp4",
+      "lang": "en",
+      "raw_metrics": { "likes": 41000, "comments": 820, "shares": 2600, "saves": 5100 }
+    },
+    {
+      "external_id": "cc-2",
+      "posted_at": "2026-08-05T14:30:00+00:00",
+      "body": "Unboxing the ceramic mug slowly in natural light, single hand in frame",
+      "modality": "VIDEO",
+      "author_handle": "@potteryhaus",
+      "author_followers": 22000,
+      "media_url": "https://cdn.example.test/cc-2.mp4",
+      "lang": "en",
+      "raw_metrics": { "likes": 18000, "comments": 300, "shares": 900, "saves": 2200 }
+    },
+    {
+      "external_id": "cc-3",
+      "posted_at": "2026-08-05T15:00:00+00:00",
+      "body": "Unboxing the ceramic mug slowly in natural light, single hand in frame",
+      "modality": "VIDEO",
+      "author_handle": "@repost.bot",
+      "author_followers": 400,
+      "media_url": "https://cdn.example.test/cc-3.mp4",
+      "lang": "en",
+      "raw_metrics": { "likes": 12, "comments": 0, "shares": 0, "saves": 1 }
+    },
+    {
+      "external_id": "cc-4",
+      "posted_at": "2026-08-06T08:15:00+00:00",
+      "body": "Table styling flatlay, three props, top-down, warm palette",
+      "modality": "IMAGE",
+      "author_handle": "@ceramics.daily",
+      "author_followers": 91000,
+      "media_url": "https://cdn.example.test/cc-4.jpg",
+      "lang": "en",
+      "raw_metrics": { "likes": 30000, "comments": 410, "shares": 1200, "saves": 8800 }
+    },
+    {
+      "external_id": "cc-5",
+      "posted_at": "2026-08-06T10:00:00+00:00",
+      "body": "FREE GIVEAWAY!!! CLICK THE LINK IN BIO NOW!!! FREE FREE FREE",
+      "modality": "IMAGE",
+      "author_handle": "@giveaway.now",
+      "author_followers": 120,
+      "media_url": "https://cdn.example.test/cc-5.jpg",
+      "lang": "en",
+      "raw_metrics": { "likes": 4, "comments": 0, "shares": 0, "saves": 0 }
+    },
+    {
+      "external_id": "cc-6",
+      "posted_at": "2026-08-06T11:00:00+00:00",
+      "body": "Déballage lent du mug en céramique à la lumière naturelle",
+      "modality": "VIDEO",
+      "author_handle": "@ceramique.fr",
+      "author_followers": 15000,
+      "media_url": "https://cdn.example.test/cc-6.mp4",
+      "lang": "fr",
+      "raw_metrics": { "likes": 6000, "comments": 90, "shares": 200, "saves": 700 }
+    }
+  ],
+  "ADLIB": [
+    {
+      "external_id": "ad-1",
+      "posted_at": "2026-08-03T12:00:00+00:00",
+      "body": "Handmade ceramic mug, kiln fired, ships in two days",
+      "modality": "IMAGE",
+      "author_handle": "Clay & Co",
+      "author_followers": 12000,
+      "media_url": "https://cdn.example.test/ad-1.jpg",
+      "lang": "en",
+      "raw_metrics": { "likes": 900, "comments": 40, "shares": 60, "saves": 220 }
+    },
+    {
+      "external_id": "ad-2",
+      "posted_at": "2026-08-05T12:00:00+00:00",
+      "body": "Handmade ceramic mug kiln fired and shipped in two days",
+      "modality": "IMAGE",
+      "author_handle": "Clay and Company",
+      "author_followers": 9000,
+      "media_url": "https://cdn.example.test/ad-2.jpg",
+      "lang": "en",
+      "raw_metrics": { "likes": 640, "comments": 22, "shares": 31, "saves": 140 }
+    }
+  ],
+  "YOUTUBE": [
+    {
+      "external_id": "yt-1",
+      "posted_at": "2026-08-02T18:00:00+00:00",
+      "body": "How we throw and glaze a ceramic mug from start to finish",
+      "modality": "VIDEO",
+      "author_handle": "The Pottery Channel",
+      "author_followers": 210000,
+      "media_url": "https://www.youtube.com/watch?v=yt-1",
+      "lang": "en",
+      "raw_metrics": { "likes": 15000, "comments": 900 }
+    }
+  ],
+  "REDDIT": [
+    {
+      "external_id": "rd-1",
+      "posted_at": "2026-08-04T20:00:00+00:00",
+      "body": "What makes a ceramic mug feel expensive in a product photo?",
+      "modality": "TEXT",
+      "author_handle": "u/kilnfired",
+      "author_followers": 0,
+      "media_url": "https://reddit.test/rd-1",
+      "lang": "en",
+      "raw_metrics": { "likes": 2400, "comments": 310 }
+    }
+  ],
+  "RSS": [
+    {
+      "external_id": "rss-1",
+      "posted_at": "2026-08-01T07:00:00+00:00",
+      "body": "Ceramics trend report: warm palettes and single-hand demonstrations",
+      "modality": "TEXT",
+      "author_handle": "Trade Weekly",
+      "author_followers": 0,
+      "media_url": "https://trade.test/rss-1",
+      "lang": "en",
+      "raw_metrics": {}
+    }
+  ]
+}

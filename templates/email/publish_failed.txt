@@ -1,0 +1,10 @@
+A scheduled post could not be published
+
+We tried to publish your post to {{ target.platform }} and it did not go
+through. Nothing was posted there, and we have stopped retrying:
+
+{{ error.message }}
+
+Open the post to fix it and reschedule:
+
+{{ site_url }}/app/posts/{{ post.id }}

@@ -77,6 +77,12 @@ class Workspace(models.Model):
     )
     trial_ends_at = models.DateTimeField(null=True, blank=True)
     stripe_customer_id = models.CharField(max_length=64, blank=True)
+    # The publishing provider's tenant for this workspace (design.md §6.2,
+    # Phase 9). Lives here rather than on `channels.SocialAccount` because it
+    # is created before the first account exists and shared by all of them —
+    # exactly the shape `stripe_customer_id` above already has: a third
+    # party's identifier for this workspace, minted on first use.
+    provider_profile_id = models.CharField(max_length=64, blank=True)
     referral_code = models.CharField(max_length=32, unique=True, default=generate_referral_code)
 
     onboarding_complete = models.BooleanField(default=False)

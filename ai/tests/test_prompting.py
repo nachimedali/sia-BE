@@ -42,14 +42,24 @@ def test_voice_profile_feeds_the_system_prompt(workspace: Any, voice_profile: An
     assert "synergy" in prompt.system
 
 
-def test_category_signal_and_performance_are_not_yet_available(workspace: Any) -> None:
-    """Deferred to Phase 10/11 (design.md A70) — asserted explicitly so a
-    later phase wiring them in has a test that starts failing, rather than a
-    silent no-op nobody notices stayed a no-op."""
+def test_performance_grounding_is_not_yet_available(workspace: Any) -> None:
+    """Still deferred to Phase 11 (design.md A70) — asserted explicitly so the
+    phase wiring it in has a test that starts failing, rather than a silent
+    no-op nobody notices stayed a no-op. Its twin for the category signal was
+    this test's other half until Phase 10 supplied one; see
+    `trends/tests/test_grounding.py`."""
+    prompt = assemble_text_prompt(idea="launch day", workspace=workspace)
+
+    assert prompt.grounding["performance"] is False
+
+
+def test_category_signal_is_absent_until_a_corpus_exists(workspace: Any) -> None:
+    """Grounding is opportunistic: a workspace whose category has never been
+    extracted generates exactly as it did in Phase 7, rather than failing or
+    waiting on a vendor."""
     prompt = assemble_text_prompt(idea="launch day", workspace=workspace)
 
     assert prompt.grounding["category_signal"] is False
-    assert prompt.grounding["performance"] is False
 
 
 def test_image_prompt_carries_render_style_and_scene(workspace: Any, product: Any) -> None:

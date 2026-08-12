@@ -8,6 +8,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from ai.models import Generation, GenerationKind, GenerationMode, VoiceProfile
+from channels.models import SocialAccount
 from config.api_urls import router
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
@@ -216,12 +217,16 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 6
+    assert len(router.registry) == 7
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
-    auth_client: Any, workspace: Any, user: Any, plans: Any, make_png_upload: Any
+    auth_client: Any, paid_workspace: Any, user: Any, plans: Any, make_png_upload: Any
 ) -> None:
+    # A paid plan, not Free: `SocialAccountViewSet` sits behind
+    # `HasFeature("auto_publish")` (D4), and a 402 from that gate would mask
+    # whether the tenancy filter underneath it actually works — which is the
+    # only thing this sweep is here to prove.
     other_owner = get_user_model().objects.create_user(
         email="other-owner@example.com", password="x"
     )
@@ -242,6 +247,9 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
     )
     voice_profile = VoiceProfile.objects.create(workspace=other_workspace, name="Not yours")
     reminder = Reminder.objects.create(post=post, send_at=post.created_at)
+    social_account = SocialAccount.objects.create(
+        workspace=other_workspace, platform="instagram", provider_account_id="not-yours"
+    )
 
     objects_by_basename = {
         "post": post,
@@ -250,6 +258,7 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         "generation": generation,
         "voice-profile": voice_profile,
         "reminder": reminder,
+        "social-account": social_account,
     }
 
     for prefix, _viewset, basename in router.registry:

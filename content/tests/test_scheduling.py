@@ -80,11 +80,11 @@ def test_schedule_auto_publish_requires_the_feature(
 
 
 def test_schedule_auto_publish_sets_scheduled_on_a_plan_with_the_feature(
-    auth_client: Any, workspace: Any, user: Any, plans: Any
+    auth_client: Any, paid_workspace: Any, user: Any, social_account: Any
 ) -> None:
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
-    post = create_post(workspace=workspace, author=user, master_body="Auto-publish me")
+    """A connected account is a precondition as of Phase 9 — scheduling now
+    builds one `PostTarget` per account, so there has to be one to build."""
+    post = create_post(workspace=paid_workspace, author=user, master_body="Auto-publish me")
     soon = timezone.now() + dt.timedelta(days=1)
 
     response = auth_client.post(

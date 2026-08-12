@@ -14,6 +14,7 @@ import datetime as dt
 from billing.services.entitlements import entitlements_for
 from content.models import DeliveryMode, Post, PostStatus
 from reminders.services import arm_reminder
+from scheduling.publishing import build_targets
 
 
 def schedule_post(*, post: Post, delivery_mode: str, scheduled_at: dt.datetime) -> Post:
@@ -24,13 +25,15 @@ def schedule_post(*, post: Post, delivery_mode: str, scheduled_at: dt.datetime) 
     post.scheduled_at = scheduled_at
 
     if delivery_mode == DeliveryMode.AUTO_PUBLISH:
-        # D4: Free tier is reminders-only. Publishing itself is Phase 9
-        # (channels/SocialAccount doesn't exist yet) — this only reserves the
-        # slot and gates the feature; the publish_q Beat scan that actually
-        # sends it lands with that phase.
+        # D4: Free tier is reminders-only.
         entitlements.require_feature("auto_publish")
         post.status = PostStatus.SCHEDULED
         post.save(update_fields=["delivery_mode", "scheduled_at", "status", "updated_at"])
+        # Targets are built now, not when the post fires: the calendar can
+        # then show where it is going before it goes, and the idempotency key
+        # each target carries is minted once here rather than by whichever
+        # publish attempt happens to run first (I9, scheduling/publishing.py).
+        build_targets(post)
     else:
         post.status = PostStatus.REMINDER_ARMED
         post.save(update_fields=["delivery_mode", "scheduled_at", "status", "updated_at"])

@@ -125,6 +125,11 @@ class Post(models.Model):
         indexes: ClassVar[list[models.Index]] = [
             models.Index(fields=["workspace", "-created_at"]),
             models.Index(fields=["workspace", "status"]),
+            # The due-publish scan (`scheduling.publishing.due_post_ids`) runs
+            # every minute across every workspace, so no workspace-leading index
+            # helps it. Same shape, and the same reason, as
+            # `Reminder`'s `(state, send_at)`.
+            models.Index(fields=["status", "scheduled_at"]),
         ]
 
     def __str__(self) -> str:
@@ -247,15 +252,23 @@ class PostTarget(models.Model):
     be written that is provably the same shape `/posts/preview/` returns
     (design.md §8.6, A47).
 
-    Unique on `(post, platform)` rather than `(post, social_account)`: without
-    `social_account` yet, platform is the only thing distinguishing two targets
-    on the same post. This stops being correct the moment Phase 9 lets one
-    workspace connect two accounts on the same platform, and moves to
-    `(post, social_account)` in that phase's migration (A50).
+    Unique on `(post, social_account)` as of Phase 9, which is when one
+    workspace could first connect two accounts on the same platform and make
+    the old `(post, platform)` constraint wrong (A50). `social_account` stays
+    nullable: a reminder-delivered post has a target row describing what was
+    rendered without any connected account behind it, and Free-tier workspaces
+    never have one at all.
     """
 
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="targets")
     platform = models.CharField(max_length=16, choices=Platform.choices)
+    social_account = models.ForeignKey(
+        "channels.SocialAccount",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="post_targets",
+    )
     rendered_payload = models.JSONField(default=dict, blank=True)
     provider_post_id = models.CharField(max_length=128, blank=True)
     platform_post_id = models.CharField(max_length=128, blank=True)
@@ -276,7 +289,17 @@ class PostTarget(models.Model):
     class Meta:
         ordering: ClassVar[list[str]] = ["platform"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
-            models.UniqueConstraint(fields=["post", "platform"], name="unique_post_platform_target")
+            models.UniqueConstraint(
+                fields=["post", "social_account"], name="unique_post_social_account_target"
+            ),
+            # Two targets on the same platform are only meaningful when they
+            # name different accounts; without one, platform is still the
+            # discriminator (a reminder-mode post, or Free tier).
+            models.UniqueConstraint(
+                fields=["post", "platform"],
+                condition=models.Q(social_account__isnull=True),
+                name="unique_post_platform_target_unconnected",
+            ),
         ]
         indexes: ClassVar[list[models.Index]] = [models.Index(fields=["state"])]
 
