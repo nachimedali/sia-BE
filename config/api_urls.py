@@ -36,6 +36,7 @@ from billing.views import (
     VideoLedgerView,
 )
 from categories.views import CategoryListView
+from channels.views import ChannelConnectView, SocialAccountViewSet
 from common.health import HealthView
 from content.views import MediaAssetViewSet, PostViewSet
 from onboarding.views import OnboardingCompleteView, OnboardingView
@@ -47,6 +48,7 @@ from reminders.views import (
     ReminderSnoozeView,
     ReminderViewSet,
 )
+from trends.views import TrendListView, TrendRefreshView
 
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
@@ -55,6 +57,7 @@ router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
 router.register("reminders", ReminderViewSet, basename="reminder")
+router.register("channels", SocialAccountViewSet, basename="social-account")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
@@ -91,6 +94,23 @@ urlpatterns = [
     path("billing/purchase/", PurchaseView.as_view(), name="billing-purchase"),
     path("billing/portal/", BillingPortalView.as_view(), name="billing-portal"),
     path("billing/webhook/stripe/", StripeWebhookView.as_view(), name="billing-webhook-stripe"),
+    # --- channels ---
+    # A plain path, not a router action: `{platform}` is not a workspace-scoped
+    # pk, so there is no object here for the tenancy sweep (A52) to walk — the
+    # workspace comes from the session. The ViewSet that *does* own objects is
+    # registered above.
+    path(
+        "channels/<str:platform>/connect/",
+        ChannelConnectView.as_view(),
+        name="channel-connect",
+    ),
+    # --- trends ---
+    # Plain paths, not a router registration: a `TrendCluster` belongs to a
+    # `Category`, not to a workspace — every workspace in a vertical reads the
+    # same corpus (D11) — so there is no workspace-scoped object for the
+    # tenancy sweep (A52) to walk.
+    path("trends/", TrendListView.as_view(), name="trends"),
+    path("trends/refresh/", TrendRefreshView.as_view(), name="trends-refresh"),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
     # --- ai ---

@@ -91,3 +91,20 @@ class ImageProvider(Protocol):
         batch: bool,
         model: str | None = None,
     ) -> ImageGenerationResult: ...
+
+
+class EmbeddingProvider(Protocol):
+    """Text → vector, for the trend clustering in design.md §8.4.
+
+    A third AI port rather than a method on `TextProvider`: embeddings are a
+    different endpoint, a different model and a different price, and the one
+    caller (`trends.services.clustering`) has no use for chat completion. It
+    lands here rather than in `trends/providers/` because the vendor is the
+    same class of dependency the other two have — an LLM gateway, configured
+    by `LLM_BASE_URL` — while a `TrendVendor` is a data source.
+    """
+
+    def embed(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:
+        """One vector per input, in the order given. Implementations must return
+        exactly `len(texts)` vectors, each of `EMBEDDING_DIMENSIONS` width."""
+        ...

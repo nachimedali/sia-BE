@@ -61,6 +61,8 @@ LOCAL_APPS = [
     "ai",
     "reminders",
     "scheduling",
+    "channels",
+    "trends",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -221,6 +223,9 @@ SPECTACULAR_SETTINGS = {
         # Same collision, `GenerationKind` on both `Generation.kind` and
         # `GenerationVariant.kind`.
         "GenerationKindEnum": "ai.models.GenerationKind",
+        # And again for `Platform`, on `SocialAccount.platform` and the
+        # connect-completion request's own `platform` field (Phase 9).
+        "PlatformEnum": "content.models.Platform",
     },
 }
 
@@ -268,6 +273,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "reminders.tasks.expire_stale_reminders",
         "schedule": crontab(hour=4, minute=0),
     },
+    # Every minute, for the same reason the reminder scan is: "a post
+    # scheduled for 09:00 goes at 09:00" (design.md §5.1) is not a promise a
+    # coarser cadence can keep.
+    "scheduling-publish-due": {
+        "task": "scheduling.tasks.publish_due_posts",
+        "schedule": crontab(minute="*"),
+    },
 }
 
 # -----------------------------------------------------------------------------
@@ -305,6 +317,44 @@ IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-ima
 USE_FAKE_AI_PROVIDERS = env.bool(
     "USE_FAKE_AI_PROVIDERS", default=not (LLM_API_KEY and IMAGE_PROVIDER_API_KEY)
 )
+
+# Embeddings share the LLM gateway (`LLM_BASE_URL`/`LLM_API_KEY`) and the same
+# fake switch — one vendor relationship, three endpoints. Changing the model
+# changes the vector width, which is a schema fact: see
+# `trends.models.EMBEDDING_DIMENSIONS`.
+EMBEDDING_MODEL = env("EMBEDDING_MODEL", default="text-embedding-3-small")
+
+# -----------------------------------------------------------------------------
+# Trend vendors — design.md §9, D12. Ad Library and Creative Center through a
+# data vendor (which is where the ToS exposure belongs); YouTube and Reddit
+# direct. Same USE_FAKE_* shape as every other port.
+# -----------------------------------------------------------------------------
+TREND_VENDOR_BASE_URL = env("TREND_VENDOR_BASE_URL", default="https://trends.p.rapidapi.com")
+TREND_VENDOR_API_KEY = env("TREND_VENDOR_API_KEY", default="")
+TREND_VENDOR_TIMEOUT_SECONDS = env.int("TREND_VENDOR_TIMEOUT_SECONDS", default=20)
+YOUTUBE_API_KEY = env("YOUTUBE_API_KEY", default="")
+# Reddit asks for a descriptive agent and rate-limits generic ones harder.
+REDDIT_USER_AGENT = env("REDDIT_USER_AGENT", default="occs-trends/1.0")
+
+USE_FAKE_TREND_VENDORS = env.bool(
+    "USE_FAKE_TREND_VENDORS", default=not (TREND_VENDOR_API_KEY and YOUTUBE_API_KEY)
+)
+
+# -----------------------------------------------------------------------------
+# Publishing provider — design.md §9, D2/D3, verified by V1 (§14). All platform
+# credentials live with the provider; OCCS stores none (§6.2). Same USE_FAKE_*
+# shape as billing/storage/AI: no key configured means no provider to fake
+# around.
+# -----------------------------------------------------------------------------
+ZERNIO_BASE_URL = env("ZERNIO_BASE_URL", default="https://zernio.com/api")
+ZERNIO_API_KEY = env("ZERNIO_API_KEY", default="")
+ZERNIO_TIMEOUT_SECONDS = env.int("ZERNIO_TIMEOUT_SECONDS", default=30)
+
+USE_FAKE_PLATFORM_ADAPTER = env.bool("USE_FAKE_PLATFORM_ADAPTER", default=not ZERNIO_API_KEY)
+
+# The publishing provider fetches media by URL, so a storage-relative path is
+# unusable to it. S3/MinIO already yields absolute URLs; local disk does not.
+PUBLIC_MEDIA_BASE_URL = env("PUBLIC_MEDIA_BASE_URL", default=SITE_URL)
 
 # -----------------------------------------------------------------------------
 # Encryption — design.md §11. Built now even though v1 stores no platform

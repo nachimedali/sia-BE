@@ -99,7 +99,7 @@ DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
 testpaths = [
     "tests", "common", "accounts", "workspaces", "categories", "billing", "onboarding",
-    "content", "products", "ai", "reminders", "scheduling", "config",
+    "content", "products", "ai", "reminders", "scheduling", "channels", "trends", "config",
 ]
 addopts = [
     "--strict-markers",
@@ -115,7 +115,7 @@ markers = [
 ]
 # Coverage floors are applied in CI, where the whole suite runs at once:
 #   pytest --cov --cov-fail-under=85
-# with billing/ ai/ scheduling/ reminders/ held to 95%.
+# with billing/ ai/ scheduling/ reminders/ channels/ trends/ held to 95%.
 
 [tool.coverage.run]
 source = ["."]

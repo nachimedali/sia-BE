@@ -28,6 +28,7 @@ from billing.models import (
     VideoReason,
 )
 from billing.services import ledger
+from channels.services import park_accounts_over_cap
 from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
 
@@ -242,6 +243,11 @@ def downgrade_to_free(workspace: Workspace, *, reason: str = "trial expired") ->
     ledger.grant_video_units(
         workspace, plan.included_videos, note=f"downgraded from {previous}: {reason}"
     )
+
+    # Phase 9's half of the promise above: accounts beyond Free's cap are
+    # parked, not disconnected — the provider still holds them, so paying
+    # again brings them straight back (I10).
+    park_accounts_over_cap(workspace)
 
     logger.info(
         "workspace downgraded to free",

@@ -22,9 +22,12 @@ import httpx
 import pytest
 from django.test import override_settings
 
-from ai.providers.fake import FakeImageProvider, FakeTextProvider
+from ai.providers.embeddings import OpenAIEmbeddingProvider, get_embedding_provider
+from ai.providers.fake import FakeEmbeddingProvider, FakeImageProvider, FakeTextProvider
 from ai.providers.llm_text import LLMTextProvider, get_text_provider
 from ai.providers.nanobanana_image import NanoBananaImageProvider, get_image_provider
+from common.exceptions import ProviderError
+from tests.httpx_transport import patch_httpx_transport
 
 
 def _chat_completion(content: str) -> dict[str, Any]:
@@ -32,20 +35,6 @@ def _chat_completion(content: str) -> dict[str, Any]:
         "choices": [{"message": {"content": content}}],
         "usage": {"prompt_tokens": 12, "completion_tokens": 34},
     }
-
-
-def _patch_transport(monkeypatch: Any, handler: Any) -> None:
-    """Swaps only the network transport, leaving `_client()`'s own logic —
-    base URL, auth header, timeout — running for real. Patching `_client()`
-    itself, instead, would bypass exactly the parameter assembly this
-    contract test exists to cover."""
-    original_init = httpx.Client.__init__
-
-    def patched_init(self: httpx.Client, *args: Any, **kwargs: Any) -> None:
-        kwargs["transport"] = httpx.MockTransport(handler)
-        original_init(self, *args, **kwargs)
-
-    monkeypatch.setattr(httpx.Client, "__init__", patched_init)
 
 
 @pytest.fixture
@@ -56,7 +45,7 @@ def text_transport(monkeypatch: Any) -> list[httpx.Request]:
         captured.append(request)
         return httpx.Response(200, json=_chat_completion("a cosy morning, remastered"))
 
-    _patch_transport(monkeypatch, handler)
+    patch_httpx_transport(monkeypatch, handler)
     return captured
 
 
@@ -111,7 +100,7 @@ def image_transport(monkeypatch: Any) -> list[httpx.Request]:
             },
         )
 
-    _patch_transport(monkeypatch, handler)
+    patch_httpx_transport(monkeypatch, handler)
     return captured
 
 
@@ -152,7 +141,7 @@ def test_real_text_provider_classify_constraints_reports_reply_verbatim(monkeypa
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_chat_completion("always show the handle"))
 
-    _patch_transport(monkeypatch, handler)
+    patch_httpx_transport(monkeypatch, handler)
 
     violated = LLMTextProvider().classify_constraints(
         image_bytes=b"png-bytes", restrictions=["always show the handle", "no hands in frame"]
@@ -254,3 +243,118 @@ def test_live_image_provider_generates_an_image() -> None:
         prompt="a plain grey square", reference_images=[], aspect="1:1", n=1, batch=False
     )
     assert result.variants
+
+
+# -----------------------------------------------------------------------------
+# EmbeddingProvider — the third port (Phase 10, design.md §8.4)
+# -----------------------------------------------------------------------------
+def test_embeddings_are_requested_in_one_batched_call(monkeypatch: Any) -> None:
+    """One request for the whole window. Per-item calls would turn clustering
+    a fortnight of a busy category into hundreds of round trips."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"index": index, "embedding": [float(index)] * 4}
+                    for index in range(len(body["input"]))
+                ]
+            },
+        )
+
+    patch_httpx_transport(monkeypatch, handler)
+    vectors = OpenAIEmbeddingProvider().embed(["one", "two", "three"])
+
+    assert len(captured) == 1
+    assert json.loads(captured[0].content)["input"] == ["one", "two", "three"]
+    assert len(vectors) == 3
+
+
+def test_embeddings_are_paired_back_by_index_not_by_arrival(monkeypatch: Any) -> None:
+    """The endpoint documents `index` rather than promising order, and the
+    caller pairs vectors to items positionally — so a shuffled response must
+    not silently attach one item's meaning to another."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"index": 2, "embedding": [2.0]},
+                    {"index": 0, "embedding": [0.0]},
+                    {"index": 1, "embedding": [1.0]},
+                ]
+            },
+        )
+
+    patch_httpx_transport(monkeypatch, handler)
+
+    assert OpenAIEmbeddingProvider().embed(["a", "b", "c"]) == [[0.0], [1.0], [2.0]]
+
+
+def test_a_short_embedding_response_is_refused(monkeypatch: Any) -> None:
+    """Mis-pairing is worse than failing: it would ground a prompt in another
+    item's meaning, invisibly."""
+    patch_httpx_transport(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]}),
+    )
+
+    with pytest.raises(ProviderError):
+        OpenAIEmbeddingProvider().embed(["a", "b"])
+
+
+def test_embedding_nothing_makes_no_request(monkeypatch: Any) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no request should be made for an empty batch")
+
+    patch_httpx_transport(monkeypatch, handler)
+
+    assert OpenAIEmbeddingProvider().embed([]) == []
+
+
+@override_settings(USE_FAKE_AI_PROVIDERS=True)
+def test_fake_embeddings_are_resolved_when_configured() -> None:
+    assert isinstance(get_embedding_provider(), FakeEmbeddingProvider)
+
+
+@override_settings(USE_FAKE_AI_PROVIDERS=False)
+def test_real_embeddings_are_resolved_otherwise() -> None:
+    assert isinstance(get_embedding_provider(), OpenAIEmbeddingProvider)
+
+
+def test_the_fake_embedding_separates_related_from_unrelated_text() -> None:
+    """The property `trends.services.clustering` depends on. A fake returning
+    arbitrary vectors would make every clustering test a test of nothing."""
+    import math
+
+    provider = FakeEmbeddingProvider()
+    related, rephrased, unrelated = provider.embed(
+        [
+            "slow unboxing of the ceramic mug in natural light",
+            "unboxing the ceramic mug slowly in natural light",
+            "quarterly logistics costs for freight forwarding",
+        ]
+    )
+
+    def cosine(left: list[float], right: list[float]) -> float:
+        return sum(a * b for a, b in zip(left, right, strict=True))
+
+    assert math.isclose(sum(v * v for v in related), 1.0, rel_tol=1e-9)
+    assert cosine(related, rephrased) > 0.6
+    assert cosine(related, unrelated) < 0.2
+
+
+@pytest.mark.integration
+def test_live_embedding_provider_returns_vectors() -> None:
+    from django.conf import settings
+
+    if not settings.LLM_API_KEY:
+        pytest.skip("no LLM API key configured")
+
+    vectors = OpenAIEmbeddingProvider().embed(["a ceramic mug"])
+    assert vectors and len(vectors[0]) > 100

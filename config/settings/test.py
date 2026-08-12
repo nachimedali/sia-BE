@@ -38,6 +38,8 @@ RATELIMIT_REDIS_URL = _test_redis_url
 USE_FAKE_MAIL = True
 USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
+USE_FAKE_PLATFORM_ADAPTER = True
+USE_FAKE_TREND_VENDORS = True
 MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="occs-test-media-"))
 STORAGES = {
     **STORAGES,  # noqa: F405
