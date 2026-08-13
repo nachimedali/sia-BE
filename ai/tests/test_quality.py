@@ -142,3 +142,24 @@ def test_text_gate_rejects_banned_phrases() -> None:
     )
     assert not result.passed
     assert "banned_phrases" in result.rejected_reason
+
+
+def test_the_repurpose_ceiling_is_wired_in_before_repurpose_generations_are() -> None:
+    """`origin_images` has no production caller yet — `GenerationMode.REPURPOSE`
+    is still excluded from `pipeline.ALLOWED_MODES`, and §8.9's reissue
+    generation is Phase 12/14's.
+
+    A parameter reachable only from tests is the shape A92 and A118 rule
+    against, so this is the guard that stops it being a silent promise: the day
+    REPURPOSE becomes generatable, this test fails until the pipeline threads
+    the origin's bytes through. A silently-unenforced ceiling would be worse
+    than an absent one (A128's logic).
+    """
+    from ai.models import GenerationMode
+    from ai.services import pipeline
+
+    assert GenerationMode.REPURPOSE not in pipeline.ALLOWED_MODES, (
+        "REPURPOSE is now generatable — pass `origin_images` from the pipeline "
+        "into run_image_quality_gate so REPURPOSE_MAX_SIMILARITY is enforced, "
+        "then delete this test."
+    )

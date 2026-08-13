@@ -24,6 +24,16 @@ from accounts.views import (
     VerifyEmailView,
 )
 from ai.views import GenerateView, GenerationViewSet, VoiceProfileViewSet
+from analytics.views import (
+    AnalyticsBestTimesView,
+    AnalyticsCommentsView,
+    AnalyticsOverviewView,
+    AnalyticsPostsView,
+    AnalyticsSentimentView,
+    RepurposeAcceptView,
+    RepurposeDismissView,
+    RepurposeQueueView,
+)
 from billing.views import (
     BillingPortalView,
     CreditLedgerView,
@@ -103,6 +113,27 @@ urlpatterns = [
         "channels/<str:platform>/connect/",
         ChannelConnectView.as_view(),
         name="channel-connect",
+    ),
+    # --- analytics ---
+    # Plain paths: none of these returns a workspace-scoped object by pk, so
+    # there is nothing for the tenancy sweep (A52) to walk. The two that do
+    # take a pk resolve it through a workspace-filtered queryset, giving the
+    # same 404-not-403 answer the shared mixin gives (A9).
+    path("analytics/overview/", AnalyticsOverviewView.as_view(), name="analytics-overview"),
+    path("analytics/posts/", AnalyticsPostsView.as_view(), name="analytics-posts"),
+    path("analytics/best-times/", AnalyticsBestTimesView.as_view(), name="analytics-best-times"),
+    path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
+    path("analytics/comments/", AnalyticsCommentsView.as_view(), name="analytics-comments"),
+    path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
+    path(
+        "analytics/repurpose/<int:pk>/accept/",
+        RepurposeAcceptView.as_view(),
+        name="analytics-repurpose-accept",
+    ),
+    path(
+        "analytics/repurpose/<int:pk>/dismiss/",
+        RepurposeDismissView.as_view(),
+        name="analytics-repurpose-dismiss",
     ),
     # --- trends ---
     # Plain paths, not a router registration: a `TrendCluster` belongs to a

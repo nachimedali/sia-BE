@@ -16,7 +16,6 @@ from django.db import connection, connections, transaction
 
 from billing.models import (
     UNLIMITED,
-    AppendOnlyError,
     CreditLedger,
     CreditReason,
     VideoLedger,
@@ -24,6 +23,7 @@ from billing.models import (
 )
 from billing.services import ledger
 from common.exceptions import InsufficientCredits, InsufficientVideoUnits
+from common.records import AppendOnlyError
 
 pytestmark = pytest.mark.django_db
 

@@ -42,24 +42,19 @@ def test_voice_profile_feeds_the_system_prompt(workspace: Any, voice_profile: An
     assert "synergy" in prompt.system
 
 
-def test_performance_grounding_is_not_yet_available(workspace: Any) -> None:
-    """Still deferred to Phase 11 (design.md A70) — asserted explicitly so the
-    phase wiring it in has a test that starts failing, rather than a silent
-    no-op nobody notices stayed a no-op. Its twin for the category signal was
-    this test's other half until Phase 10 supplied one; see
-    `trends/tests/test_grounding.py`."""
-    prompt = assemble_text_prompt(idea="launch day", workspace=workspace)
+def test_grounding_is_absent_until_there_is_something_to_ground_in(workspace: Any) -> None:
+    """Grounding is opportunistic: a workspace with no trend corpus and no
+    published history generates exactly as it did in Phase 7, rather than
+    failing or waiting on anything.
 
-    assert prompt.grounding["performance"] is False
-
-
-def test_category_signal_is_absent_until_a_corpus_exists(workspace: Any) -> None:
-    """Grounding is opportunistic: a workspace whose category has never been
-    extracted generates exactly as it did in Phase 7, rather than failing or
-    waiting on a vendor."""
+    A70 is closed — both signals are wired now, so this asserts the *empty*
+    case rather than the stubbed one. Their live halves are covered where the
+    data lives: `trends/tests/test_grounding.py` and
+    `analytics/tests/test_grounding.py`."""
     prompt = assemble_text_prompt(idea="launch day", workspace=workspace)
 
     assert prompt.grounding["category_signal"] is False
+    assert prompt.grounding["performance"] is False
 
 
 def test_image_prompt_carries_render_style_and_scene(workspace: Any, product: Any) -> None:

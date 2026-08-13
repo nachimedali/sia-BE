@@ -21,6 +21,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from common.ratelimit import ProviderRateLimiter
+from common.timestamps import parse_or_none
 from trends.providers.base import TrendVendorError
 
 logger = logging.getLogger(__name__)
@@ -80,17 +81,12 @@ def newer_than(items: list[Any], since: dt.datetime | None, key: Any) -> list[An
 
 
 def parse_timestamp(value: Any) -> dt.datetime:
-    """Vendors disagree about time: epoch seconds, ISO with a `Z`, ISO with an
-    offset. All three land here, and anything unreadable becomes "now" rather
-    than dropping the item — a wrong recency score is recoverable on the next
-    extraction, a lost item is not."""
-    if isinstance(value, (int, float)):
-        return dt.datetime.fromtimestamp(float(value), tz=dt.UTC)
-    if isinstance(value, str) and value:
-        try:
-            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            logger.warning("unparseable vendor timestamp", extra={"value": value[:64]})
-            return timezone.now()
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
-    return timezone.now()
+    """`common.timestamps.parse_or_none`, with this pipeline's answer for the
+    unreadable case: "now" rather than dropping the item. A wrong recency score
+    is recoverable on the next extraction; a lost item is not."""
+    parsed = parse_or_none(value)
+    if parsed is None:
+        if value:
+            logger.warning("unparseable vendor timestamp", extra={"value": str(value)[:64]})
+        return timezone.now()
+    return parsed

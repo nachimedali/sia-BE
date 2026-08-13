@@ -2,13 +2,18 @@
 
 design.md names three retrieved contexts: category signal (a trend cluster or
 `CreativeRecipe`), voice, and performance (the workspace's own top-percentile
-posts). Two of the three are live: voice since Phase 7, and category signal
-since Phase 10 wired `_category_signal` to the real `TrendCluster` corpus —
-the measurable upgrade implementation.md §9's build-order rationale describes
-("Trends (P10) after generation (P7), so grounding is a measurable upgrade to a
-working generator rather than an unfalsifiable bet"). Performance still needs
-Phase 11's percentile analytics and stays stubbed, with the same
-fails-when-you-wire-it-in test holding the slot (design.md §15.8 A70).
+posts). **All three are live** as of Phase 11 — voice since Phase 7, category
+signal since Phase 10 wired `_category_signal` to the real `TrendCluster`
+corpus, and performance since Phase 11 wired `_performance_signal` to real
+percentile analytics. That is the measurable upgrade implementation.md §9's
+build-order rationale describes ("Trends (P10) after generation (P7), so
+grounding is a measurable upgrade to a working generator rather than an
+unfalsifiable bet"), and it closes A70 (design.md §15.8).
+
+Every signal is **opportunistic and read-only**: a workspace with no corpus, no
+history, or a plan whose analytics horizon is zero generates exactly as it did
+in Phase 7 rather than failing. None of them may reach a provider — grounding
+must never be able to make a generation slow or broken.
 
 `GroundedPrompt.grounding` records which sources actually fired, so a caller —
 or the eval harness — can assert that a prompt was grounded without re-deriving
@@ -71,8 +76,41 @@ def _category_signal(workspace: Workspace) -> str | None:
 
 
 def _performance_signal(workspace: Workspace) -> str | None:
-    """Deferred to Phase 11 (percentile analytics)."""
-    return None
+    """The workspace's own top-percentile post, as a pattern to lean on.
+
+    design.md §8.3's third retrieved context, live since Phase 11. Read-only
+    against stored captures — like the category signal, this must never make a
+    generation wait on, or fail because of, something outside the request.
+
+    The *opening* is what gets quoted, not the whole post: what transfers
+    between two posts by the same brand is how they start, and handing over a
+    full caption invites the model to rewrite it rather than learn from it.
+    """
+    from analytics.services import signals
+    from billing.services.entitlements import entitlements_for
+
+    horizon = entitlements_for(workspace).analytics_horizon_days()
+    if not horizon:
+        return None
+
+    rows = signals.performance(workspace.pk, horizon_days=horizon)
+    best = next(
+        (row for row in rows if row.percentile is not None and row.percentile >= 80), None
+    )
+    if best is None:
+        return None
+
+    from content.models import Post
+
+    body = Post.objects.filter(pk=best.post_id).values_list("master_body", flat=True).first()
+    if not body:
+        return None
+
+    opening = " ".join(body.split()[:25])
+    return (
+        f"Your own best-performing post on this platform opened like this: "
+        f'"{opening}". Match what makes it work, not its wording.'
+    )
 
 
 def _voice_lines(workspace: Workspace, voice_profile: VoiceProfile | None) -> list[str]:
@@ -102,11 +140,17 @@ def assemble_text_prompt(
     product: Product | None = None,
     voice_profile: VoiceProfile | None = None,
 ) -> GroundedPrompt:
+    # Resolved once each. Both are real queries — the performance signal walks
+    # every capture in the plan's horizon — so computing them a second time to
+    # fill in `grounding` would double the cost of assembling every prompt.
+    signal = _category_signal(workspace)
+    performance = _performance_signal(workspace)
+
     grounding: dict[str, object] = {
         "voice": True,
         "restrictions": bool(product and product.restrictions),
-        "category_signal": _category_signal(workspace) is not None,
-        "performance": _performance_signal(workspace) is not None,
+        "category_signal": signal is not None,
+        "performance": performance is not None,
     }
 
     user_lines = [idea.strip()]
@@ -116,10 +160,8 @@ def assemble_text_prompt(
             user_lines.append(product.description)
     user_lines += _restriction_lines(product)
 
-    signal = _category_signal(workspace)
     if signal:
         user_lines.append(signal)
-    performance = _performance_signal(workspace)
     if performance:
         user_lines.append(performance)
 
@@ -135,9 +177,10 @@ def assemble_image_prompt(
     render_style: str = "",
     scene: str = "",
 ) -> GroundedPrompt:
+    signal = _category_signal(workspace)
     grounding: dict[str, object] = {
         "restrictions": bool(product and product.restrictions),
-        "category_signal": _category_signal(workspace) is not None,
+        "category_signal": signal is not None,
     }
 
     user_lines = [IMAGE_PROMPT_PREFIX, idea.strip()]
@@ -147,7 +190,6 @@ def assemble_image_prompt(
         user_lines.append(f"Scene: {scene}.")
     user_lines += _restriction_lines(product)
 
-    signal = _category_signal(workspace)
     if signal:
         user_lines.append(signal)
 

@@ -32,15 +32,19 @@ from django.conf import settings
 
 from channels.adapters.base import (
     SELECTION_PLATFORMS,
+    AccountStats,
+    CommentSnapshot,
     ConnectedAccount,
     ConnectResolution,
     ConnectTarget,
+    MetricSnapshot,
     PlatformAdapter,
     PlatformError,
     PublishResult,
     echo_targets,
     find_offered_target,
 )
+from common.timestamps import parse_or_none
 from content.models import MediaKind
 
 #: Zernio's `type` vocabulary for a media item, keyed by ours.
@@ -306,12 +310,101 @@ class ZernioAdapter:
             )
         return PublishResult(provider_post_id=existing_id, was_replay=True)
 
+    # --- analytics (Phase 11) --------------------------------------------
+    def fetch_metrics(self, *, platform: str, provider_post_id: str) -> MetricSnapshot:
+        """`GET /v1/analytics` per post (design.md §14, V1: "per-post analytics
+        plus ~25 platform-specific endpoints").
+
+        Coverage is uneven and the V1 findings say so: full on X, IG, FB,
+        TikTok, YouTube, Pinterest and Threads; **partial on LinkedIn**, where a
+        personal account only reports posts published through Zernio; **none**
+        on Reddit, Bluesky, Telegram or Snapchat. A platform that reports
+        nothing leaves every field at zero rather than being guessed at — a
+        fabricated impression count would corrupt the percentile every other
+        number in this app is ranked against.
+        """
+        with _client() as client:
+            payload = _json(
+                client.get("/v1/analytics", params={"postId": provider_post_id}),
+                label="Zernio analytics",
+            )
+
+        metrics = payload.get("metrics", payload)
+        return MetricSnapshot(
+            impressions=_count(metrics, "impressions", "views", "reach"),
+            likes=_count(metrics, "likes", "reactions"),
+            comments=_count(metrics, "comments", "replies"),
+            shares=_count(metrics, "shares", "reposts", "retweets"),
+            clicks=_count(metrics, "clicks", "linkClicks"),
+            saves=_count(metrics, "saves", "bookmarks"),
+            raw=metrics if isinstance(metrics, dict) else {},
+        )
+
+    def fetch_comments(
+        self, *, platform: str, provider_post_id: str, since: Any = None
+    ) -> list[CommentSnapshot]:
+        with _client() as client:
+            payload = _json(
+                client.get("/v1/comments", params={"postId": provider_post_id}),
+                label="Zernio comments",
+            )
+
+        comments = [
+            CommentSnapshot(
+                external_id=str(entry.get("id", "")),
+                body=str(entry.get("text") or entry.get("body") or ""),
+                author=str(entry.get("author") or entry.get("username") or ""),
+                posted_at=parse_or_none(entry.get("createdAt") or entry.get("timestamp")),
+            )
+            for entry in payload.get("comments", [])
+            if entry.get("id")
+        ]
+        # The endpoint takes no lower bound, so the watermark is applied here —
+        # ingestion is idempotent on `external_id` regardless, but there is no
+        # reason to re-classify sentiment on comments already stored.
+        if since is not None:
+            comments = [c for c in comments if c.posted_at and c.posted_at > since]
+        return comments
+
+    def fetch_account_stats(self, *, provider_account_id: str) -> AccountStats:
+        with _client() as client:
+            payload = _json(
+                client.get(f"/v1/accounts/{provider_account_id}"), label="Zernio account"
+            )
+
+        account = payload.get("account", payload)
+        return AccountStats(
+            followers=_count(account, "followerCount", "followers"),
+            following=_count(account, "followingCount", "following"),
+            total_posts=_count(account, "postCount", "posts"),
+        )
+
     def disconnect(self, *, provider_account_id: str) -> None:
         with _client() as client:
             _raise_for(
                 client.delete(f"/v1/accounts/{provider_account_id}"),
                 label="Zernio disconnect",
             )
+
+
+def _count(payload: Any, *names: str) -> int:
+    """The first of `names` this payload actually carries, as an int.
+
+    Platforms disagree about what a number is called — impressions vs views vs
+    reach, shares vs reposts vs retweets — and Zernio passes each platform's own
+    vocabulary through. Trying the aliases here keeps that disagreement inside
+    the adapter, where the rest of §9 says provider vocabulary belongs.
+    """
+    if not isinstance(payload, dict):
+        return 0
+    for name in names:
+        value = payload.get(name)
+        if value is not None:
+            try:
+                return max(int(value), 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
 
 
 def _platform_post_id(post: dict[str, Any], platform: str) -> str:

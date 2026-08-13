@@ -19,9 +19,12 @@ from typing import Any
 
 from channels.adapters.base import (
     SELECTION_PLATFORMS,
+    AccountStats,
+    CommentSnapshot,
     ConnectedAccount,
     ConnectResolution,
     ConnectTarget,
+    MetricSnapshot,
     PlatformError,
     PublishResult,
     echo_targets,
@@ -39,6 +42,13 @@ class FakePlatformAdapter:
         #: either an exception to raise or None for "behave normally".
         self.fail_next: list[Exception | None] = []
         self._by_key: dict[str, PublishResult] = {}
+        # Analytics (Phase 11). The `*_for` dicts let a test dictate a specific
+        # curve or comment set per post; the `*_calls` lists are what the
+        # default, self-advancing behaviour counts from.
+        self.metrics_for: dict[str, list[MetricSnapshot]] = {}
+        self.comments_for: dict[str, list[CommentSnapshot]] = {}
+        self.metric_calls: list[str] = []
+        self.account_stat_calls: list[str] = []
 
     # --- connect ---------------------------------------------------------
     def ensure_profile(self, *, name: str, existing_profile_id: str = "") -> str:
@@ -116,6 +126,52 @@ class FakePlatformAdapter:
         self._by_key[idempotency_key] = result
         return result
 
+    # --- analytics (Phase 11) --------------------------------------------
+    def fetch_metrics(self, *, platform: str, provider_post_id: str) -> MetricSnapshot:
+        """Cumulative and *growing*, like the real thing.
+
+        Each call returns more than the last for the same post, because that is
+        the one property the analytics pipeline actually depends on: the decay
+        slope in §8.9 is computed from the differences between captures, and a
+        fake returning a constant would make every evergreen-vs-spike test pass
+        without the classification working at all. Growth decelerates, so a post
+        left alone converges rather than climbing forever.
+
+        `metrics_for` lets a test dictate the curve when it needs a specific
+        shape (a spike that dies, a slow burner) instead of the default one.
+        """
+        queued = self.metrics_for.get(provider_post_id)
+        if queued:
+            return queued.pop(0)
+
+        seen = self.metric_calls.count(provider_post_id)
+        self.metric_calls.append(provider_post_id)
+        # Diminishing returns: 100, 150, 175, 187…
+        total = int(200 * (1 - 0.5 ** (seen + 1)))
+        return MetricSnapshot(
+            impressions=total * 20,
+            likes=total,
+            comments=total // 10,
+            shares=total // 20,
+            clicks=total // 5,
+            saves=total // 8,
+            raw={"fake": True, "capture": seen + 1},
+        )
+
+    def fetch_comments(
+        self, *, platform: str, provider_post_id: str, since: Any = None
+    ) -> list[CommentSnapshot]:
+        queued = self.comments_for.get(provider_post_id)
+        if queued is not None:
+            return [c for c in queued if since is None or (c.posted_at and c.posted_at > since)]
+
+        return []
+
+    def fetch_account_stats(self, *, provider_account_id: str) -> AccountStats:
+        seen = self.account_stat_calls.count(provider_account_id)
+        self.account_stat_calls.append(provider_account_id)
+        return AccountStats(followers=1000 + seen * 25, following=180, total_posts=42 + seen)
+
     def disconnect(self, *, provider_account_id: str) -> None:
         self.disconnected.append(provider_account_id)
 
@@ -127,6 +183,10 @@ class FakePlatformAdapter:
         self.disconnected.clear()
         self.fail_next.clear()
         self._by_key.clear()
+        self.metrics_for.clear()
+        self.comments_for.clear()
+        self.metric_calls.clear()
+        self.account_stat_calls.clear()
 
     def queue_failure(
         self,

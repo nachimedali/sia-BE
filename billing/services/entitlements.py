@@ -147,6 +147,17 @@ class Entitlements:
             return UNLIMITED
         return ledger.video_balance(self.workspace)
 
+    def analytics_horizon_days(self) -> int:
+        """How far back this plan keeps measurement (§4.1: 7 / 90 / 730).
+
+        A typed accessor rather than four callers spelling
+        `int(feature("analytics_history_days") or 0)` themselves — the
+        module's own rule is one resolver, and the `or 0` coercion is exactly
+        where four copies would eventually disagree. Zero means "no analytics
+        history", which every reader treats as an empty window.
+        """
+        return int(self.feature("analytics_history_days") or 0)
+
     # --- gates -----------------------------------------------------------
     def _suggested_plan(self, feature_key: str | None = None) -> str:
         if feature_key in ADVANCED_ONLY:

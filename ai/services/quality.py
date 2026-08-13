@@ -103,6 +103,14 @@ def _check_aspect(width: int, height: int, requested_aspect: str) -> tuple[bool,
 # -----------------------------------------------------------------------------
 # Gates
 # -----------------------------------------------------------------------------
+#: A repurposed post has to be recognisably the same idea but not the same
+#: asset (design.md §8.9: "capped at 0.8 similarity to the original"). The
+#: ceiling lives here rather than in `analytics.services.repurposing` because
+#: this is where every other similarity judgement is made — a second
+#: implementation would be a second opinion about what "similar" means.
+REPURPOSE_MAX_SIMILARITY = 0.8
+
+
 def run_image_quality_gate(
     *,
     content: bytes,
@@ -111,7 +119,15 @@ def run_image_quality_gate(
     restrictions: list[str],
     text_provider: TextProvider,
     identity_similarity_threshold: float,
+    origin_images: list[bytes] | None = None,
 ) -> QualityResult:
+    """`origin_images` is the post being repurposed, when there is one.
+
+    It turns the identity check's floor into a *band*: still similar enough to
+    the product's references, but no longer than `REPURPOSE_MAX_SIMILARITY` to
+    the original post's own asset. Absent for every other generation mode, where
+    there is no original to be too close to.
+    """
     checks: dict[str, Any] = {}
     reasons: list[str] = []
 
@@ -128,7 +144,7 @@ def run_image_quality_gate(
 
     with Image.open(io.BytesIO(content)) as img:
         width, height = img.size
-        candidate_hash = _dhash(img) if reference_images else None
+        candidate_hash = _dhash(img) if (reference_images or origin_images) else None
 
     aspect_ok, aspect_detail = _check_aspect(width, height, requested_aspect)
     checks["resolution_and_aspect"] = {
@@ -155,6 +171,22 @@ def run_image_quality_gate(
             reasons.append(
                 f"product_identity: score {identity_score:.2f} below "
                 f"threshold {identity_similarity_threshold:.2f}"
+            )
+
+    if origin_images and candidate_hash is not None:
+        origin_score = max(
+            _similarity_from_hash(candidate_hash, origin) for origin in origin_images
+        )
+        origin_ok = origin_score <= REPURPOSE_MAX_SIMILARITY
+        checks["repurpose_distance"] = {
+            "passed": origin_ok,
+            "score": origin_score,
+            "ceiling": REPURPOSE_MAX_SIMILARITY,
+        }
+        if not origin_ok:
+            reasons.append(
+                f"repurpose_distance: score {origin_score:.2f} above "
+                f"ceiling {REPURPOSE_MAX_SIMILARITY:.2f} — too close to the original"
             )
 
     violated: list[str] = []
