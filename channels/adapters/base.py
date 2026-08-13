@@ -5,18 +5,18 @@ deterministic fake (A8). This one is the whole of D2: OCCS never talks to
 Meta, TikTok or YouTube, so swapping Zernio for bundle.social is a change of
 one settings value and one module in this package.
 
-**Six methods, not design.md §9's five.** The table there names `connect_url`,
-`publish`, `fetch_metrics`, `fetch_comments`, `disconnect`. `fetch_metrics`/
-`fetch_comments` are Phase 11's — nothing in Phase 9 can call them and a port
-method with no implementation behind it is a promise, not a contract, so they
-land with the analytics app that needs them (the same deferred shape A32/A47/
-A48 used for columns). In their place the connect flow needs three methods
-rather than one, because V1 (design.md §14) resolved to a *headless* flow:
-`connect_url` starts OAuth, `resolve_callback` handles the return, and
-`select_target` finishes the platforms that make the user pick a page or
-organisation. Rendering that picker is OCCS's job, not the provider's — that
-is what "the user never sees the provider" costs, and it is a method on the
+**Eight methods, not design.md §9's five.** The table there names `connect_url`,
+`publish`, `fetch_metrics`, `fetch_comments`, `disconnect`. The connect flow
+needs three methods rather than one, because V1 (design.md §14) resolved to a
+*headless* flow: `connect_url` starts OAuth, `resolve_callback` handles the
+return, and `select_target` finishes the platforms that make the user pick a
+page or organisation. Rendering that picker is OCCS's job, not the provider's —
+that is what "the user never sees the provider" costs, and it is a method on the
 port rather than provider-specific glue in a view.
+
+`fetch_metrics`/`fetch_comments` were deferred out of Phase 9 (A92) on the rule
+that a port method with no implementation behind it is a promise, not a
+contract. Phase 11 is the implementation, so they land here now.
 
 **Failure taxonomy.** `PlatformError.retryable` and `needs_reauth` are the only
 things the publish task branches on: a 429 or a 5xx will succeed later and must
@@ -112,6 +112,44 @@ class ConnectResolution:
 
 
 @dataclass(frozen=True)
+class MetricSnapshot:
+    """One reading of what a published post has earned so far.
+
+    Cumulative, not incremental: every platform reports totals-to-date, and the
+    decay slope §8.9 needs is computed from the differences between captures
+    rather than trusted from the provider.
+
+    `impressions` is `0` where the platform does not report it — LinkedIn
+    personal accounts and several others simply do not — which is why
+    `engagement_rate` falls back to a follower denominator (§8.9) rather than
+    dividing by zero and calling it engagement.
+    """
+
+    impressions: int = 0
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+    clicks: int = 0
+    saves: int = 0
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CommentSnapshot:
+    external_id: str
+    body: str = ""
+    author: str = ""
+    posted_at: Any = None
+
+
+@dataclass(frozen=True)
+class AccountStats:
+    followers: int = 0
+    following: int = 0
+    total_posts: int = 0
+
+
+@dataclass(frozen=True)
 class PublishResult:
     provider_post_id: str
     platform_post_id: str = ""
@@ -152,6 +190,23 @@ class PlatformAdapter(Protocol):
         payload: dict[str, Any],
         idempotency_key: str,
     ) -> PublishResult: ...
+
+    def fetch_metrics(self, *, platform: str, provider_post_id: str) -> MetricSnapshot:
+        """Totals-to-date for one published post. A platform that reports
+        nothing for a field leaves it at zero rather than guessing."""
+        ...
+
+    def fetch_comments(
+        self, *, platform: str, provider_post_id: str, since: Any = None
+    ) -> list[CommentSnapshot]:
+        """Comments on one published post, newest first. `since` narrows the
+        request where the platform supports it and is applied client-side where
+        it does not — ingestion is idempotent on `external_id` either way."""
+        ...
+
+    def fetch_account_stats(self, *, provider_account_id: str) -> AccountStats:
+        """Follower counts for one connected account, for `AccountSnapshot`."""
+        ...
 
     def disconnect(self, *, provider_account_id: str) -> None: ...
 

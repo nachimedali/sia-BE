@@ -23,6 +23,8 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
+from common.records import AppendOnly
+
 # A quota of -1 means "unlimited" and short-circuits the balance check.
 UNLIMITED = -1
 
@@ -265,18 +267,19 @@ class Subscription(models.Model):
         )
 
 
-class AppendOnlyError(RuntimeError):
-    """Raised when something tries to mutate a ledger row (I4)."""
-
-
-class LedgerEntry(models.Model):
+class LedgerEntry(AppendOnly):
     """Append-only base for both ledgers (design.md §8.2, I4).
+
+    The guard itself lives in `common.records.AppendOnly`, shared with the
+    analytics captures — same rule, same exception, different columns.
 
     `balance_after` is written at insert and never corrected. If it stops
     matching the running `SUM(delta)`, the nightly reconciliation task is
     supposed to be loud about it — that divergence means a bug in the debit
     path, and silently repairing it would hide the bug.
     """
+
+    append_only_hint = "write a compensating row instead of updating this one (I4)."
 
     workspace = models.ForeignKey(
         "workspaces.Workspace", on_delete=models.CASCADE, related_name="%(class)s_entries"
@@ -291,17 +294,6 @@ class LedgerEntry(models.Model):
     class Meta:
         abstract = True
         ordering: ClassVar[list[str]] = ["-created_at", "-id"]
-
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        if not self._state.adding:
-            raise AppendOnlyError(
-                f"{type(self).__name__} is append-only (I4); "
-                "write a compensating row instead of updating this one."
-            )
-        super().save(*args, **kwargs)
-
-    def delete(self, *args: Any, **kwargs: Any) -> Any:
-        raise AppendOnlyError(f"{type(self).__name__} is append-only (I4) and cannot be deleted.")
 
 
 class CreditReason(models.TextChoices):

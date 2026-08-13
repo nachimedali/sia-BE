@@ -63,6 +63,7 @@ LOCAL_APPS = [
     "scheduling",
     "channels",
     "trends",
+    "analytics",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -279,6 +280,26 @@ CELERY_BEAT_SCHEDULE = {
     "scheduling-publish-due": {
         "task": "scheduling.tasks.publish_due_posts",
         "schedule": crontab(minute="*"),
+    },
+    # Hourly, because the metric ladder's tightest rung is T+1h (design.md
+    # §8.9). The scan asks which targets are *owed* a capture rather than each
+    # publish queueing five future tasks, so a missed hour backfills on the
+    # next tick instead of being lost.
+    "analytics-capture-due-metrics": {
+        "task": "analytics.tasks.capture_due_metrics",
+        "schedule": crontab(minute=5),
+    },
+    # Daily: follower counts move slowly, and this is the denominator
+    # `engagement_rate` falls back to where a platform reports no impressions.
+    "analytics-snapshot-accounts": {
+        "task": "analytics.tasks.snapshot_accounts",
+        "schedule": crontab(hour=1, minute=30),
+    },
+    # Nightly, as §8.9 specifies. After the capture and snapshot jobs, so it
+    # scores against the freshest numbers rather than yesterday's.
+    "analytics-scan-repurpose": {
+        "task": "analytics.tasks.scan_repurpose_candidates",
+        "schedule": crontab(hour=4, minute=30),
     },
 }
 

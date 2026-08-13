@@ -13,6 +13,7 @@ them (design.md §9).
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any
 
@@ -45,6 +46,10 @@ def zernio(monkeypatch: Any) -> list[httpx.Request]:
             )
         if path.startswith("/api/v1/connect/"):
             return httpx.Response(200, json={"authUrl": "https://facebook.test/dialog/oauth"})
+        if path == "/api/v1/analytics":
+            return httpx.Response(200, json={"metrics": {"views": 100, "reactions": 5}})
+        if path == "/api/v1/comments":
+            return httpx.Response(200, json={"comments": []})
         if path.startswith("/api/v1/accounts/"):
             return httpx.Response(
                 200, json={"username": "acme", "displayName": "Acme", "followerCount": 42}
@@ -473,3 +478,91 @@ def test_a_non_json_error_body_still_classifies(monkeypatch: Any) -> None:
         ZernioAdapter().disconnect(provider_account_id="acct-1")
 
     assert caught.value.retryable is True
+
+
+# -----------------------------------------------------------------------------
+# Analytics methods (Phase 11 — the two A92 deferred)
+# -----------------------------------------------------------------------------
+def test_both_adapters_report_metrics_for_a_published_post(adapter: Any) -> None:
+    snapshot = adapter.fetch_metrics(platform="instagram", provider_post_id="zp-1")
+
+    assert snapshot.likes >= 0
+    assert snapshot.impressions >= 0
+    assert isinstance(snapshot.raw, dict)
+
+
+def test_both_adapters_report_account_stats(adapter: Any) -> None:
+    stats = adapter.fetch_account_stats(provider_account_id="acct-1")
+
+    assert stats.followers >= 0
+
+
+def test_the_fake_models_growth_between_captures() -> None:
+    """The one property the analytics pipeline actually depends on: §8.9's
+    decay slope is computed from the *differences* between captures, so a fake
+    returning a constant would make every evergreen-vs-spike test pass without
+    the classification working."""
+    fake = FakePlatformAdapter()
+
+    first = fake.fetch_metrics(platform="instagram", provider_post_id="p-1")
+    second = fake.fetch_metrics(platform="instagram", provider_post_id="p-1")
+    third = fake.fetch_metrics(platform="instagram", provider_post_id="p-1")
+
+    assert first.likes < second.likes < third.likes
+    # Decelerating, so a post left alone converges rather than climbing forever.
+    assert (third.likes - second.likes) < (second.likes - first.likes)
+
+
+def test_zernio_reads_a_posts_analytics(monkeypatch: Any) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"metrics": {"views": 5000, "reactions": 120, "replies": 8, "reposts": 3}},
+        )
+
+    patch_httpx_transport(monkeypatch, handler)
+    snapshot = ZernioAdapter().fetch_metrics(platform="instagram", provider_post_id="zp-1")
+
+    # Each platform's own vocabulary, translated inside the adapter: `views`
+    # is this platform's word for impressions, `reactions` for likes.
+    assert snapshot.impressions == 5000
+    assert snapshot.likes == 120
+    assert snapshot.comments == 8
+    assert snapshot.shares == 3
+
+
+def test_a_platform_that_reports_nothing_yields_zeroes_not_guesses(
+    monkeypatch: Any,
+) -> None:
+    """V1 found coverage is uneven — none at all on Reddit, Bluesky, Telegram
+    and Snapchat. A fabricated impression count would corrupt the percentile
+    every other number in the app is ranked against."""
+    patch_httpx_transport(monkeypatch, lambda request: httpx.Response(200, json={}))
+
+    snapshot = ZernioAdapter().fetch_metrics(platform="reddit", provider_post_id="zp-1")
+
+    assert snapshot.impressions == 0
+    assert snapshot.likes == 0
+
+
+def test_zernio_reads_comments_and_applies_the_watermark(monkeypatch: Any) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "comments": [
+                    {"id": "c-old", "text": "older", "createdAt": "2026-08-01T09:00:00Z"},
+                    {"id": "c-new", "text": "newer", "createdAt": "2026-08-09T09:00:00Z"},
+                    {"text": "no id, not an item"},
+                ]
+            },
+        )
+
+    patch_httpx_transport(monkeypatch, handler)
+    since = dt.datetime(2026, 8, 5, tzinfo=dt.UTC)
+
+    comments = ZernioAdapter().fetch_comments(
+        platform="instagram", provider_post_id="zp-1", since=since
+    )
+
+    assert [c.external_id for c in comments] == ["c-new"]

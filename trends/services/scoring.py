@@ -30,12 +30,8 @@ from collections import defaultdict
 
 from django.utils import timezone
 
+from common.ranking import INTERACTION_WEIGHTS, percentiles
 from trends.models import TrendItem
-
-#: design.md §8.4's `weighted(likes, shares, comments, saves)`. A save is worth
-#: more than a like because it is the strongest signal a viewer intends to come
-#: back; a share is next, as it costs reputation.
-INTERACTION_WEIGHTS = {"likes": 1.0, "comments": 3.0, "shares": 5.0, "saves": 6.0}
 
 #: `composite = w1·velocity + w2·recency + w3·authority + w4·engagement`.
 #: Velocity leads: a post pulling hard *now* is the thing a calendar can still
@@ -63,29 +59,6 @@ def _interactions(item: TrendItem) -> float:
         weight * float(item.raw_metrics.get(key, 0) or 0)
         for key, weight in INTERACTION_WEIGHTS.items()
     )
-
-
-def _percentiles(values: list[float]) -> list[float]:
-    """Rank each value in [0, 1], ties sharing the mean of the ranks they span.
-
-    Ties matter here: a window where nine items report no metrics at all should
-    leave those nine tied at the bottom, not ordered by whichever arrived first.
-    """
-    if len(values) <= 1:
-        return [1.0] * len(values)
-
-    order = sorted(range(len(values)), key=lambda index: values[index])
-    ranks = [0.0] * len(values)
-    position = 0
-    while position < len(order):
-        end = position
-        while end + 1 < len(order) and values[order[end + 1]] == values[order[position]]:
-            end += 1
-        shared = (position + end) / 2 / (len(values) - 1)
-        for index in order[position : end + 1]:
-            ranks[index] = shared
-        position = end + 1
-    return ranks
 
 
 def score(items: list[TrendItem]) -> list[TrendItem]:
@@ -117,7 +90,7 @@ def score(items: list[TrendItem]) -> list[TrendItem]:
 
     for kind_items in by_kind.values():
         for component in COMPOSITE_WEIGHTS:
-            component_ranks = _percentiles([raw[item.pk][component] for item in kind_items])
+            component_ranks = percentiles([raw[item.pk][component] for item in kind_items])
             for item, rank in zip(kind_items, component_ranks, strict=True):
                 normalised[item.pk][component] = rank
 
