@@ -12,14 +12,17 @@ from __future__ import annotations
 from typing import Any
 
 from django.db.models import Prefetch
-from drf_spectacular.utils import extend_schema
+from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 
+from billing.permissions import HasFeature
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
@@ -37,6 +40,15 @@ from content.services.adaptation import render_payloads
 from content.services.media import ingest_media
 from content.services.posts import create_post, update_post
 from scheduling.services import schedule_post
+from workspaces.models import PostComment, Role
+from workspaces.permissions import HasRole, caller_role, role_at_least
+from workspaces.serializers import ApprovalNoteRequestSerializer, PostCommentSerializer
+from workspaces.services import approvals
+
+#: design.md §8.8: submit/approve/request-changes/reject/comments are all
+#: part of "the approval workflow" — Advanced only (`test_approval_workflow_
+#: gated_to_advanced`).
+APPROVAL_FEATURE = "approval_workflow"
 
 # `Post.ordered_media()` reads `media_attachments`, not the `media_assets` M2M
 # manager directly (content/models.py) — the Prefetch has to target the same
@@ -129,6 +141,141 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             post=post, delivery_mode=data["delivery_mode"], scheduled_at=data["scheduled_at"]
         )
         return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: PostSerializer},
+        summary="Submit a draft for review",
+        description="DRAFT or CHANGES_REQUESTED → PENDING_REVIEW. Any role but VIEWER "
+        "(design.md §8.8); an illegal transition is 409, not a silent no-op.",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[
+            IsAuthenticated,
+            HasFeature(APPROVAL_FEATURE),
+            HasRole(Role.CONTRIBUTOR),
+        ],
+    )
+    def submit(self, request: Request, pk: str | None = None) -> Response:
+        post = approvals.submit_for_review(self.get_object(), actor=authenticated_user(request))
+        return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        request=ApprovalNoteRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Approve a post under review",
+        description="PENDING_REVIEW → APPROVED. ADMIN+ only.",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE), HasRole(Role.ADMIN)],
+    )
+    def approve(self, request: Request, pk: str | None = None) -> Response:
+        note = self._approval_note(request)
+        post = approvals.approve(self.get_object(), actor=authenticated_user(request), note=note)
+        return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        request=ApprovalNoteRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Send a post back with changes requested",
+        description="PENDING_REVIEW → CHANGES_REQUESTED. ADMIN+ only; `note` is required "
+        "— it is the only thing the author has to act on.",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="request-changes",
+        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE), HasRole(Role.ADMIN)],
+    )
+    def request_changes(self, request: Request, pk: str | None = None) -> Response:
+        note = self._approval_note(request)
+        if not note:
+            raise OCCSError("A note is required when requesting changes.", code="note_required")
+        post = approvals.request_changes(
+            self.get_object(), actor=authenticated_user(request), note=note
+        )
+        return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        request=ApprovalNoteRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Reject a post under review",
+        description="PENDING_REVIEW → REJECTED. ADMIN+ only.",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE), HasRole(Role.ADMIN)],
+    )
+    def reject(self, request: Request, pk: str | None = None) -> Response:
+        note = self._approval_note(request)
+        post = approvals.reject(self.get_object(), actor=authenticated_user(request), note=note)
+        return Response(PostSerializer(post, context={"request": request}).data)
+
+    @staticmethod
+    def _approval_note(request: Request) -> str:
+        payload = ApprovalNoteRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        note: str = payload.validated_data["note"]
+        return note
+
+    @extend_schema(
+        request=PostCommentSerializer,
+        responses={200: PostCommentSerializer(many=True), 201: PostCommentSerializer},
+        summary="Read or add comments on this post",
+        description="GET is open to any workspace member; POST needs any role but VIEWER, "
+        "the same gate `submit` uses (design.md §8.8's collaboration surface).",
+    )
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE)],
+    )
+    def comments(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        if request.method == "POST":
+            if not role_at_least(caller_role(request), Role.CONTRIBUTOR):
+                raise PermissionDenied("VIEWER cannot comment.")
+            payload = PostCommentSerializer(data=request.data, context={"post": post})
+            payload.is_valid(raise_exception=True)
+            comment = approvals.add_comment(
+                post,
+                author=authenticated_user(request),
+                body=payload.validated_data["body"],
+                parent=payload.validated_data.get("parent"),
+            )
+            return Response(PostCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+        thread = post.comments.select_related("author").order_by("created_at")
+        return Response(PostCommentSerializer(thread, many=True).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: PostCommentSerializer},
+        summary="Mark a comment resolved",
+        parameters=[OpenApiParameter("comment_pk", int, OpenApiParameter.PATH)],
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"comments/(?P<comment_pk>[^/.]+)/resolve",
+        permission_classes=[
+            IsAuthenticated,
+            HasFeature(APPROVAL_FEATURE),
+            HasRole(Role.CONTRIBUTOR),
+        ],
+    )
+    def resolve_comment(
+        self, request: Request, pk: str | None = None, comment_pk: str | None = None
+    ) -> Response:
+        post = self.get_object()
+        comment = get_object_or_404(PostComment, pk=comment_pk, post=post)
+        comment = approvals.resolve_comment(comment)
+        return Response(PostCommentSerializer(comment).data)
 
 
 class MediaAssetViewSet(

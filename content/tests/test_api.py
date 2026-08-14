@@ -15,6 +15,7 @@ from content.services.media import ingest_media
 from content.services.posts import create_post
 from products.services.products import create_product
 from reminders.models import Reminder
+from workspaces.models import Membership
 from workspaces.services.provisioning import provision_workspace
 
 pytestmark = pytest.mark.django_db
@@ -217,7 +218,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 7
+    assert len(router.registry) == 8
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -250,6 +251,7 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
     social_account = SocialAccount.objects.create(
         workspace=other_workspace, platform="instagram", provider_account_id="not-yours"
     )
+    other_membership = Membership.objects.get(user=other_owner, workspace=other_workspace)
 
     objects_by_basename = {
         "post": post,
@@ -259,6 +261,7 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         "voice-profile": voice_profile,
         "reminder": reminder,
         "social-account": social_account,
+        "membership": other_membership,
     }
 
     for prefix, _viewset, basename in router.registry:

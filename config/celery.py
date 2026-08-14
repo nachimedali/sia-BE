@@ -56,6 +56,9 @@ app.conf.task_routes = {
     "content.tasks.media*": {"queue": "media_q"},
     "ai.tasks.video*": {"queue": "media_q"},
     "ai.tasks.*": {"queue": "ai_q"},
+    # Autopilot's body is generation, so it shares the pool sized for provider
+    # latency rather than one sized for bookkeeping.
+    "products.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
     # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody

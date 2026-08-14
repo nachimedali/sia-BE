@@ -26,6 +26,8 @@ from content.models import Post, PostStatus, PostTarget, PostTargetState
 from content.services.posts import create_post
 from scheduling import publishing, tasks
 from scheduling.services import schedule_post
+from workspaces.models import Membership
+from workspaces.services import approvals
 
 pytestmark = pytest.mark.django_db
 
@@ -90,8 +92,9 @@ def test_rendered_payload_is_what_preview_would_have_returned(
     )
 
     assert preview.status_code == 200
-    assert PostTarget.objects.get(post=post).rendered_payload == (
-        preview.json()["payloads"]["instagram"]
+    assert (
+        PostTarget.objects.get(post=post).rendered_payload
+        == (preview.json()["payloads"]["instagram"])
     )
 
 
@@ -324,9 +327,7 @@ def test_a_disconnected_account_is_marked_for_reauth(
     # `needs_reauth` rather than the provider's own error code: the adapter is
     # what translates one into the other, so a test that hand-crafted Zernio's
     # string here would pass even if the adapter stopped setting the flag.
-    platform_adapter.queue_failure(
-        times=1, retryable=False, needs_reauth=True, message="gone"
-    )
+    platform_adapter.queue_failure(times=1, retryable=False, needs_reauth=True, message="gone")
 
     publishing.publish_post_by_id(post.pk)
 
@@ -436,3 +437,106 @@ def test_a_post_with_a_still_pending_target_stays_mid_flight(
         PostTargetState.PUBLISHED,
         PostTargetState.PENDING,
     }
+
+
+# -----------------------------------------------------------------------------
+# test_role_revoked_after_scheduling_blocks_publish (design.md §8.8, I5;
+# implementation.md Phase 13)
+# -----------------------------------------------------------------------------
+def test_role_revoked_after_scheduling_blocks_publish(
+    advanced_workspace: Any,
+    contributor_user: Any,
+    admin_user: Any,
+    advanced_social_account: Any,
+    platform_adapter: Any,
+    outbox: Any,
+) -> None:
+    """The approver's role is checked again at publish time, days after
+    `schedule_post` accepted it — an ADMIN removed from the workspace between
+    the two must not have their approval still count.
+    """
+    post = create_post(
+        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+    )
+    post = approvals.submit_for_review(post, actor=contributor_user)
+    post = approvals.approve(post, actor=admin_user)
+    post = _make_due(
+        schedule_post(
+            post=post,
+            delivery_mode="AUTO_PUBLISH",
+            scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+        )
+    )
+
+    Membership.objects.filter(user=admin_user, workspace=advanced_workspace).delete()
+
+    result = publishing.publish_post_by_id(post.pk)
+
+    assert result.status == PostStatus.FAILED
+    assert platform_adapter.published == []
+    assert PostTarget.objects.filter(post=post, state=PostTargetState.PUBLISHED).count() == 0
+    assert len(outbox) == 1
+    assert outbox[0].to == contributor_user.email
+
+
+def test_role_revoked_recheck_is_not_retried(
+    advanced_workspace: Any,
+    contributor_user: Any,
+    admin_user: Any,
+    advanced_social_account: Any,
+    platform_adapter: Any,
+) -> None:
+    """No target was touched, so there is no back-off to wait out — only a
+    human decision (re-approve, reschedule) can move this forward, and Beat
+    must not keep re-trying it every minute in the meantime."""
+    post = create_post(
+        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+    )
+    post = approvals.submit_for_review(post, actor=contributor_user)
+    post = approvals.approve(post, actor=admin_user)
+    post = _make_due(
+        schedule_post(
+            post=post,
+            delivery_mode="AUTO_PUBLISH",
+            scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+        )
+    )
+    Membership.objects.filter(user=admin_user, workspace=advanced_workspace).delete()
+
+    try:
+        tasks.publish_post.apply(args=(post.pk,), throw=True).get()
+    except Retry:
+        pytest.fail("a revoked approval must fail the post outright, not schedule a retry")
+
+    post.refresh_from_db()
+    assert post.status == PostStatus.FAILED
+
+
+def test_a_demoted_but_still_admin_approver_still_counts(
+    advanced_workspace: Any,
+    contributor_user: Any,
+    admin_user: Any,
+    advanced_social_account: Any,
+    platform_adapter: Any,
+) -> None:
+    """The check is "still ADMIN or better", not "still holds the exact same
+    role" — an OWNER approving, then being (impossibly) demoted to ADMIN,
+    would still be senior enough. Modelled here the more reachable way: an
+    ADMIN stays an ADMIN, and publish proceeds."""
+    post = create_post(
+        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+    )
+    post = approvals.submit_for_review(post, actor=contributor_user)
+    post = approvals.approve(post, actor=admin_user)
+    post = _make_due(
+        schedule_post(
+            post=post,
+            delivery_mode="AUTO_PUBLISH",
+            scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+        )
+    )
+
+    result = publishing.publish_post_by_id(post.pk)
+
+    assert result.status == PostStatus.PUBLISHED
+    assert len(platform_adapter.published) == 1

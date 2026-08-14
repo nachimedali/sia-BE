@@ -68,13 +68,23 @@ from products.models import Product
 from products.services.guards import ensure_generation_ready
 from workspaces.models import Workspace
 
-# TREND/RECIPE need Phase 10/14's grounding sources; AUTOPILOT needs Phase 12's
-# engine; REPURPOSE needs Phase 11's `origin_post`. REVISION is reachable only
-# through `ai.services.revisions.create_revision`, never directly.
+# TREND/RECIPE need Phase 10/14's grounding sources; REPURPOSE needs the
+# origin's bytes threaded into the quality gate (see
+# `test_the_repurpose_ceiling_is_wired_in_before_repurpose_generations_are`).
+# REVISION and AUTOPILOT are reachable only through their own service —
+# `ai.services.revisions.create_revision` and
+# `products.services.autopilot` — each of which validates its own precondition
+# in place of the mode check `create_generation` applies to a direct request.
 ALLOWED_MODES = frozenset(
-    {GenerationMode.IDEA, GenerationMode.PRODUCT, GenerationMode.REWRITE, GenerationMode.REVISION}
+    {
+        GenerationMode.IDEA,
+        GenerationMode.PRODUCT,
+        GenerationMode.REWRITE,
+        GenerationMode.REVISION,
+        GenerationMode.AUTOPILOT,
+    }
 )
-DIRECTLY_CREATABLE_MODES = ALLOWED_MODES - {GenerationMode.REVISION}
+DIRECTLY_CREATABLE_MODES = ALLOWED_MODES - {GenerationMode.REVISION, GenerationMode.AUTOPILOT}
 
 
 class GenerationKindNotAvailableError(OCCSError):
