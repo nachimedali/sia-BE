@@ -140,3 +140,111 @@ def make_png_upload() -> Any:
         return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
     return _make
+
+
+@pytest.fixture
+def generation_costs(db: None) -> None:
+    """Moved here from ai/tests/conftest.py once products needed it too."""
+    from django.core.management import call_command
+
+    call_command("seed_generation_costs", verbosity=0)
+
+
+@pytest.fixture(autouse=True)
+def _fake_ai_providers(settings: Any) -> None:
+    """AI tests use the fake providers by default (A8), mirroring
+    `USE_FAKE_BILLING`'s test-time default. Moved here from ai/tests/conftest.py
+    once products needed it too."""
+    settings.USE_FAKE_AI_PROVIDERS = True
+
+
+@pytest.fixture(autouse=True)
+def _clear_fake_providers() -> Iterator[None]:
+    from ai.providers.fake import _fake_image_provider, _fake_text_provider
+
+    _fake_text_provider.clear()
+    _fake_image_provider.clear()
+    yield
+    _fake_text_provider.clear()
+    _fake_image_provider.clear()
+
+
+# --- collaboration & roles (design.md §8.8) -----------------------------------
+# Moved here from workspaces/tests/conftest.py once content's approval-endpoint
+# tests needed them too.
+@pytest.fixture
+def advanced_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
+    """Advanced, with the collaboration workflow switched on. §4.1: only
+    Advanced has `approval_workflow`."""
+    workspace.plan = plans["advanced"]
+    workspace.requires_approval = True
+    workspace.save(update_fields=["plan", "requires_approval"])
+    return workspace
+
+
+@pytest.fixture
+def admin_user(advanced_workspace: Any) -> Any:
+    from django.contrib.auth import get_user_model
+
+    from workspaces.models import Membership, Role
+
+    admin = get_user_model().objects.create_user(email="admin@example.com", password=PASSWORD)
+    Membership.objects.create(user=admin, workspace=advanced_workspace, role=Role.ADMIN)
+    return admin
+
+
+@pytest.fixture
+def contributor_user(advanced_workspace: Any) -> Any:
+    from django.contrib.auth import get_user_model
+
+    from workspaces.models import Membership, Role
+
+    contributor = get_user_model().objects.create_user(
+        email="contributor@example.com", password=PASSWORD
+    )
+    Membership.objects.create(user=contributor, workspace=advanced_workspace, role=Role.CONTRIBUTOR)
+    return contributor
+
+
+@pytest.fixture
+def viewer_user(advanced_workspace: Any) -> Any:
+    from django.contrib.auth import get_user_model
+
+    from workspaces.models import Membership, Role
+
+    viewer = get_user_model().objects.create_user(email="viewer@example.com", password=PASSWORD)
+    Membership.objects.create(user=viewer, workspace=advanced_workspace, role=Role.VIEWER)
+    return viewer
+
+
+@pytest.fixture
+def advanced_social_account(advanced_workspace: Any) -> Any:
+    """The `social_account` fixture above pulls in `paid_workspace`, which
+    would set `workspace.plan` back to Pro — a real conflict with
+    `advanced_workspace`, since both mutate the same cached `workspace`
+    fixture instance. This is `social_account`'s shape, built directly on
+    `advanced_workspace` instead."""
+    from channels.models import SocialAccount
+
+    return SocialAccount.objects.create(
+        workspace=advanced_workspace,
+        platform="instagram",
+        handle="@acme",
+        display_name="Acme Studio",
+        provider_account_id="acct-approvals-1",
+    )
+
+
+@pytest.fixture
+def client_as() -> Any:
+    """`client_as(some_user)` — an `APIClient` authenticated as a user other
+    than the root `user`/`auth_client` fixtures', for the multi-actor
+    approval tests (a CONTRIBUTOR drafts, an ADMIN decides)."""
+    from rest_framework.test import APIClient
+
+    def _make(actor: Any) -> APIClient:
+        api = APIClient()
+        api.force_authenticate(actor)
+        return api
+
+    return _make

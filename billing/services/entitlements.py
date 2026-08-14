@@ -147,6 +147,18 @@ class Entitlements:
             return UNLIMITED
         return ledger.video_balance(self.workspace)
 
+    def included_video_units_remaining(self) -> int:
+        """What autopilot may spend (I3) — the allowance, never a prepaid pack.
+
+        Separate from `video_units_remaining()` on purpose: a human asking for
+        a video may spend anything the workspace holds, while the engine acting
+        on its own may only spend what the plan included. One number each, so
+        neither caller has to remember which pool it is entitled to.
+        """
+        if self.quota("included_videos") == UNLIMITED:
+            return UNLIMITED
+        return ledger.included_video_balance(self.workspace)
+
     def analytics_horizon_days(self) -> int:
         """How far back this plan keeps measurement (§4.1: 7 / 90 / 730).
 

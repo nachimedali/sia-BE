@@ -42,6 +42,7 @@ from common.mail import Email, get_mail_sender
 from common.ratelimit import ProviderRateLimiter
 from content.models import DeliveryMode, Post, PostStatus, PostTarget, PostTargetState
 from content.services.adaptation import render_post
+from workspaces.services import approvals
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +134,17 @@ def preflight(post: Post) -> None:
     reach the provider even if a post somehow arrived in `SCHEDULED` with
     `AUTO_PUBLISH` set — which is the point of checking again rather than
     trusting the schedule endpoint that already checked.
+
+    `ensure_approval_still_valid` is Phase 13's own re-check, for the same
+    reason: `schedule_post` required `APPROVED` at schedule time, but the
+    approver's role can be revoked any time between then and now, and I5's
+    shape is "re-verify at the point of the actual spend/action", not "trust
+    an earlier check".
     """
     entitlements = entitlements_for(post.workspace)
     entitlements.require_feature("auto_publish")
     entitlements.check_quota("max_autopublish_posts", _period_autopublish_count(post))
+    approvals.ensure_approval_still_valid(post)
 
 
 def _limiter(account: SocialAccount) -> ProviderRateLimiter:
@@ -192,6 +200,28 @@ def _alert(target: PostTarget) -> None:
     )
 
 
+def _fail_unpublishable(post: Post, error: OCCSError) -> None:
+    """A post preflight has ruled can never publish as scheduled — never
+    retried, since nothing about the situation changes by waiting: no target
+    was touched, so there is no back-off to wait out, only a human decision
+    (re-approve, or reschedule) to wait for.
+    """
+    post.status = PostStatus.FAILED
+    post.save(update_fields=["status", "updated_at"])
+    get_mail_sender().send(
+        Email(
+            to=post.author.email,
+            subject="A scheduled post could not be published",
+            template="publish_blocked",
+            context={"post": post, "reason": error.message},
+        )
+    )
+    logger.error(
+        "publish blocked by preflight",
+        extra={"post_id": post.pk, "code": error.code},
+    )
+
+
 def _terminal(target: PostTarget, message: str, detail: dict[str, Any]) -> PlatformError:
     """Records a failure this target can never recover from on its own, and
     hands back the error for the caller to raise."""
@@ -213,9 +243,7 @@ def _publish_target(target: PostTarget) -> None:
 
     account = target.social_account
     if account is None:
-        raise _terminal(
-            target, "This target has no connected account to publish through.", {}
-        )
+        raise _terminal(target, "This target has no connected account to publish through.", {})
 
     # I6, layer three. A parked or revoked account is a *terminal* failure for
     # this target and only this target — converted rather than allowed to
@@ -286,7 +314,16 @@ def publish_post(post: Post) -> Post:
     if post.status == PostStatus.PUBLISHED:
         return post
 
-    preflight(post)
+    try:
+        preflight(post)
+    except approvals.ApprovalRevokedError as error:
+        # Not a provider hiccup, so not retried: no target has been touched,
+        # there is nothing for a back-off to wait out, and a Beat scan that
+        # left `post.status` unchanged would pick this post up again on every
+        # tick forever. Same shape as `_record_failure`'s terminal branch,
+        # applied at the post level instead of the target level.
+        _fail_unpublishable(post, error)
+        return post
 
     # `social_account__workspace` because the publish-time cap check re-derives
     # entitlements from it per target; `post__author` because a terminal failure
@@ -319,9 +356,7 @@ def _settle(post: Post, targets: list[PostTarget]) -> None:
         # retry finds it and `preflight` does not run against a post it has
         # already counted.
         return
-    post.status = (
-        PostStatus.PUBLISHED if PostTargetState.PUBLISHED in states else PostStatus.FAILED
-    )
+    post.status = PostStatus.PUBLISHED if PostTargetState.PUBLISHED in states else PostStatus.FAILED
     post.save(update_fields=["status", "updated_at"])
 
 

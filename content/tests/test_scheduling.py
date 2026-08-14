@@ -109,3 +109,49 @@ def test_schedule_rejects_a_past_scheduled_at(auth_client: Any, workspace: Any, 
     )
 
     assert response.status_code == 400
+
+
+# -----------------------------------------------------------------------------
+# The approval gate (design.md §8.8, implementation.md Phase 13)
+# -----------------------------------------------------------------------------
+def test_schedule_refuses_an_unapproved_post_when_approval_is_required(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any
+) -> None:
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    soon = timezone.now() + dt.timedelta(days=1)
+
+    response = client_as(contributor_user).post(
+        _schedule_url(post.id),
+        {"delivery_mode": "REMINDER", "scheduled_at": soon.isoformat()},
+        format="json",
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "state_conflict"
+    post.refresh_from_db()
+    assert post.status == PostStatus.DRAFT
+    assert not Reminder.objects.filter(post=post).exists()
+
+
+def test_schedule_accepts_an_approved_post_when_approval_is_required(
+    client_as: Any,
+    advanced_workspace: Any,
+    contributor_user: Any,
+    admin_user: Any,
+    advanced_social_account: Any,
+) -> None:
+    from workspaces.services import approvals
+
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    post = approvals.submit_for_review(post, actor=contributor_user)
+    approvals.approve(post, actor=admin_user)
+    soon = timezone.now() + dt.timedelta(days=1)
+
+    response = client_as(contributor_user).post(
+        _schedule_url(post.id),
+        {"delivery_mode": "AUTO_PUBLISH", "scheduled_at": soon.isoformat()},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == PostStatus.SCHEDULED

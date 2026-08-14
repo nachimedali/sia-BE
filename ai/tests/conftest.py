@@ -38,13 +38,6 @@ def product_with_reference_image(product: Any, make_png_upload: Any) -> Any:
 
 
 @pytest.fixture
-def generation_costs(db: None) -> None:
-    from django.core.management import call_command
-
-    call_command("seed_generation_costs", verbosity=0)
-
-
-@pytest.fixture
 def voice_profile(workspace: Any) -> Any:
     from ai.models import VoiceProfile
 
@@ -55,21 +48,3 @@ def voice_profile(workspace: Any) -> Any:
         banned_phrases=["synergy"],
         system_prompt="Write like a small, proud, independent brand.",
     )
-
-
-@pytest.fixture(autouse=True)
-def _fake_ai_providers(settings: Any) -> None:
-    """AI tests use the fake providers by default (A8), mirroring
-    `USE_FAKE_BILLING`'s test-time default."""
-    settings.USE_FAKE_AI_PROVIDERS = True
-
-
-@pytest.fixture(autouse=True)
-def _clear_fake_providers() -> Any:
-    from ai.providers.fake import _fake_image_provider, _fake_text_provider
-
-    _fake_text_provider.clear()
-    _fake_image_provider.clear()
-    yield
-    _fake_text_provider.clear()
-    _fake_image_provider.clear()

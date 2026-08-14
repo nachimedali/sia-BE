@@ -301,6 +301,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "analytics.tasks.scan_repurpose_candidates",
         "schedule": crontab(hour=4, minute=30),
     },
+    # Daily, though each config only runs on its own `cadence_days` — the scan
+    # asks which configs are owed a run, so the cadence lives on the config
+    # where an operator can retune it, not in this schedule. After the trend
+    # and repurpose jobs, so a drafting run is grounded in the freshest corpus.
+    "products-run-due-autopilot": {
+        "task": "products.tasks.run_due_autopilot",
+        "schedule": crontab(hour=5, minute=0),
+    },
 }
 
 # -----------------------------------------------------------------------------

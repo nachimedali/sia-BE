@@ -50,7 +50,12 @@ from channels.views import ChannelConnectView, SocialAccountViewSet
 from common.health import HealthView
 from content.views import MediaAssetViewSet, PostViewSet
 from onboarding.views import OnboardingCompleteView, OnboardingView
-from products.views import ProductViewSet
+from products.views import (
+    AutopilotApproveView,
+    AutopilotQueueView,
+    AutopilotRejectView,
+    ProductViewSet,
+)
 from reminders.views import (
     ReminderConfirmView,
     ReminderPacketView,
@@ -59,6 +64,7 @@ from reminders.views import (
     ReminderViewSet,
 )
 from trends.views import TrendListView, TrendRefreshView
+from workspaces.views import AuditLogView, MembershipViewSet, WorkspaceSettingsView
 
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
@@ -68,6 +74,7 @@ router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
 router.register("reminders", ReminderViewSet, basename="reminder")
 router.register("channels", SocialAccountViewSet, basename="social-account")
+router.register("workspaces/members", MembershipViewSet, basename="membership")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
@@ -135,6 +142,15 @@ urlpatterns = [
         RepurposeDismissView.as_view(),
         name="analytics-repurpose-dismiss",
     ),
+    # --- autopilot ---
+    # Plain paths, not a router registration: the queue returns no object by
+    # pk, and approve/reject resolve theirs through a workspace-filtered
+    # queryset — the same guarantee the tenancy sweep (A52) checks, applied
+    # where the sweep does not reach. The config itself is an action on
+    # `ProductViewSet`, which the sweep does walk.
+    path("autopilot/queue/", AutopilotQueueView.as_view(), name="autopilot-queue"),
+    path("autopilot/<int:pk>/approve/", AutopilotApproveView.as_view(), name="autopilot-approve"),
+    path("autopilot/<int:pk>/reject/", AutopilotRejectView.as_view(), name="autopilot-reject"),
     # --- trends ---
     # Plain paths, not a router registration: a `TrendCluster` belongs to a
     # `Category`, not to a workspace — every workspace in a vertical reads the
@@ -142,6 +158,13 @@ urlpatterns = [
     # tenancy sweep (A52) to walk.
     path("trends/", TrendListView.as_view(), name="trends"),
     path("trends/refresh/", TrendRefreshView.as_view(), name="trends-refresh"),
+    # --- workspaces: collaboration & roles (design.md §8.8) ---
+    # Plain paths: both answer for the caller's own workspace rather than an
+    # id in the URL, so there is nothing here for the tenancy sweep (A52) to
+    # walk. `MembershipViewSet`, which does return objects by pk, is
+    # registered on `router` above instead.
+    path("workspaces/settings/", WorkspaceSettingsView.as_view(), name="workspace-settings"),
+    path("workspaces/audit-log/", AuditLogView.as_view(), name="workspace-audit-log"),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
     # --- ai ---
@@ -151,9 +174,7 @@ urlpatterns = [
     # cross-workspace tenancy sweep (A52) has nothing to walk here;
     # `reminders.services.resolve_token` is the access control instead.
     path("reminders/<str:token>/packet/", ReminderPacketView.as_view(), name="reminder-packet"),
-    path(
-        "reminders/<str:token>/confirm/", ReminderConfirmView.as_view(), name="reminder-confirm"
-    ),
+    path("reminders/<str:token>/confirm/", ReminderConfirmView.as_view(), name="reminder-confirm"),
     path("reminders/<str:token>/snooze/", ReminderSnoozeView.as_view(), name="reminder-snooze"),
     path("reminders/<str:token>/skip/", ReminderSkipView.as_view(), name="reminder-skip"),
     # --- content ---

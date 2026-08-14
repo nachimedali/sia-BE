@@ -286,12 +286,15 @@ def grant_video_units(
     """Included video allowance resets monthly and does not roll over (§4.3).
 
     Prepaid packs are bought separately and *do* persist, so the reset zeroes
-    only what the monthly grant put there — anything bought stays.
+    only what is left of the allowance — anything bought stays. "What is left"
+    is net of consumption: a workspace granted 4 that spent 3 has one included
+    unit to expire, not four, and taking back four would silently eat three
+    units of pack.
     """
     _lock_workspace(workspace)
     rows: list[VideoLedger] = []
 
-    granted = _granted_video_units(workspace)
+    granted = included_video_balance(workspace)
     if granted > 0:
         rows.append(
             _append(
@@ -330,12 +333,24 @@ def purchase_video_units(
     )
 
 
-def _granted_video_units(workspace: Workspace) -> int:
-    """The part of the balance that came from the monthly allowance rather than
-    a purchase — the only part the monthly reset is allowed to take back."""
-    total = VideoLedger.objects.filter(
-        workspace=workspace, reason=VideoReason.MONTHLY_GRANT
-    ).aggregate(total=Sum("delta"))["total"]
+def included_video_balance(workspace: Workspace) -> int:
+    """The part of the balance that did **not** come from a prepaid pack.
+
+    Two callers need this exact number and must agree on it: the monthly reset,
+    which may only take back what the allowance put there (§4.3), and autopilot,
+    which may spend the included allowance but never a pack the workspace paid
+    for (I3).
+
+    Everything except `PURCHASE`, summed and floored at zero. Consumption is
+    charged against the allowance first, so a workspace granted 4, holding a
+    10-pack, and having spent 6 has nothing included left and 8 units of pack —
+    which is the state where I3 actually bites.
+    """
+    total = (
+        VideoLedger.objects.filter(workspace=workspace)
+        .exclude(reason=VideoReason.PURCHASE)
+        .aggregate(total=Sum("delta"))["total"]
+    )
     return max(0, int(total or 0))
 
 

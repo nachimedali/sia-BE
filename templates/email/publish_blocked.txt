@@ -1,0 +1,9 @@
+A scheduled post could not be published
+
+We stopped a scheduled post before it went out:
+
+{{ reason }}
+
+Nothing was posted. Open the post to review it and reschedule:
+
+{{ site_url }}/app/posts/{{ post.id }}
