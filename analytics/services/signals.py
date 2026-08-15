@@ -108,9 +108,7 @@ def _captures_by_target(targets: list[PostTarget]) -> dict[int, list[_Capture]]:
         .values_list(*_CAPTURE_COLUMNS)
     )
     for target_id, captured_at, rate, impressions, likes, comments in rows:
-        grouped[target_id].append(
-            _Capture(captured_at, rate, impressions, likes, comments)
-        )
+        grouped[target_id].append(_Capture(captured_at, rate, impressions, likes, comments))
     return grouped
 
 

@@ -38,9 +38,7 @@ class AppendOnly(models.Model):
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         if not self._state.adding:
-            raise AppendOnlyError(
-                f"{type(self).__name__} is append-only; {self.append_only_hint}"
-            )
+            raise AppendOnlyError(f"{type(self).__name__} is append-only; {self.append_only_hint}")
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> Any:

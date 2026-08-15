@@ -177,9 +177,7 @@ def test_comments_are_immutable_too(published_target: Any) -> None:
 # -----------------------------------------------------------------------------
 # Comments and sentiment
 # -----------------------------------------------------------------------------
-def test_comments_are_ingested_and_classified(
-    published_target: Any, platform_adapter: Any
-) -> None:
+def test_comments_are_ingested_and_classified(published_target: Any, platform_adapter: Any) -> None:
     now = timezone.now()
     platform_adapter.comments_for[published_target.provider_post_id] = [
         CommentSnapshot(external_id="c-1", body="love this", author="@a", posted_at=now),

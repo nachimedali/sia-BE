@@ -10,7 +10,12 @@ freezegun
 respx
 time-machine
 
-ruff
+# Pinned to a minor, unlike everything else here: `ruff format` is a CI gate
+# (`ruff format --check`), and its output changes between 0.x minors. Left
+# unpinned, a fresh `pip install` reformats files nobody touched and the check
+# fails on work that is already merged — which is exactly what happened between
+# Phase 11 and Phase 13.
+ruff~=0.16.3
 mypy
 django-stubs
 djangorestframework-stubs

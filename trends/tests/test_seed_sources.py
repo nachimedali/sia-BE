@@ -28,9 +28,9 @@ def test_seeds_sources_for_every_root_and_platform(category: Any) -> None:
     assert TrendSource.objects.filter(category=root).exists()
     # Every platform the seed covers gets at least one source, and none hang
     # off the leaf — inheritance is what serves leaves (`sources_for`).
-    assert set(
-        TrendSource.objects.filter(category=root).values_list("platform", flat=True)
-    ) == set(Platform.values)
+    assert set(TrendSource.objects.filter(category=root).values_list("platform", flat=True)) == set(
+        Platform.values
+    )
     assert not TrendSource.objects.filter(category=category).exists()
 
 

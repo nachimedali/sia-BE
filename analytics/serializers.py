@@ -73,8 +73,15 @@ class SentimentSummarySerializer(serializers.Serializer[Any]):
 class CommentSerializer(serializers.ModelSerializer[Comment]):
     class Meta:
         model = Comment
-        fields = ("id", "post_target", "author", "body", "sentiment", "sentiment_score",
-                  "posted_at")
+        fields = (
+            "id",
+            "post_target",
+            "author",
+            "body",
+            "sentiment",
+            "sentiment_score",
+            "posted_at",
+        )
         read_only_fields = fields
 
 

@@ -139,14 +139,10 @@ def test_the_decay_ratio_separates_evergreen_from_spike(
     assert rows[spike.pk].decay_ratio == pytest.approx(1.01)
 
 
-def test_a_post_with_one_capture_has_a_neutral_decay_ratio(
-    published_target: Any
-) -> None:
+def test_a_post_with_one_capture_has_a_neutral_decay_ratio(published_target: Any) -> None:
     capture(published_target, rate=0.1)
 
-    rows = signals.performance(
-        published_target.post.workspace_id, horizon_days=PRO_HORIZON
-    )
+    rows = signals.performance(published_target.post.workspace_id, horizon_days=PRO_HORIZON)
 
     assert rows[0].decay_ratio == 1.0
 
@@ -167,9 +163,7 @@ def test_best_times_drops_single_observation_buckets(
     lonely.save(update_fields=["published_at"])
     capture(lonely, rate=0.9)
 
-    buckets = signals.best_times(
-        signals.performance(paid_workspace.pk, horizon_days=PRO_HORIZON)
-    )
+    buckets = signals.best_times(signals.performance(paid_workspace.pk, horizon_days=PRO_HORIZON))
 
     assert len(buckets) == 1
     assert buckets[0]["samples"] == 2
@@ -180,12 +174,8 @@ def test_attribution_splits_ai_from_manual(
     paid_workspace: Any, user: Any, social_account: Any
 ) -> None:
     """§8.9's honest self-audit — reported whichever way it comes out."""
-    capture(
-        make_target(paid_workspace, user, social_account, source=PostSource.AI), rate=0.30
-    )
-    capture(
-        make_target(paid_workspace, user, social_account, source=PostSource.MANUAL), rate=0.10
-    )
+    capture(make_target(paid_workspace, user, social_account, source=PostSource.AI), rate=0.30)
+    capture(make_target(paid_workspace, user, social_account, source=PostSource.MANUAL), rate=0.10)
 
     result = signals.overview(paid_workspace.pk, horizon_days=PRO_HORIZON)
 

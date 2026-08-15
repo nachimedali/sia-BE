@@ -94,9 +94,7 @@ def _performance_signal(workspace: Workspace) -> str | None:
         return None
 
     rows = signals.performance(workspace.pk, horizon_days=horizon)
-    best = next(
-        (row for row in rows if row.percentile is not None and row.percentile >= 80), None
-    )
+    best = next((row for row in rows if row.percentile is not None and row.percentile >= 80), None)
     if best is None:
         return None
 

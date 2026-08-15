@@ -41,6 +41,8 @@ _SPAM_MARKERS = (
     "free giveaway",
     "follow for follow",
 )
+
+
 def _shingle_hash(words: list[str]) -> str:
     """Order-insensitive fingerprint of an item's vocabulary. Two posts that
     reorder the same words — which is what a repost or an ad variant does — hash

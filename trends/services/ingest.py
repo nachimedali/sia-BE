@@ -43,9 +43,7 @@ def ingest_source(source: TrendSource) -> int:
             query=source.query, since=source.watermark_at, limit=FETCH_LIMIT
         )
     except TrendVendorError:
-        logger.warning(
-            "trend source unavailable", exc_info=True, extra={"source_id": source.pk}
-        )
+        logger.warning("trend source unavailable", exc_info=True, extra={"source_id": source.pk})
         return 0
 
     newest: dt.datetime | None = source.watermark_at
@@ -85,9 +83,7 @@ def sources_for(category: Category, platform: str) -> list[TrendSource]:
     the inherited set for that leaf alone.
     """
     for node in [category, *reversed(category.ancestors())]:
-        sources = list(
-            TrendSource.objects.filter(category=node, platform=platform, is_active=True)
-        )
+        sources = list(TrendSource.objects.filter(category=node, platform=platform, is_active=True))
         if sources:
             return sources
     return []
@@ -108,7 +104,5 @@ def window_items(sources: list[TrendSource], *, days: int) -> list[TrendItem]:
         return []
     since = timezone.now() - dt.timedelta(days=days)
     return list(
-        TrendItem.objects.filter(
-            source__in=sources, posted_at__gte=since
-        ).select_related("source")
+        TrendItem.objects.filter(source__in=sources, posted_at__gte=since).select_related("source")
     )

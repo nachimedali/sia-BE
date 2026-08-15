@@ -28,17 +28,47 @@ logger = logging.getLogger(__name__)
 #: obvious cases, not an attempt to do sentiment analysis with a word list.
 _POSITIVE = frozenset(
     [
-        "love", "loved", "lovely", "great", "amazing", "awesome", "perfect",
-        "beautiful", "gorgeous", "stunning", "brilliant", "excellent",
-        "fantastic", "wonderful", "nice", "good", "best", "obsessed", "yes",
-        "wow", "incredible",
+        "love",
+        "loved",
+        "lovely",
+        "great",
+        "amazing",
+        "awesome",
+        "perfect",
+        "beautiful",
+        "gorgeous",
+        "stunning",
+        "brilliant",
+        "excellent",
+        "fantastic",
+        "wonderful",
+        "nice",
+        "good",
+        "best",
+        "obsessed",
+        "yes",
+        "wow",
+        "incredible",
     ]
 )
 _NEGATIVE = frozenset(
     [
-        "hate", "hated", "awful", "terrible", "horrible", "worst", "ugly",
-        "disappointing", "disappointed", "scam", "fake", "overpriced",
-        "rubbish", "bad", "boring", "waste",
+        "hate",
+        "hated",
+        "awful",
+        "terrible",
+        "horrible",
+        "worst",
+        "ugly",
+        "disappointing",
+        "disappointed",
+        "scam",
+        "fake",
+        "overpriced",
+        "rubbish",
+        "bad",
+        "boring",
+        "waste",
     ]
 )
 
@@ -105,9 +135,7 @@ def classify_comments(bodies: list[str]) -> list[SentimentVerdict]:
     try:
         result = get_text_provider().generate(system=_PROMPT, prompt=numbered, n=1)
         lines = [
-            line.strip().upper()
-            for line in result.variants[0].body.splitlines()
-            if line.strip()
+            line.strip().upper() for line in result.variants[0].body.splitlines() if line.strip()
         ]
     except (ProviderError, IndexError):
         logger.warning("sentiment classification failed; defaulting to neutral", exc_info=True)

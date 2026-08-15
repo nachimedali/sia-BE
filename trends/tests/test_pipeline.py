@@ -53,9 +53,7 @@ def test_forced_extract_materialises_clusters_for_category(category: Any, source
     assert all(cluster.items.exists() for cluster in clusters)
 
 
-def test_extraction_inherits_sources_from_the_nearest_ancestor(
-    category: Any, source: Any
-) -> None:
+def test_extraction_inherits_sources_from_the_nearest_ancestor(category: Any, source: Any) -> None:
     """Sources are seeded on roots (`seed_trend_sources`) but a workspace's
     category is a leaf, so a leaf with none of its own must borrow rather than
     come back empty."""
@@ -132,9 +130,7 @@ def test_normalisation_marks_language_duplicates_and_spam(source: Any) -> None:
     kept = normalize.normalize(_window(source))
 
     reasons = dict(
-        TrendItem.objects.exclude(excluded_reason="").values_list(
-            "external_id", "excluded_reason"
-        )
+        TrendItem.objects.exclude(excluded_reason="").values_list("external_id", "excluded_reason")
     )
     # The French item is out on language, the repost on dedup, the giveaway on
     # spam — and the account with the larger following keeps the shared body.
@@ -213,9 +209,7 @@ def test_scoring_an_empty_window_is_not_an_error() -> None:
 # -----------------------------------------------------------------------------
 # Stage 4 — cluster
 # -----------------------------------------------------------------------------
-def test_reworded_posts_about_one_idea_land_in_one_cluster(
-    category: Any, source: Any
-) -> None:
+def test_reworded_posts_about_one_idea_land_in_one_cluster(category: Any, source: Any) -> None:
     """The fixture's two unboxing posts are deliberately reworded rather than
     identical, so dedup leaves them both and clustering is what has to notice
     they are the same idea."""

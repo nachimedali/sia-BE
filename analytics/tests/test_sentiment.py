@@ -50,7 +50,7 @@ def test_a_long_comment_goes_to_the_provider(monkeypatch: Any) -> None:
 
 
 def test_a_mixed_short_comment_goes_to_the_provider(monkeypatch: Any) -> None:
-    """"love it, but awful packaging" carries both markers in four words; a
+    """ "love it, but awful packaging" carries both markers in four words; a
     count cannot call that, so it is escalated rather than guessed."""
     monkeypatch.setattr(
         "analytics.services.sentiment.get_text_provider",

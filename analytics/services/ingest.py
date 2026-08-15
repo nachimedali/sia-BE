@@ -123,9 +123,9 @@ def _taken_rungs(targets: list[PostTarget]) -> dict[int, set[dt.datetime]]:
     published post, and the overwhelming majority of them are not due.
     """
     taken: dict[int, set[dt.datetime]] = defaultdict(set)
-    for target_id, captured_at in PostMetric.objects.filter(
-        post_target__in=targets
-    ).values_list("post_target_id", "captured_at"):
+    for target_id, captured_at in PostMetric.objects.filter(post_target__in=targets).values_list(
+        "post_target_id", "captured_at"
+    ):
         taken[target_id].add(captured_at)
     return taken
 
@@ -145,9 +145,7 @@ def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
         # `metrics_q` is below publishing in priority and the last capture stays
         # valid — a provider hiccup means this rung is retried on the next tick,
         # not that the ladder breaks.
-        logger.warning(
-            "metric capture failed", exc_info=True, extra={"target_id": target.pk}
-        )
+        logger.warning("metric capture failed", exc_info=True, extra={"target_id": target.pk})
         return None
 
     try:
@@ -191,9 +189,7 @@ def capture_comments(target: PostTarget) -> int:
             platform=target.platform, provider_post_id=target.provider_post_id, since=newest
         )
     except PlatformError:
-        logger.warning(
-            "comment fetch failed", exc_info=True, extra={"target_id": target.pk}
-        )
+        logger.warning("comment fetch failed", exc_info=True, extra={"target_id": target.pk})
         return 0
 
     # Bounded by what was just fetched, not by the post's lifetime comment
@@ -264,9 +260,7 @@ def capture_due() -> int:
         if workspace.pk not in horizons:
             horizons[workspace.pk] = entitlements_for(workspace).analytics_horizon_days()
 
-        rung = due_rung(
-            target, horizons[workspace.pk], now=moment, taken=taken[target.pk]
-        )
+        rung = due_rung(target, horizons[workspace.pk], now=moment, taken=taken[target.pk])
         if rung is None:
             continue
         if capture_target(target, rung) is not None:

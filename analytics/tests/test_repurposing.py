@@ -23,9 +23,7 @@ def _population(workspace: Any, user: Any, account: Any, *, age_days: int = 75) 
     """75 days because the eligible band is genuinely narrow: §8.9 requires
     `published_at < now-60d`, and the percentile it ranks on is computed over the
     trailing 90 days, so only posts aged 60-90 days can ever qualify."""
-    return make_population(
-        workspace, user, account, age_days=age_days, winner_kept_earning=True
-    )
+    return make_population(workspace, user, account, age_days=age_days, winner_kept_earning=True)
 
 
 # -----------------------------------------------------------------------------
@@ -186,9 +184,7 @@ def test_repurpose_similarity_capped_at_point_eight(make_png_upload: Any) -> Non
     assert far_enough.passed is True
 
 
-def test_the_repurpose_ceiling_does_not_apply_to_ordinary_generations(
-    make_png_upload: Any
-) -> None:
+def test_the_repurpose_ceiling_does_not_apply_to_ordinary_generations(make_png_upload: Any) -> None:
     """Only a reissue has an original to be too close to; every other mode must
     be unaffected by the ceiling."""
     from ai.providers.fake import FakeTextProvider

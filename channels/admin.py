@@ -26,9 +26,7 @@ class SocialAccountAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     autocomplete_fields = ("workspace",)
     readonly_fields = ("connected_at", "updated_at")
 
-    def save_model(
-        self, request: HttpRequest, obj: SocialAccount, form: Any, change: bool
-    ) -> None:
+    def save_model(self, request: HttpRequest, obj: SocialAccount, form: Any, change: bool) -> None:
         # Only a *new* active account consumes cap. Editing an existing row —
         # fixing a handle, parking one over the limit — must not be refused by
         # the cap it is already counted against.

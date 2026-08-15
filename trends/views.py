@@ -78,8 +78,14 @@ def _render(clusters: list[Any], *, unlocked: bool) -> Response:
             Prefetch(
                 "items",
                 queryset=TrendItem.objects.only(
-                    "id", "cluster_id", "modality", "author_handle", "body", "media_url",
-                    "posted_at", "composite_score",
+                    "id",
+                    "cluster_id",
+                    "modality",
+                    "author_handle",
+                    "body",
+                    "media_url",
+                    "posted_at",
+                    "composite_score",
                 ),
             ),
         )
