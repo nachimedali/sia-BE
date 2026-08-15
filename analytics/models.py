@@ -91,9 +91,7 @@ class Comment(ImmutableCapture):
     external_id = models.CharField(max_length=200)
     author = models.CharField(max_length=200, blank=True)
     body = models.TextField(blank=True)
-    sentiment = models.CharField(
-        max_length=3, choices=Sentiment.choices, default=Sentiment.NEUTRAL
-    )
+    sentiment = models.CharField(max_length=3, choices=Sentiment.choices, default=Sentiment.NEUTRAL)
     sentiment_score = models.FloatField(default=0)
     posted_at = models.DateTimeField()
 

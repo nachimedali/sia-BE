@@ -150,9 +150,7 @@ def scan_all() -> int:
             # see a qualifying post: by the time one is old enough, it has
             # fallen out of the window the percentile is computed over.
             continue
-        total += scan_workspace(
-            workspace, horizon_days=horizon, threshold=threshold, now=now
-        )
+        total += scan_workspace(workspace, horizon_days=horizon, threshold=threshold, now=now)
 
     if total:
         logger.info("surfaced repurpose candidates", extra={"count": total})

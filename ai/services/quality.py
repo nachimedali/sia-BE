@@ -158,9 +158,7 @@ def run_image_quality_gate(
 
     identity_score: float | None = None
     if reference_images and candidate_hash is not None:
-        identity_score = max(
-            _similarity_from_hash(candidate_hash, ref) for ref in reference_images
-        )
+        identity_score = max(_similarity_from_hash(candidate_hash, ref) for ref in reference_images)
         identity_ok = identity_score >= identity_similarity_threshold
         checks["product_identity"] = {
             "passed": identity_ok,

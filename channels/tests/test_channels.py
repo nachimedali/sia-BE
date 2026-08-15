@@ -54,9 +54,7 @@ def test_connect_returns_a_provider_url_and_mints_a_profile(
     paid_workspace.refresh_from_db()
     assert paid_workspace.provider_profile_id == "fake-profile-1"
     # The redirect lands on our own site, never on the provider (D2).
-    assert platform_adapter.connect_urls[0]["redirect_url"].endswith(
-        "/app/settings/connections"
-    )
+    assert platform_adapter.connect_urls[0]["redirect_url"].endswith("/app/settings/connections")
 
 
 def test_connect_reuses_an_existing_provider_profile(

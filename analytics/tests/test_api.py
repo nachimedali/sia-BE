@@ -80,9 +80,7 @@ def test_best_times_returns_buckets(
     assert body[0]["weekday"] == when.weekday()
 
 
-def test_sentiment_aggregates_across_the_workspace(
-    auth_client: Any, published_target: Any
-) -> None:
+def test_sentiment_aggregates_across_the_workspace(auth_client: Any, published_target: Any) -> None:
     now = timezone.now()
     for index, (sentiment, score) in enumerate(
         [(Sentiment.POSITIVE, 1.0), (Sentiment.POSITIVE, 1.0), (Sentiment.NEGATIVE, -1.0)]
@@ -110,7 +108,9 @@ def test_sentiment_aggregates_across_the_workspace(
 def test_comments_are_listed_newest_first(auth_client: Any, published_target: Any) -> None:
     now = timezone.now()
     Comment.objects.create(
-        post_target=published_target, external_id="old", body="older",
+        post_target=published_target,
+        external_id="old",
+        body="older",
         posted_at=now - dt.timedelta(days=1),
     )
     Comment.objects.create(
@@ -150,9 +150,7 @@ def test_another_workspaces_numbers_are_never_visible(
 # -----------------------------------------------------------------------------
 def _candidate(workspace: Any, user: Any, account: Any) -> RepurposeCandidate:
     target = make_target(workspace, user, account, age_days=75)
-    return RepurposeCandidate.objects.create(
-        post=target.post, percentile=95.0, score=90.0
-    )
+    return RepurposeCandidate.objects.create(post=target.post, percentile=95.0, score=90.0)
 
 
 def test_the_repurpose_queue_lists_open_candidates_best_first(
@@ -231,9 +229,7 @@ def test_analytics_requires_authentication(client: Any) -> None:
     assert client.get(OVERVIEW).status_code == 401
 
 
-def test_the_beat_tasks_are_thin_wrappers(
-    published_target: Any, platform_adapter: Any
-) -> None:
+def test_the_beat_tasks_are_thin_wrappers(published_target: Any, platform_adapter: Any) -> None:
     from analytics.tasks import capture_due_metrics, scan_repurpose_candidates, snapshot_accounts
 
     assert capture_due_metrics() == 1

@@ -37,6 +37,7 @@ SIMILARITY_THRESHOLD = 0.62
 #: evidence, where "1" would be an anti-recommendation.
 MIN_CLUSTER_SIZE = 2
 
+
 def _cosine(left: list[float], right: list[float]) -> float:
     dot = sum(a * b for a, b in zip(left, right, strict=True))
     left_norm = math.sqrt(sum(a * a for a in left))

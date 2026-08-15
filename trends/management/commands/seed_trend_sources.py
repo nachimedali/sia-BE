@@ -68,9 +68,7 @@ class Command(BaseCommand):
     def handle(self, *args: Any, **options: Any) -> None:
         roots = Category.objects.filter(parent__isnull=True, is_active=True)
         if not roots:
-            self.stderr.write(
-                self.style.WARNING("No root categories — run seed_categories first.")
-            )
+            self.stderr.write(self.style.WARNING("No root categories — run seed_categories first."))
             return
 
         created = updated = 0

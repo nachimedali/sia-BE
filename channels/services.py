@@ -126,9 +126,7 @@ def resolve_connect(
 
 
 @transaction.atomic
-def attach_account(
-    *, workspace: Workspace, platform: str, connected: Any
-) -> SocialAccount:
+def attach_account(*, workspace: Workspace, platform: str, connected: Any) -> SocialAccount:
     """Persists what the adapter connected. `update_or_create` on the model's
     own uniqueness triple, so re-running a connect for an account that is
     already here (a reauth, or an impatient second click) refreshes it instead

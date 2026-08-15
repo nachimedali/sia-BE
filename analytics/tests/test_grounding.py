@@ -51,9 +51,7 @@ def test_only_the_opening_is_quoted_not_the_whole_post(
             engagement_rate=rate,
         )
     PostMetric.objects.create(
-        post_target=make_target(
-            paid_workspace, user, social_account, age_days=10, body=long_body
-        ),
+        post_target=make_target(paid_workspace, user, social_account, age_days=10, body=long_body),
         captured_at=timezone.now(),
         engagement_rate=0.40,
     )
@@ -110,9 +108,7 @@ def test_grounding_never_reaches_a_provider(
     def explode(**_kwargs: Any) -> Any:
         raise AssertionError("prompt assembly must not reach a platform adapter")
 
-    monkeypatch.setattr(
-        "channels.adapters.fake.FakePlatformAdapter.fetch_metrics", explode
-    )
+    monkeypatch.setattr("channels.adapters.fake.FakePlatformAdapter.fetch_metrics", explode)
 
     prompt = assemble_text_prompt(idea="launch day", workspace=paid_workspace)
 

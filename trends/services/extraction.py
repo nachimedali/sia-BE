@@ -38,9 +38,7 @@ def cached_clusters(category_id: int, platform: str) -> list[TrendCluster]:
     """
     return [
         cluster
-        for cluster in TrendCluster.objects.filter(
-            category_id=category_id, platform=platform
-        )
+        for cluster in TrendCluster.objects.filter(category_id=category_id, platform=platform)
         .defer("centroid")
         .order_by("-composite_score")
         if cluster.is_fresh

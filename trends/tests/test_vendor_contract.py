@@ -60,9 +60,7 @@ def test_every_vendor_honours_the_watermark(any_kind: str) -> None:
 
 
 def test_every_vendor_honours_the_limit() -> None:
-    items = FakeTrendVendor(TrendSourceKind.CREATIVE_CENTER).fetch(
-        query={}, since=None, limit=2
-    )
+    items = FakeTrendVendor(TrendSourceKind.CREATIVE_CENTER).fetch(query={}, since=None, limit=2)
 
     assert len(items) == 2
 

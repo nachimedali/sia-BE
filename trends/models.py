@@ -119,7 +119,10 @@ class TrendItem(models.Model):
 
     embedding = VectorField(dimensions=EMBEDDING_DIMENSIONS, null=True, blank=True)
     cluster = models.ForeignKey(
-        "trends.TrendCluster", null=True, blank=True, on_delete=models.SET_NULL,
+        "trends.TrendCluster",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         related_name="items",
     )
 

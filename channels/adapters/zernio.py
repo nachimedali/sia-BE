@@ -160,9 +160,7 @@ class ZernioAdapter:
             return self._facebook_targets(profile_id=profile_id, params=params)
         return self._linkedin_targets(params=params)
 
-    def _facebook_targets(
-        self, *, profile_id: str, params: dict[str, Any]
-    ) -> ConnectResolution:
+    def _facebook_targets(self, *, profile_id: str, params: dict[str, Any]) -> ConnectResolution:
         temp_token = str(params.get("tempToken", ""))
         with _client() as client:
             payload = _json(
@@ -249,9 +247,7 @@ class ZernioAdapter:
         carries the display name and follower count the connections screen
         shows. One extra read at connect time, never on the publish path."""
         with _client() as client:
-            payload = _json(
-                client.get(f"/v1/accounts/{account_id}"), label="Zernio account"
-            )
+            payload = _json(client.get(f"/v1/accounts/{account_id}"), label="Zernio account")
         account = payload.get("account", payload)
         return ConnectedAccount(
             provider_account_id=account_id,
