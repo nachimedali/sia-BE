@@ -27,7 +27,7 @@ from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import active_workspace, authenticated_user
-from content.models import MediaAsset, Platform, Post, PostMediaAttachment
+from content.models import MediaAsset, Platform, Post, PostMediaAttachment, PostStatus
 from content.serializers import (
     MediaAssetSerializer,
     MediaAssetUploadSerializer,
@@ -42,7 +42,11 @@ from content.services.posts import create_post, update_post
 from scheduling.services import schedule_post
 from workspaces.models import PostComment, Role
 from workspaces.permissions import HasRole, caller_role, role_at_least
-from workspaces.serializers import ApprovalNoteRequestSerializer, PostCommentSerializer
+from workspaces.serializers import (
+    ApprovalActionSerializer,
+    ApprovalNoteRequestSerializer,
+    PostCommentSerializer,
+)
 from workspaces.services import approvals
 
 #: design.md §8.8: submit/approve/request-changes/reject/comments are all
@@ -64,9 +68,45 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     serializer_class = PostSerializer
     permission_classes: list[Any] = [IsAuthenticated]
     pagination_class = DefaultPagination
-    queryset = Post.objects.select_related("category", "origin_post").prefetch_related(
+    queryset = Post.objects.select_related("category", "origin_post", "author").prefetch_related(
         _ORDERED_MEDIA_ATTACHMENTS
     )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "status",
+                str,
+                description="Repeatable. Restricts the list to these statuses; an unknown "
+                "value is a 400 rather than a silently empty page.",
+                many=True,
+                enum=PostStatus.values,
+            )
+        ]
+    )
+    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return super().list(request, *args, **kwargs)
+
+    def get_queryset(self) -> Any:
+        """`?status=` exists for the review queue, which is a *subset* of the
+        workspace's posts and has to be the whole subset: `max_page_size` is
+        100, so filtering a page client-side would quietly drop the 101st post
+        awaiting review. An unrecognised value is rejected rather than ignored,
+        because a typo that returns everything is worse than one that 400s.
+        """
+        queryset = super().get_queryset()
+        statuses = self.request.query_params.getlist("status")
+        if not statuses:
+            return queryset
+
+        unknown = sorted(set(statuses) - set(PostStatus.values))
+        if unknown:
+            raise OCCSError(
+                f"Unknown post status: {', '.join(unknown)}.",
+                code="invalid_status",
+                detail={"status": unknown},
+            )
+        return queryset.filter(status__in=statuses)
 
     def perform_create(self, serializer: BaseSerializer[Post]) -> None:
         assert isinstance(serializer, PostSerializer)  # always this view's own serializer_class
@@ -222,6 +262,27 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         payload.is_valid(raise_exception=True)
         note: str = payload.validated_data["note"]
         return note
+
+    @extend_schema(
+        responses={200: ApprovalActionSerializer(many=True)},
+        summary="This post's approval history, oldest first",
+        description="The append-only `ApprovalAction` rows behind the post's current status. "
+        "Scoped to one post rather than read from `GET /workspaces/audit-log/`, which is "
+        "workspace-wide and paginated — a reviewer wants this post's trail, not a page of "
+        "everyone's.",
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="approvals",
+        # Not named `approvals`: this module imports the `approvals` *service*,
+        # and a method of that name reads as a shadow of it to anyone skimming
+        # the class, even though Python resolves the two in different scopes.
+        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE)],
+    )
+    def approval_history(self, request: Request, pk: str | None = None) -> Response:
+        trail = self.get_object().approval_actions.select_related("actor").order_by("created_at")
+        return Response(ApprovalActionSerializer(trail, many=True).data)
 
     @extend_schema(
         request=PostCommentSerializer,

@@ -76,6 +76,11 @@ class PostSerializer(serializers.ModelSerializer[Post]):
     media_asset_ids = serializers.PrimaryKeyRelatedField(
         queryset=MediaAsset.objects.none(), many=True, write_only=True, required=False
     )
+    # The review queue's rows are "who is asking me to approve what", so the
+    # author travels with the post rather than the reviewer resolving each one
+    # against the roster. Same `<relation>_email` shape the collaboration
+    # serializers already use for actors and comment authors.
+    author_email = serializers.EmailField(source="author.email", read_only=True)
 
     class Meta:
         model = Post
@@ -84,6 +89,7 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "master_body",
             "media",
             "media_asset_ids",
+            "author_email",
             "status",
             "delivery_mode",
             "scheduled_at",
@@ -95,6 +101,7 @@ class PostSerializer(serializers.ModelSerializer[Post]):
         )
         read_only_fields: ClassVar[tuple[str, ...]] = (
             "id",
+            "author_email",
             "status",
             "delivery_mode",
             "scheduled_at",

@@ -226,3 +226,119 @@ def test_resolving_a_comment_from_a_different_post_404s(
     )
 
     assert response.status_code == 404
+
+
+# -----------------------------------------------------------------------------
+# The review queue's own reads: the status filter, the author, the trail.
+# All three exist because `/app/approvals` cannot be built correctly without
+# them (implementation.md Phase 13, FE build item 6).
+# -----------------------------------------------------------------------------
+def test_status_filter_returns_the_whole_subset_not_a_filtered_page(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any
+) -> None:
+    """The point of filtering server-side: `max_page_size` is 100, so a client
+    filtering a page of drafts would lose posts awaiting review behind them."""
+    for index in range(30):
+        post = create_post(
+            workspace=advanced_workspace, author=contributor_user, master_body=f"Draft {index}"
+        )
+        # Every third post goes to review; the rest stay DRAFT and outnumber
+        # them, so a page-1-then-filter client would come up short.
+        if index % 3 == 0:
+            approvals.submit_for_review(post, actor=contributor_user)
+
+    response = client_as(contributor_user).get(
+        "/api/v1/posts/", {"status": PostStatus.PENDING_REVIEW}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 10
+    assert {row["status"] for row in response.json()["results"]} == {PostStatus.PENDING_REVIEW}
+
+
+def test_status_filter_accepts_several_statuses(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any, admin_user: Any
+) -> None:
+    pending = create_post(
+        workspace=advanced_workspace, author=contributor_user, master_body="Pending"
+    )
+    approvals.submit_for_review(pending, actor=contributor_user)
+    approved = create_post(
+        workspace=advanced_workspace, author=contributor_user, master_body="Approved"
+    )
+    approvals.submit_for_review(approved, actor=contributor_user)
+    approvals.approve(approved, actor=admin_user)
+    create_post(workspace=advanced_workspace, author=contributor_user, master_body="Untouched")
+
+    response = client_as(contributor_user).get(
+        f"/api/v1/posts/?status={PostStatus.PENDING_REVIEW}&status={PostStatus.APPROVED}"
+    )
+
+    assert response.status_code == 200
+    assert {row["id"] for row in response.json()["results"]} == {pending.pk, approved.pk}
+
+
+def test_unknown_status_is_rejected_rather_than_silently_ignored(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any
+) -> None:
+    """A typo that returned every post would be a worse answer than an error:
+    the caller asked for a subset and would be handed the whole table."""
+    response = client_as(contributor_user).get("/api/v1/posts/", {"status": "PENDNIG_REVIEW"})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_status"
+
+
+def test_post_carries_its_author_email_for_the_review_queue(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any
+) -> None:
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+
+    response = client_as(contributor_user).get(f"/api/v1/posts/{post.pk}/")
+
+    assert response.json()["author_email"] == contributor_user.email
+
+
+def test_author_email_is_read_only(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any
+) -> None:
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+
+    response = client_as(contributor_user).patch(
+        f"/api/v1/posts/{post.pk}/",
+        {"author_email": "someone-else@example.com"},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    post.refresh_from_db()
+    assert post.author == contributor_user
+
+
+def test_approval_history_is_this_posts_trail_oldest_first(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any, admin_user: Any
+) -> None:
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    approvals.submit_for_review(post, actor=contributor_user)
+    approvals.request_changes(post, actor=admin_user, note="Soften the claim")
+    approvals.submit_for_review(post, actor=contributor_user)
+    other_post = create_post(
+        workspace=advanced_workspace, author=contributor_user, master_body="Other"
+    )
+    approvals.submit_for_review(other_post, actor=contributor_user)
+
+    response = client_as(contributor_user).get(f"/api/v1/posts/{post.pk}/approvals/")
+
+    assert response.status_code == 200
+    trail = response.json()
+    assert [row["action"] for row in trail] == ["SUBMIT", "REQUEST_CHANGES", "SUBMIT"]
+    assert trail[1]["actor_email"] == admin_user.email
+    assert trail[1]["note"] == "Soften the claim"
+    # The other post's own SUBMIT is not in this post's trail.
+    assert {row["post"] for row in trail} == {post.pk}
+
+
+def test_approval_history_is_gated_to_advanced(auth_client: Any, workspace: Any, user: Any) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="Draft")
+
+    assert auth_client.get(f"/api/v1/posts/{post.pk}/approvals/").status_code == 402
