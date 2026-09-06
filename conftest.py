@@ -64,6 +64,18 @@ def platform_adapter() -> Any:
 
 
 @pytest.fixture(autouse=True)
+def _reset_gateway() -> Iterator[None]:
+    """The fake billing gateway is module-level so a test can inspect calls
+    after a view has run, which makes its call log process-wide state the way
+    Redis is."""
+    from billing.gateways.fake import _fake_gateway
+
+    _fake_gateway.clear()
+    yield
+    _fake_gateway.clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_metrics_provider() -> Iterator[None]:
     """Same reasoning as the publish adapter above, for the measurement port
     (P0-27). Separate fixture because they are separate ports — a single reset

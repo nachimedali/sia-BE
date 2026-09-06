@@ -6,11 +6,14 @@ mixin — tenancy leakage is a security bug, not a defect (design.md §11).
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import secrets
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from django.utils.text import slugify
 
 from common.records import AppendOnly
@@ -224,6 +227,25 @@ class OrganizationMembership(models.Model):
         return f"{self.user} @ {self.organization} ({self.role})"
 
 
+class WorkspaceStatus(models.TextChoices):
+    """Whether this brand may be written to (P0-18, P0-23).
+
+    Both non-`ACTIVE` states are **read-only, never invisible**. A workspace
+    the customer asked for and cannot see is worse than one they can see and
+    cannot yet write to — and in the downgrade case, hiding it would look
+    exactly like data loss.
+    """
+
+    ACTIVE = "ACTIVE", "Active"
+    #: Created, but the subscription quantity update has not landed. The
+    #: webhook is the source of truth for what was granted, so the workspace
+    #: exists and waits rather than being refused.
+    PENDING_BILLING = "PENDING_BILLING", "Awaiting billing confirmation"
+    #: Beyond the plan's workspace cap after a downgrade. Oldest survive, same
+    #: rule as social accounts.
+    OVER_LIMIT = "OVER_LIMIT", "Over the plan limit"
+
+
 class Workspace(models.Model):
     #: Nullable until `backfill_organizations` has run everywhere and the
     #: contract step makes it required. Nothing reads it during expand.
@@ -238,6 +260,9 @@ class Workspace(models.Model):
     slug = models.SlugField(max_length=140, unique=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_workspaces"
+    )
+    status = models.CharField(
+        max_length=16, choices=WorkspaceStatus.choices, default=WorkspaceStatus.ACTIVE
     )
 
     # --- brand (wizard step 2) ---
@@ -339,6 +364,198 @@ class Membership(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} @ {self.workspace} ({self.role})"
+
+
+class ApiKey(models.Model):
+    """A scoped, organization-owned API key (P0-50).
+
+    **Shipped in Phase 0 although no key is issued until Phase 10.** Scopes are
+    a versioning decision, not a feature: an API that goes out unscoped can
+    only be scoped later by breaking every integration built against it.
+    Declaring them now costs days; retrofitting them costs months, and the
+    OpenAPI schema is already generated.
+
+    Hash-only, like every other credential here. `prefix` is the first eight
+    characters of the raw key, stored in the clear purely so a user can tell
+    two keys apart in a list without the system being able to reconstruct
+    either.
+    """
+
+    #: The vocabulary a key may be granted. Deliberately the same words as the
+    #: membership permission set: two parallel authority vocabularies would
+    #: drift, and then "what can this key do" would have two answers.
+    SCOPES: ClassVar[frozenset[str]] = frozenset(PERMISSIONS)
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="api_keys"
+    )
+    name = models.CharField(max_length=120)
+    prefix = models.CharField(max_length=8)
+    key_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    scopes = models.JSONField(default=list)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_api_keys",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.prefix}…)"
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None
+
+    @staticmethod
+    def hash_key(raw: str) -> str:
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    @classmethod
+    def issue(
+        cls, *, organization: Organization, name: str, scopes: list[str], created_by: Any = None
+    ) -> tuple[ApiKey, str]:
+        unknown = set(scopes) - cls.SCOPES
+        if unknown:
+            raise ValueError(f"Unknown scopes: {', '.join(sorted(unknown))}.")
+
+        raw = f"cv_{secrets.token_urlsafe(32)}"
+        key = cls.objects.create(
+            organization=organization,
+            name=name,
+            prefix=raw[:8],
+            key_hash=cls.hash_key(raw),
+            scopes=sorted(set(scopes)),
+            created_by=created_by,
+        )
+        return key, raw
+
+    def allows(self, scope: str) -> bool:
+        """Whether this key carries `scope`.
+
+        No implicit hierarchy: holding `admin` does not imply `publish`. A key
+        is a machine credential and the caller who minted it said exactly what
+        it may do — inferring more would grant something nobody typed.
+        """
+        return self.is_active and scope in set(self.scopes)
+
+
+class Invitation(models.Model):
+    """An invitation to join a workspace, addressed to an **email**, not a user
+    (P0-16, P0-47).
+
+    **Why not `EmailToken(purpose=INVITE)`**, which was already scaffolded:
+    that model is keyed to a `user` FK, and the case Phase 0's ship gate names
+    is inviting *"someone with no account"*. Making the FK nullable and hanging
+    an email, a workspace and a role off the auth token would turn one clean
+    single-purpose table into a grab-bag. So this reuses the *discipline* —
+    hash-only storage, single-use, expiring — without reusing the table.
+    `EmailTokenPurpose.INVITE` is left in place but unused; deleting an enum
+    member is a migration for no gain.
+
+    Only a SHA-256 hash is stored. The raw value exists once, in the email, so
+    a database leak cannot be replayed into a workspace someone does not
+    belong to.
+    """
+
+    TTL = dt.timedelta(days=14)
+
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="invitations")
+    email = models.EmailField()
+    role = models.CharField(max_length=16, choices=Role.choices, default=Role.VIEWER)
+    #: Snapshotted at mint time, not derived from `role` at accept time: a
+    #: preset an admin edits next month must not silently re-grade an invite
+    #: that was already sent and agreed.
+    permissions = models.JSONField(default=list, blank=True)
+
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sent_workspace_invitations",
+    )
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["workspace", "accepted_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.email} → {self.workspace}"
+
+    @property
+    def is_usable(self) -> bool:
+        return (
+            self.accepted_at is None
+            and self.revoked_at is None
+            and self.expires_at > timezone.now()
+        )
+
+    @staticmethod
+    def hash_token(raw: str) -> str:
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    @classmethod
+    def issue(
+        cls,
+        *,
+        workspace: Workspace,
+        email: str,
+        role: str,
+        invited_by: Any = None,
+    ) -> tuple[Invitation, str]:
+        """Mints an invitation, superseding any outstanding one for the same
+        address and workspace.
+
+        Superseding matters for the same reason it does on a verification
+        email: without it, re-inviting leaves the earlier link live, which
+        widens the window on an invitation that may have gone to a mistyped
+        address.
+        """
+        normalised = email.strip().lower()
+        cls.objects.filter(workspace=workspace, email=normalised, accepted_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+
+        raw = secrets.token_urlsafe(32)
+        invitation = cls.objects.create(
+            workspace=workspace,
+            email=normalised,
+            role=role,
+            permissions=sorted(permissions_for(role)),
+            invited_by=invited_by,
+            token_hash=cls.hash_token(raw),
+            expires_at=timezone.now() + cls.TTL,
+        )
+        return invitation, raw
+
+    @classmethod
+    def resolve(cls, raw: str) -> Invitation | None:
+        """The usable invitation behind a raw token, or `None`.
+
+        Read-only — accepting is a separate, locked step, because creating the
+        account and the membership has to be one transaction with spending the
+        token, and a resolve that consumed would leave the invite spent if that
+        transaction rolled back.
+        """
+        invitation = cls.objects.filter(token_hash=cls.hash_token(raw)).first()
+        return invitation if invitation is not None and invitation.is_usable else None
 
 
 class PostComment(models.Model):

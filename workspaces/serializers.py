@@ -6,7 +6,19 @@ from typing import ClassVar
 
 from rest_framework import serializers
 
-from workspaces.models import ApprovalAction, AuditLog, Membership, PostComment, Role, Workspace
+from billing.models import OrganizationAddon
+from workspaces.models import (
+    PERMISSIONS,
+    ApiKey,
+    ApprovalAction,
+    AuditLog,
+    Invitation,
+    Membership,
+    Organization,
+    PostComment,
+    Role,
+    Workspace,
+)
 
 
 class ApprovalActionSerializer(serializers.ModelSerializer[ApprovalAction]):
@@ -139,3 +151,120 @@ class WorkspaceSettingsSerializer(serializers.ModelSerializer[Workspace]):
     class Meta:
         model = Workspace
         fields: ClassVar[tuple[str, ...]] = ("requires_approval",)
+
+
+class OrganizationSerializer(serializers.ModelSerializer[Organization]):
+    """The paying company (L-1). `plan` is read-only here: a plan changes
+    through billing, never through a PATCH on the org."""
+
+    plan_code = serializers.CharField(source="plan.code", read_only=True, default="")
+    workspace_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = Organization
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "plan_code",
+            "workspace_count",
+            "trial_posts_used",
+            "referral_code",
+            "created_at",
+        )
+        read_only_fields = ("id", "slug", "trial_posts_used", "referral_code", "created_at")
+
+
+class WorkspaceSerializer(serializers.ModelSerializer[Workspace]):
+    """A brand inside the organization."""
+
+    class Meta:
+        model = Workspace
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "logo",
+            "website",
+            "description",
+            "timezone",
+            "soft_budget_posts",
+            "soft_budget_credits",
+            "created_at",
+        )
+        read_only_fields = ("id", "slug", "created_at")
+
+
+class InvitationSerializer(serializers.ModelSerializer[Invitation]):
+    """Never carries the token. The raw value exists once, in the email — a
+    list endpoint that echoed it would make every admin's screen a credential
+    store."""
+
+    class Meta:
+        model = Invitation
+        fields = ("id", "email", "role", "expires_at", "accepted_at", "created_at")
+        read_only_fields = fields
+
+
+class InvitationCreateSerializer(serializers.Serializer[object]):
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=Role.choices, default=Role.VIEWER)
+
+    def validate_role(self, value: str) -> str:
+        # P0-12: ownership is `Organization.owner`, not something an invite can
+        # confer.
+        if value == Role.OWNER:
+            raise serializers.ValidationError("OWNER is not an assignable role.")
+        return value
+
+
+class InvitationAcceptSerializer(serializers.Serializer[object]):
+    """`password` is required only when the invited address has no account
+    yet; the view decides, because only it knows."""
+
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+
+class MembershipPermissionsSerializer(serializers.Serializer[object]):
+    """P0-48: sets `permissions`, not `role`. `role` survives as a display
+    preset and is derived, never dictated, once a caller starts sending
+    explicit permissions."""
+
+    permissions = serializers.ListField(
+        child=serializers.ChoiceField(choices=sorted(PERMISSIONS)), allow_empty=True
+    )
+
+
+class OrganizationAddonSerializer(serializers.ModelSerializer[OrganizationAddon]):
+    class Meta:
+        model = OrganizationAddon
+        fields = ("id", "addon_key", "status", "trial_ends_at", "created_at")
+        read_only_fields = ("id", "created_at")
+
+
+class OrganizationAddonWriteSerializer(serializers.Serializer[object]):
+    addon_key = serializers.CharField(max_length=64)
+    enabled = serializers.BooleanField(default=True)
+
+
+class ApiKeySerializer(serializers.ModelSerializer[ApiKey]):
+    class Meta:
+        model = ApiKey
+        fields = ("id", "name", "prefix", "scopes", "last_used_at", "revoked_at", "created_at")
+        read_only_fields = fields
+
+
+class ApiKeyCreateSerializer(serializers.Serializer[object]):
+    name = serializers.CharField(max_length=120)
+    scopes = serializers.ListField(child=serializers.ChoiceField(choices=sorted(ApiKey.SCOPES)))
+
+
+class ApiKeyIssuedSerializer(serializers.Serializer[object]):
+    """The one response that carries the raw key. It is never retrievable
+    again — storing it would defeat hashing it."""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    prefix = serializers.CharField()
+    scopes = serializers.ListField(child=serializers.CharField())
+    key = serializers.CharField()
