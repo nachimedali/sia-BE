@@ -269,6 +269,30 @@ class PostTarget(models.Model):
         on_delete=models.SET_NULL,
         related_name="post_targets",
     )
+    # --- per-platform overrides (BUILD-PLAN P1-03) ------------------------
+    #
+    # **Null means inherit**, and that is not the same as empty. A blank
+    # `body_override` is a deliberate empty caption — legitimate on a
+    # video-first platform — while `None` means "whatever the master post
+    # says". Collapsing them would make clearing an override impossible.
+    #
+    # Nothing outside `render_post` reads these. Resolution lives there
+    # precisely so preview and publish cannot resolve them differently
+    # (P1-04), which is the single greatest threat to preview-equals-publish.
+    # DJ001 says avoid `null=True` on a text field, and it is right almost
+    # everywhere. Here the tri-state is the feature: null inherits, "" is a
+    # deliberately empty caption. Collapsing them would make an empty caption
+    # unrepresentable.
+    body_override = models.TextField(null=True, blank=True)  # noqa: DJ001
+    media_override = models.JSONField(null=True, blank=True)
+    #: Per-platform composer fields, validated against the declaration in
+    #: `content.services.rules` (P1-05). Non-null `{}` rather than nullable:
+    #: unlike a body, "no options" and "default options" are the same thing.
+    platform_options = models.JSONField(default=dict, blank=True)
+    #: Which shape the options above were written under, so a payload rendered
+    #: by an older release is recognisable rather than silently misread.
+    options_schema_version = models.PositiveSmallIntegerField(default=0)
+
     rendered_payload = models.JSONField(default=dict, blank=True)
     provider_post_id = models.CharField(max_length=128, blank=True)
     platform_post_id = models.CharField(max_length=128, blank=True)
