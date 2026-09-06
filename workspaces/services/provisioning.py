@@ -14,6 +14,7 @@ from workspaces.models import (
     OrganizationMembership,
     Role,
     Workspace,
+    WorkspaceStatus,
     permissions_for,
 )
 
@@ -84,3 +85,47 @@ def provision_workspace(user: User, name: str | None = None) -> Workspace:
         permissions=sorted(permissions_for(Role.OWNER)),
     )
     return workspace
+
+
+@transaction.atomic
+def provision_extra_workspace(*, user: User, name: str) -> Workspace:
+    """A second (or twentieth) brand inside an organization the user already
+    belongs to (P0-46, P0-18).
+
+    Distinct from `provision_workspace`, which creates the organization too.
+    Splitting them keeps the registration path from having to ask "does an org
+    exist already?" — a question with three answers and only one correct one.
+
+    **The Stripe quantity is incremented outside this transaction**, by the
+    caller of `billing.services.subscriptions.sync_workspace_quantity`. If that
+    fails the workspace stays `PENDING_BILLING` and read-only rather than being
+    refused: the webhook is the source of truth for what was granted, and a
+    workspace the customer asked for and cannot see is worse than one they can
+    see and cannot yet write to.
+    """
+    organization = (
+        Organization.objects.filter(memberships__user=user).order_by("created_at").first()
+    )
+    if organization is None:
+        raise NoOrganizationError("This account has no organization to create a workspace in.")
+
+    workspace = Workspace.objects.create(
+        organization=organization,
+        name=name,
+        slug=Workspace.unique_slug(name),
+        owner=user,
+        plan=organization.plan,
+        status=WorkspaceStatus.PENDING_BILLING,
+    )
+    Membership.objects.create(
+        user=user,
+        workspace=workspace,
+        role=Role.OWNER,
+        permissions=sorted(permissions_for(Role.OWNER)),
+    )
+    return workspace
+
+
+class NoOrganizationError(Exception):
+    """Unreachable through registration, which always makes one — but a
+    permission check may not assume away a state the database allows."""

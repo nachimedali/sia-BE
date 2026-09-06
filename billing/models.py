@@ -280,6 +280,19 @@ class Subscription(models.Model):
     cancel_at_period_end = models.BooleanField(default=False)
 
     stripe_subscription_id = models.CharField(max_length=64, unique=True)
+    #: The line item the workspace quantity moves on (P0-17). One subscription
+    #: per organization, quantity = workspace count, tiered above
+    #: `Plan.max_workspaces`.
+    stripe_subscription_item_id = models.CharField(max_length=64, blank=True)
+    #: Written alongside `workspace` during the org migration. Nullable until
+    #: the backfill has run everywhere; nothing reads it during expand.
+    organization = models.ForeignKey(
+        "workspaces.Organization",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -512,6 +525,9 @@ class AddonStatus(models.TextChoices):
     TRIALING = "TRIALING", "Trialing"
     ACTIVE = "ACTIVE", "Active"
     CANCELLED = "CANCELLED", "Cancelled"
+    #: Distinct from `CANCELLED`: a trial that ran out was never cancelled by
+    #: anyone, and the two lead to different re-offers.
+    EXPIRED = "EXPIRED", "Trial expired"
 
 
 class OrganizationAddon(models.Model):

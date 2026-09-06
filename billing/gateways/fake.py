@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 from billing.gateways.base import (
+    BillingGatewayError,
     CheckoutMode,
     CheckoutSession,
     PortalSession,
@@ -26,6 +27,10 @@ class FakeBillingGateway:
     """
 
     def __init__(self) -> None:
+        #: Test hooks for P0-18: a refused quantity update must leave the
+        #: workspace created-and-read-only, never refused.
+        self.quantity_updates: list[tuple[str, int]] = []
+        self.fail_quantity_update = False
         self.checkout_calls: list[dict[str, Any]] = []
         self.portal_calls: list[dict[str, Any]] = []
 
@@ -63,6 +68,11 @@ class FakeBillingGateway:
         self.portal_calls.append({"customer_id": customer_id, "return_url": return_url})
         return PortalSession(url=f"https://portal.test/{customer_id}")
 
+    def update_subscription_quantity(self, *, subscription_item_id: str, quantity: int) -> None:
+        if self.fail_quantity_update:
+            raise BillingGatewayError("The gateway refused the quantity update.")
+        self.quantity_updates.append((subscription_item_id, quantity))
+
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
         if not hmac.compare_digest(signature, self.sign(payload)):
             raise WebhookVerificationError("Bad signature.")
@@ -76,6 +86,8 @@ class FakeBillingGateway:
     def clear(self) -> None:
         self.checkout_calls.clear()
         self.portal_calls.clear()
+        self.quantity_updates.clear()
+        self.fail_quantity_update = False
 
 
 # Module-level so tests can inspect calls after a view has run.

@@ -1,0 +1,9 @@
+You have been invited to {{ workspace_name }}
+
+{% if inviter %}{{ inviter }} has{% else %}You have been{% endif %} invited you to collaborate on
+{{ workspace_name }} in ComposeVision.
+
+{{ accept_url }}
+
+This link expires in 14 days and can be used once. If you weren't expecting
+this, you can ignore this email — nothing has been created in your name.

@@ -13,6 +13,16 @@ from typing import Any, Literal, Protocol
 CheckoutMode = Literal["subscription", "payment"]
 
 
+class BillingGatewayError(Exception):
+    """The gateway refused or could not be reached.
+
+    Deliberately not an `OCCSError`: most callers here do **not** convert it
+    into a response. A failed quantity update leaves the workspace created and
+    read-only (P0-18) rather than raising at the user, because the webhook —
+    not this call — is the source of truth for what was granted.
+    """
+
+
 class WebhookVerificationError(Exception):
     """The payload did not carry a signature this gateway trusts."""
 
@@ -57,6 +67,16 @@ class BillingGateway(Protocol):
         ...
 
     def create_portal_session(self, *, customer_id: str, return_url: str) -> PortalSession: ...
+
+    def update_subscription_quantity(self, *, subscription_item_id: str, quantity: int) -> None:
+        """Sets the seat count on a subscription item, prorated (P0-17).
+
+        One subscription per organization, quantity = workspace count. A
+        failure here does **not** refuse the workspace — see
+        `subscriptions.sync_workspace_quantity`: the webhook is the source of
+        truth for what was granted, and this call is how we ask.
+        """
+        ...
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
         """Returns the parsed event, or raises `WebhookVerificationError`.

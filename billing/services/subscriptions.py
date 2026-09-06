@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
 
-from billing.gateways.base import CheckoutSession, PortalSession
+from billing.gateways.base import BillingGatewayError, CheckoutSession, PortalSession
 from billing.gateways.stripe import get_billing_gateway
+from billing.models import (
+    UNLIMITED as UNLIMITED_CAP,
+)
 from billing.models import (
     CreditReason,
     Plan,
@@ -339,3 +343,106 @@ def expire_lapsed_trials() -> int:
         downgrade_to_free(workspace, reason="trial expired")
         downgraded += 1
     return downgraded
+
+
+# -----------------------------------------------------------------------------
+# Per-workspace quantity (P0-17, P0-18, P0-23)
+# -----------------------------------------------------------------------------
+def live_workspace_count(organization: Any) -> int:
+    """Workspaces this organization is billed for.
+
+    `OVER_LIMIT` rows are excluded — they are parked by a downgrade and must
+    not keep charging — while `PENDING_BILLING` rows are **included**, because
+    they are exactly the ones we are asking to be billed for.
+    """
+    from workspaces.models import Workspace, WorkspaceStatus
+
+    return (
+        Workspace.objects.filter(organization=organization)
+        .exclude(status=WorkspaceStatus.OVER_LIMIT)
+        .count()
+    )
+
+
+def sync_workspace_quantity(organization: Any) -> bool:
+    """Tells the gateway how many workspaces to bill for. Returns success.
+
+    **Never raises at the caller** (P0-18). A workspace whose quantity update
+    failed stays `PENDING_BILLING` and read-only; the customer can see what
+    they asked for, support can see why it is parked, and the nightly
+    comparison (P0-62) will surface it if it never resolves. Refusing the
+    workspace instead would lose the request entirely.
+    """
+    from workspaces.models import Workspace, WorkspaceStatus
+
+    subscription = (
+        Subscription.objects.filter(
+            workspace__organization=organization, status__in=SubscriptionStatus.live()
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if subscription is None or not subscription.stripe_subscription_item_id:
+        # Nothing to bill against yet — a trial organization. The workspaces
+        # are real and usable; there is simply no quantity to move.
+        Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.PENDING_BILLING
+        ).update(status=WorkspaceStatus.ACTIVE)
+        return True
+
+    quantity = live_workspace_count(organization)
+    try:
+        get_billing_gateway().update_subscription_quantity(
+            subscription_item_id=subscription.stripe_subscription_item_id, quantity=quantity
+        )
+    except BillingGatewayError:
+        logger.warning(
+            "subscription quantity update failed; workspaces stay pending",
+            exc_info=True,
+            extra={"organization_id": organization.pk, "quantity": quantity},
+        )
+        return False
+
+    Workspace.objects.filter(
+        organization=organization, status=WorkspaceStatus.PENDING_BILLING
+    ).update(status=WorkspaceStatus.ACTIVE)
+    return True
+
+
+def park_workspaces_over_cap(organization: Any) -> int:
+    """Marks workspaces beyond the plan's cap `OVER_LIMIT` — **oldest survive**
+    (P0-23).
+
+    Same rule and same shape as the social-account cap: the oldest are the ones
+    with history, connected accounts and published posts behind them, so
+    keeping the newest would park the ones that matter. Read-only, never
+    deleted: a downgrade that removed a brand's content would be
+    indistinguishable from data loss.
+    """
+    from workspaces.models import Workspace, WorkspaceStatus
+
+    plan = organization.plan
+    cap = getattr(plan, "max_workspaces", 1) if plan else 1
+    if cap == UNLIMITED_CAP:
+        return 0
+
+    ordered = list(
+        Workspace.objects.filter(organization=organization)
+        .order_by("created_at", "pk")
+        .values_list("pk", flat=True)
+    )
+    over = ordered[cap:]
+    if not over:
+        # A re-upgrade releases what a downgrade parked.
+        return -Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.OVER_LIMIT
+        ).update(status=WorkspaceStatus.ACTIVE)
+
+    Workspace.objects.filter(pk__in=ordered[:cap], status=WorkspaceStatus.OVER_LIMIT).update(
+        status=WorkspaceStatus.ACTIVE
+    )
+    return (
+        Workspace.objects.filter(pk__in=over)
+        .exclude(status=WorkspaceStatus.OVER_LIMIT)
+        .update(status=WorkspaceStatus.OVER_LIMIT)
+    )

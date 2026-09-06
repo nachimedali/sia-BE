@@ -66,7 +66,17 @@ from reminders.views import (
     ReminderViewSet,
 )
 from trends.views import TrendListView, TrendRefreshView
-from workspaces.views import AuditLogView, MembershipViewSet, WorkspaceSettingsView
+from workspaces.views import (
+    ApiKeyView,
+    AuditLogView,
+    InvitationAcceptView,
+    MembershipViewSet,
+    OrganizationAddonView,
+    OrganizationListView,
+    WorkspaceInviteView,
+    WorkspaceListCreateView,
+    WorkspaceSettingsView,
+)
 
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
@@ -101,6 +111,16 @@ urlpatterns = [
         name="auth-password-reset-confirm",
     ),
     # --- onboarding ---
+    # --- organization & workspace (BUILD-PLAN Phase 0, P0-46..P0-50) ---
+    path("organizations/", OrganizationListView.as_view(), name="organizations"),
+    path("workspaces/", WorkspaceListCreateView.as_view(), name="workspaces"),
+    path("workspaces/<int:pk>/invite/", WorkspaceInviteView.as_view(), name="workspace-invite"),
+    # Unauthenticated by necessity: the invitee may have no account yet, and
+    # the token is the credential. Hash-only, single-use, 14 days.
+    path("invites/<str:token>/accept/", InvitationAcceptView.as_view(), name="invite-accept"),
+    path("billing/addons/", OrganizationAddonView.as_view(), name="billing-addons"),
+    # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
+    path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
     path("onboarding/", OnboardingView.as_view(), name="onboarding"),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     # --- billing ---
