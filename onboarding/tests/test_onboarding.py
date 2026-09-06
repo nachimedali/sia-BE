@@ -224,3 +224,105 @@ def test_a_user_only_sees_their_own_workspace(client, account, plans) -> None:
     provision_workspace(other, name="Someone Else")
 
     assert client.get(ONBOARDING_URL).json()["name"] == "Acme Studio"
+
+
+# -----------------------------------------------------------------------------
+# The org/workspace split — BUILD-PLAN P0-58
+# -----------------------------------------------------------------------------
+def test_a_first_workspace_runs_the_full_wizard(workspace, user) -> None:
+    from onboarding.services import wizard
+
+    assert wizard.is_shortened(workspace) is False
+    assert wizard.steps_for(workspace) == [1, 2, 3, 4, 5, 6]
+
+
+def test_a_second_brand_runs_the_brand_steps_only(workspace, user, plans) -> None:
+    """Email verification and plan selection are answered by the account and
+    the company. Asking again for a second brand is not merely redundant — it
+    implies the new brand could be on a different plan, which L-1 does not
+    allow."""
+    from onboarding.services import wizard
+    from workspaces.models import Workspace
+
+    workspace.onboarding_complete = True
+    workspace.save(update_fields=["onboarding_complete"])
+    second = Workspace.objects.create(
+        organization=workspace.organization,
+        name="Second Brand",
+        slug=Workspace.unique_slug("Second Brand"),
+        owner=user,
+        plan=workspace.plan,
+    )
+
+    assert wizard.is_shortened(second) is True
+    assert wizard.steps_for(second) == [2, 3, 4, 6]
+
+
+def test_the_shortened_run_starts_on_a_brand_step(workspace, user, plans) -> None:
+    """`current_step` must never park a user on a step the run does not
+    include — a plan picker a second brand has no business seeing."""
+    from onboarding.services import wizard
+    from workspaces.models import Workspace
+
+    workspace.onboarding_complete = True
+    workspace.save(update_fields=["onboarding_complete"])
+    second = Workspace.objects.create(
+        organization=workspace.organization,
+        name="Second Brand",
+        slug=Workspace.unique_slug("Second Brand"),
+        owner=user,
+        plan=workspace.plan,
+    )
+
+    assert wizard.current_step(second, user) == 2
+
+
+def test_org_scope_steps_read_as_done_on_a_second_brand(workspace, user, plans) -> None:
+    """Marked done rather than hidden: they *are* satisfied, just not by this
+    workspace, and a rail that omitted them would misreport progress."""
+    from onboarding.services import wizard
+    from workspaces.models import Workspace
+
+    workspace.onboarding_complete = True
+    workspace.save(update_fields=["onboarding_complete"])
+    second = Workspace.objects.create(
+        organization=workspace.organization,
+        name="Second Brand",
+        slug=Workspace.unique_slug("Second Brand"),
+        owner=user,
+        plan=workspace.plan,
+    )
+
+    done = wizard.completed_steps(second, user)
+
+    assert 1 in done
+    assert 5 in done
+
+
+def test_deleting_the_first_brand_makes_the_next_one_first_again(workspace, user, plans) -> None:
+    """Keyed on there being an earlier completed workspace rather than on a
+    flag, so it cannot drift out of step with reality."""
+    from onboarding.services import wizard
+    from workspaces.models import Workspace
+
+    workspace.onboarding_complete = True
+    workspace.save(update_fields=["onboarding_complete"])
+    second = Workspace.objects.create(
+        organization=workspace.organization,
+        name="Second Brand",
+        slug=Workspace.unique_slug("Second Brand"),
+        owner=user,
+        plan=workspace.plan,
+    )
+    assert wizard.is_shortened(second) is True
+
+    Workspace.objects.filter(pk=workspace.pk).update(onboarding_complete=False)
+
+    assert wizard.is_shortened(second) is False
+
+
+def test_the_api_reports_the_applicable_steps(auth_client, workspace) -> None:
+    body = auth_client.get(ONBOARDING_URL).json()
+
+    assert body["applicable_steps"] == [1, 2, 3, 4, 5, 6]
+    assert body["is_shortened"] is False
