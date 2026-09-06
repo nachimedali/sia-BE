@@ -98,3 +98,30 @@ class RateBudgetWindow(models.Model):
             # publish that will be retried anyway, and a race here means the
             # window is busy, which is exactly when caution is right.
             return False
+
+
+class MigrationNote(models.Model):
+    """A record that an append-only table was rewritten, and why.
+
+    Append-only means append-only (Part 7 rule 4) — corrections are
+    compensating rows, never updates. Re-scoping a ledger to a new tenant
+    dimension is the **one sanctioned exception**: the rows are not being
+    corrected, they are being told which company they always belonged to, and
+    there is no compensating row that can express that.
+
+    BUILD-PLAN requires the exception be recorded rather than merely permitted,
+    so that a future reader who finds an `UPDATE` in a migration against
+    `billing_creditledger` can tell a sanctioned re-scope from a bug.
+    """
+
+    table = models.CharField(max_length=120)
+    migration = models.CharField(max_length=200)
+    reason = models.TextField()
+    rows_touched = models.PositiveIntegerField(default=0)
+    applied_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-applied_at"]
+
+    def __str__(self) -> str:
+        return f"{self.table} @ {self.migration}"

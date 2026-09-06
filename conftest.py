@@ -173,6 +173,13 @@ def auth_client(user: Any) -> Any:
 
 
 @pytest.fixture
+def plans_by_code(plans: dict[str, Any]) -> dict[str, Any]:
+    """Alias for `plans`, for modules that also import `billing.services.plans`
+    and would otherwise shadow the module with the fixture."""
+    return plans
+
+
+@pytest.fixture
 def seeded_plans(plans: dict[str, Any]) -> dict[str, Any]:
     """Alias for `plans`, for the handful of modules that also import the
     `billing.services.plans` module and would otherwise shadow it."""
