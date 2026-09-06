@@ -63,6 +63,7 @@ LOCAL_APPS = [
     "scheduling",
     "channels",
     "trends",
+    "tools",
     "analytics",
 ]
 
@@ -227,6 +228,9 @@ SPECTACULAR_SETTINGS = {
         # And again for `Platform`, on `SocialAccount.platform` and the
         # connect-completion request's own `platform` field (Phase 9).
         "PlatformEnum": "content.models.Platform",
+        # And again for `Tool`, on `ToolConfig.slug` and `ToolUsage.tool` —
+        # the same six values under two field names (C-11 / P0-04).
+        "ToolEnum": "tools.models.Tool",
     },
 }
 
@@ -362,6 +366,10 @@ IMAGE_PROVIDER_BASE_URL = env(
 )
 IMAGE_PROVIDER_API_KEY = env("IMAGE_PROVIDER_API_KEY", default="")
 IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-image")
+
+# No vendor is chosen yet (C-11 / P0-04). Empty means video generation reports
+# "no provider configured" rather than silently falling back to the fake.
+VIDEO_PROVIDER_API_KEY = env("VIDEO_PROVIDER_API_KEY", default="")
 
 USE_FAKE_AI_PROVIDERS = env.bool(
     "USE_FAKE_AI_PROVIDERS", default=not (LLM_API_KEY and IMAGE_PROVIDER_API_KEY)

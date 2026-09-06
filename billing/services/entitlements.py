@@ -364,9 +364,12 @@ class Entitlements:
         remaining = ends_at - timezone.now() if ends_at else None
         is_trialing = remaining is not None and remaining.total_seconds() > 0
 
+        from billing.services.trial import trial_posts_remaining
+
         return {
             **self.snapshot,
             "credits_remaining": self.credits_remaining(),
+            "trial_posts_remaining": trial_posts_remaining(self.workspace),
             "video_units_remaining": self.video_units_remaining(),
             "trial_ends_at": ends_at,
             "is_trialing": is_trialing,

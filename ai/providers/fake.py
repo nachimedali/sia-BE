@@ -28,6 +28,7 @@ from ai.providers.base import (
     ImageVariant,
     TextGenerationResult,
     TextVariant,
+    VideoResult,
 )
 from common.text import content_tokens
 
@@ -219,3 +220,45 @@ class FakeEmbeddingProvider:
 _fake_text_provider = FakeTextProvider()
 _fake_image_provider = FakeImageProvider()
 _fake_embedding_provider = FakeEmbeddingProvider()
+
+
+class FakeVideoProvider:
+    """A deterministic, tiny MP4-shaped blob (C-11 / P0-04).
+
+    Not a real video: nothing in this codebase decodes one, and shipping a
+    fixture large enough to be a genuine clip would put megabytes in the repo
+    to satisfy no assertion. What the pipeline needs is bytes, a mime type and
+    a duration, which is what this returns — and every row it produces is
+    traceable to `provider="fake"` for the same reason metric rows are.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def generate(
+        self,
+        *,
+        prompt: str,
+        reference_images: list[bytes],
+        aspect: str,
+        duration_seconds: float,
+        model: str | None = None,
+    ) -> VideoResult:
+        self.calls.append(prompt)
+        # A minimal ISO-BMFF header, so anything sniffing the container sees
+        # `mp4` rather than an empty file.
+        header = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+        return VideoResult(
+            content=header + prompt.encode()[:64],
+            mime="video/mp4",
+            duration_seconds=duration_seconds,
+            provider="fake",
+            model=model or "fake-video-1",
+            latency_ms=1,
+        )
+
+    def clear(self) -> None:
+        self.calls.clear()
+
+
+_fake_video_provider = FakeVideoProvider()
