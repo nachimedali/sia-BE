@@ -149,6 +149,17 @@ class Organization(models.Model):
     provider_profile_id = models.CharField(max_length=64, blank=True)
     referral_code = models.CharField(max_length=32, unique=True, default=generate_referral_code)
 
+    #: Bumped whenever this organization's add-on set changes (P0-24). It is
+    #: half of the entitlement cache key, so an add-on being enabled, disabled
+    #: or expired mints a new key rather than requiring anything to hunt down
+    #: and evict the old one.
+    #:
+    #: A counter on this row rather than an aggregate over `OrganizationAddon`
+    #: because the key is computed on **every** entitlement resolve: an
+    #: aggregate would put a Postgres round-trip in front of a cache whose
+    #: entire purpose is to avoid one.
+    addon_version = models.PositiveIntegerField(default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -197,7 +208,15 @@ class OrganizationMembership(models.Model):
         constraints: ClassVar[list[models.BaseConstraint]] = [
             models.UniqueConstraint(
                 fields=["user", "organization"], name="unique_user_organization"
-            )
+            ),
+            # P0-12. `OWNER` is not a membership row — it is
+            # `Organization.owner`, a single FK, so it cannot drift out of sync
+            # with a table. Enforced in the database rather than in a
+            # serializer because a second write path would otherwise reopen it.
+            models.CheckConstraint(
+                condition=~models.Q(role=Role.OWNER),
+                name="org_membership_owner_is_not_assignable",
+            ),
         ]
         ordering: ClassVar[list[str]] = ["-created_at"]
 

@@ -22,7 +22,7 @@ from rest_framework.views import APIView
 from billing.permissions import HasFeature
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace, authenticated_user
+from common.workspaces import authenticated_user, request_workspace
 from workspaces.models import AuditLog, Membership, Role
 from workspaces.permissions import HasRole
 from workspaces.serializers import (
@@ -56,7 +56,7 @@ class WorkspaceSettingsView(APIView):
         responses={200: WorkspaceSettingsSerializer}, summary="Read collaboration settings"
     )
     def get(self, request: Request) -> Response:
-        return Response(WorkspaceSettingsSerializer(active_workspace(request)).data)
+        return Response(WorkspaceSettingsSerializer(request_workspace(request)).data)
 
     @extend_schema(
         request=WorkspaceSettingsSerializer,
@@ -64,7 +64,7 @@ class WorkspaceSettingsView(APIView):
         summary="Toggle whether posts require approval before scheduling",
     )
     def patch(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         payload = WorkspaceSettingsSerializer(workspace, data=request.data, partial=True)
         payload.is_valid(raise_exception=True)
         workspace.requires_approval = payload.validated_data["requires_approval"]

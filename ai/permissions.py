@@ -17,7 +17,7 @@ from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
 from ai.services.costing import preflight_require_credits
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 
 
 class HasSufficientCredits(BasePermission):
@@ -32,5 +32,5 @@ class HasSufficientCredits(BasePermission):
             return True
 
         mode = data.get("mode", "") if isinstance(data, dict) else ""
-        preflight_require_credits(active_workspace(request), kind=kind, mode=mode)
+        preflight_require_credits(request_workspace(request), kind=kind, mode=mode)
         return True

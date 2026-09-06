@@ -36,7 +36,7 @@ from channels.serializers import (
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 from content.models import Platform
 
 
@@ -80,7 +80,7 @@ class SocialAccountViewSet(
         data = payload.validated_data
 
         outcome = services.complete_connect(
-            workspace=active_workspace(request),
+            workspace=request_workspace(request),
             platform=data["platform"],
             params=data["params"],
             target_id=data.get("target_id", ""),
@@ -144,7 +144,7 @@ class ChannelConnectView(APIView):
                 detail={"platform": platform},
             )
         auth_url = services.start_connect(
-            workspace=active_workspace(request),
+            workspace=request_workspace(request),
             platform=platform,
             redirect_url=_redirect_url(request),
         )

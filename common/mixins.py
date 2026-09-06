@@ -22,7 +22,7 @@ class WorkspaceScopedQuerySetMixin:
     Set `workspace_field` when the relation is not a direct `workspace` FK
     (e.g. "post__workspace" for PostTarget).
 
-    `request.workspace` is resolved by `common.workspaces.active_workspace` —
+    `request.workspace` is resolved by `common.workspaces.request_workspace` —
     that is the only resolver, and an app that filters memberships itself puts
     its tenancy decision outside what the Phase 4 sweep can walk.
     """
@@ -45,9 +45,9 @@ class WorkspaceScopedQuerySetMixin:
                 raise NotAuthenticated("No active workspace for this request.")
             return workspace
 
-        from common.workspaces import active_workspace
+        from common.workspaces import request_workspace
 
-        return active_workspace(self.request)  # type: ignore[attr-defined]
+        return request_workspace(self.request)  # type: ignore[attr-defined]
 
     def get_queryset(self) -> QuerySet[Any]:
         queryset: QuerySet[Any] = super().get_queryset()  # type: ignore[misc]

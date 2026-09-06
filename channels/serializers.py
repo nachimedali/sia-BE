@@ -15,7 +15,7 @@ from rest_framework import serializers
 
 from channels import services
 from channels.models import SocialAccount
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 from content.models import Platform
 
 
@@ -56,7 +56,7 @@ class ConnectCompleteRequestSerializer(serializers.Serializer[dict[str, Any]]):
         # before OCCS spends a request finding out.
         request = self.context.get("request")
         if request is not None:
-            services.enforce_account_cap(active_workspace(request))
+            services.enforce_account_cap(request_workspace(request))
         return attrs
 
 

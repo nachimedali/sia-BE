@@ -19,7 +19,7 @@ from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
 from billing.services.entitlements import entitlements_for
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 
 
 def HasFeature(feature: str) -> type[BasePermission]:  # noqa: N802 — reads as a class
@@ -34,7 +34,7 @@ def HasFeature(feature: str) -> type[BasePermission]:  # noqa: N802 — reads as
         def has_permission(self, request: Request, view: Any) -> bool:
             if not request.user or not request.user.is_authenticated:
                 return False
-            entitlements_for(active_workspace(request)).require_feature(feature)
+            entitlements_for(request_workspace(request)).require_feature(feature)
             return True
 
     _HasFeature.__name__ = f"HasFeature({feature!r})"

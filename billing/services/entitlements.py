@@ -29,13 +29,22 @@ from typing import Any
 
 from django.utils import timezone
 
-from billing.models import QUOTA_FIELDS, UNLIMITED, Plan, Subscription
+from billing.models import (
+    QUOTA_FIELDS,
+    UNLIMITED,
+    AddonStatus,
+    OrganizationAddon,
+    Plan,
+    Subscription,
+)
 from billing.services import ledger
 from common.exceptions import (
+    AddonNotEnabled,
     FeatureNotAvailable,
     InsufficientCredits,
     InsufficientVideoUnits,
     QuotaExceeded,
+    SoftBudgetExceeded,
 )
 from common.redis import get_redis
 from workspaces.models import Workspace
@@ -50,11 +59,32 @@ FREE_PLAN_CODE = "free"
 ADVANCED_ONLY = frozenset({"approval_workflow", "api_access", "autopilot_auto_approve"})
 
 
+def _addon_version(organization: Any) -> str:
+    """A stamp that changes whenever this org's add-on set does (P0-24).
+
+    Part of the cache key rather than a separate invalidation step, for the
+    same reason `plan.updated_at` is: enabling an add-on mints a new key, so
+    nothing has to hunt down and evict the old one.
+
+    Read from the counter column, never aggregated. This runs on **every**
+    resolve, and an aggregate here would put a Postgres round-trip in front of
+    the cache whose whole purpose is to avoid one.
+    """
+    return "-" if organization is None else str(organization.addon_version)
+
+
+def _org_plan(workspace: Workspace) -> Plan | None:
+    organization = getattr(workspace, "organization", None)
+    return organization.plan if organization is not None else None
+
+
 def _cache_key(workspace: Workspace, plan: Plan) -> str:
     # `updated_at` in the key is the invalidation: an admin edit mints a new key
-    # rather than requiring every workspace on the plan to be hunted down.
+    # rather than requiring every workspace on the plan to be hunted down. The
+    # add-on stamp is the second axis (P0-24) — org plan crossed with org add-ons.
     stamp = int(plan.updated_at.timestamp() * 1_000_000)
-    return f"entitlements:{workspace.pk}:{plan.pk}:{stamp}"
+    addons = _addon_version(getattr(workspace, "organization", None))
+    return f"entitlements:{workspace.pk}:{plan.pk}:{stamp}:{addons}"
 
 
 class Entitlements:
@@ -66,7 +96,13 @@ class Entitlements:
 
     # --- resolution ------------------------------------------------------
     def _resolve_plan(self) -> Plan:
-        plan = self.workspace.plan
+        # **Still the workspace copy** — this is the dual-write step, not the
+        # cut-over (P0-54). The organization is where the plan lives after
+        # P0-55, and `billing.services.plans.set_plan` already writes both, but
+        # reads do not move until a full billing cycle of parity has been
+        # asserted in production. Swapping the order here early is exactly the
+        # shortcut the migration discipline exists to prevent.
+        plan = self.workspace.plan or _org_plan(self.workspace)
         if plan is None:
             return _free_plan()
 
@@ -119,6 +155,7 @@ class Entitlements:
             "plan_name": self.plan.display_name,
             "features": {key: self.plan.feature(key) for key in sorted(self.plan.features)},
             "quotas": {field: getattr(self.plan, field) for field in sorted(QUOTA_FIELDS)},
+            "addons": sorted(self._active_addons()),
         }
         try:
             client.set(key, json.dumps(snapshot), ex=CACHE_TTL_SECONDS)
@@ -128,7 +165,36 @@ class Entitlements:
         self._snapshot = snapshot
         return snapshot
 
+    def _active_addons(self) -> set[str]:
+        """Add-on keys live on this organization right now.
+
+        An add-on inside its 30-day trial counts as active — that is what a
+        trial is — and `expire_trials` is what ends it, not a read-time clock
+        that would make the same request answer differently at 02:44 and 02:46.
+        """
+        organization = getattr(self.workspace, "organization", None)
+        if organization is None:
+            return set()
+        return set(
+            OrganizationAddon.objects.filter(
+                organization=organization, status=AddonStatus.ACTIVE
+            ).values_list("addon_key", flat=True)
+        )
+
     # --- reads -----------------------------------------------------------
+    def addons(self) -> set[str]:
+        return set(self.snapshot.get("addons", []))
+
+    def has_addon(self, key: str) -> bool:
+        return key in self.addons()
+
+    def soft_budget(self, field: str) -> int | None:
+        """The workspace's optional self-imposed ceiling, or `None` when it has
+        not set one. Distinct from a plan quota: the plan is what was bought,
+        this is what this brand chose to spend of it."""
+        value = getattr(self.workspace, field, None)
+        return None if value is None else int(value)
+
     def feature(self, key: str) -> Any:
         return self.snapshot["features"].get(key, False)
 
@@ -203,6 +269,37 @@ class Entitlements:
                 f"Your plan does not include {key.replace('_', ' ')}.",
                 detail={"feature": key, "plan": self.plan.code},
                 suggested_plan=self._suggested_plan(key),
+            )
+
+    def require_addon(self, key: str) -> None:
+        """402 at the add-on (P0-25).
+
+        A distinct code from `require_feature`: "your plan does not include
+        this" and "your organization has not enabled this add-on" lead to
+        different screens, and collapsing them would send a customer who
+        already pays enough to an upgrade page that cannot help them.
+        """
+        if not self.has_addon(key):
+            raise AddonNotEnabled(
+                f"This organization has not enabled the {key.replace('_', ' ')} add-on.",
+                detail={"addon": key},
+                suggested_plan=self.plan.code,
+            )
+
+    def check_soft_budget(self, field: str, current: int) -> None:
+        """402 with a code the UI can phrase as *this workspace's budget*
+        rather than *your plan* (P0-25).
+
+        The distinction is the whole point. A soft budget is self-imposed, so
+        the fix is an admin in this workspace raising it — not a purchase — and
+        an upgrade prompt here would be both wrong and annoying.
+        """
+        ceiling = self.soft_budget(field)
+        if ceiling is not None and current >= ceiling:
+            raise SoftBudgetExceeded(
+                "This workspace has reached the budget it set for itself.",
+                detail={"budget": field, "limit": ceiling, "current": current},
+                suggested_plan=self.plan.code,
             )
 
     def require_credits(self, amount: int) -> None:
@@ -295,3 +392,19 @@ def _free_plan() -> Plan:
 
 def entitlements_for(workspace: Workspace) -> Entitlements:
     return Entitlements(workspace)
+
+
+def bump_addon_version(organization: Any) -> None:
+    """Invalidates every entitlement snapshot for this organization (P0-24).
+
+    Called by the add-on write path, not by a signal — Part 7 rule 8, and more
+    practically: a signal here would fire on fixtures and migrations too, and
+    the one place that must never be missed is exactly the place a signal is
+    hardest to reason about.
+    """
+    from django.db.models import F
+
+    type(organization).objects.filter(pk=organization.pk).update(
+        addon_version=F("addon_version") + 1
+    )
+    organization.refresh_from_db(fields=["addon_version"])

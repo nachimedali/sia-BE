@@ -92,6 +92,28 @@ class InsufficientVideoUnits(PaymentRequired):
 
 class QuotaExceeded(PaymentRequired):
     default_code = "quota_exceeded"
+
+
+class AddonNotEnabled(PaymentRequired):
+    """402 at the add-on, not at the plan (P0-25).
+
+    A distinct code because it leads to a distinct screen: the customer may
+    already be on the top plan, in which case an upgrade prompt is both wrong
+    and insulting.
+    """
+
+    default_code = "addon_not_enabled"
+
+
+class SoftBudgetExceeded(PaymentRequired):
+    """402 at a ceiling the workspace set for itself (P0-25).
+
+    Also distinct, and for a stronger reason: nothing can be bought to fix it.
+    The fix is an admin in this workspace raising its own budget, so the UI
+    must be able to say "this workspace's budget" rather than "your plan".
+    """
+
+    default_code = "soft_budget_exceeded"
     default_detail = "You have reached your plan's limit for this resource."
 
 
@@ -104,6 +126,19 @@ class StateConflict(OCCSError):
     status_code = status.HTTP_409_CONFLICT
     default_code = "state_conflict"
     default_detail = "The resource is not in a state that allows this transition."
+
+
+class NotFoundError(OCCSError):
+    """404. **The answer to every cross-tenant id** (Part 7 rule 3).
+
+    Never 403. A 403 confirms the row exists and merely belongs to someone
+    else, which is an enumeration oracle; a 404 says only that this caller has
+    no such thing, which is both true and useless to an attacker. Now three
+    dimensions wide — organization, workspace and, from Phase 2, visibility.
+    """
+
+    status_code = status.HTTP_404_NOT_FOUND
+    default_code = "not_found"
 
 
 class ProviderError(OCCSError):

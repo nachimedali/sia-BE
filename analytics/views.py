@@ -46,7 +46,7 @@ from analytics.services import audience, repurposing, signals
 from billing.permissions import HasFeature
 from billing.services.entitlements import entitlements_for
 from common.exceptions import OCCSError
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 from workspaces.models import Workspace
 
 REPURPOSE_FEATURE = "repurposing"
@@ -64,7 +64,7 @@ class _AnalyticsView(APIView):
     permission_classes: list[Any] = [IsAuthenticated]
 
     def workspace(self, request: Request) -> Workspace:
-        return active_workspace(request)
+        return request_workspace(request)
 
     def horizon(self, workspace: Workspace) -> int:
         return entitlements_for(workspace).analytics_horizon_days()
@@ -166,7 +166,7 @@ class AudienceCommentReplyView(APIView):
         # the fetch (Part 7 rule 3).
         comment = get_object_or_404(
             AudienceComment.objects.measured().filter(
-                post_target__post__workspace=active_workspace(request)
+                post_target__post__workspace=request_workspace(request)
             ),
             pk=pk,
         )
