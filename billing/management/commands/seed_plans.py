@@ -12,7 +12,7 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from billing.models import Plan
+from billing.models import Currency, Plan, PlanPrice
 
 # Values are the §4.1 matrix verbatim. This module and the migrations are the
 # only places these numbers may appear (I8 / implementation.md §4.2).
@@ -188,7 +188,34 @@ class Command(BaseCommand):
             plan, created = Plan.objects.update_or_create(
                 code=code, defaults={k: v for k, v in spec.items() if k != "code"}
             )
+            self._seed_default_price(plan)
             verb = "created" if created else "updated"
             self.stdout.write(f"  {verb}: {plan.code} ({plan.display_name})")
 
         self.stdout.write(self.style.SUCCESS(f"Seeded {len(PLANS)} plans."))
+
+    @staticmethod
+    def _seed_default_price(plan: Plan) -> None:
+        """The default price row, mirroring the columns above.
+
+        Only the default. Every other currency is an operator's decision — a
+        seed command that invented a euro price would be guessing at a number
+        it has no basis for, and a wrong price is worse than an absent one
+        because the absent one falls back to the default and the wrong one
+        just charges.
+        """
+        currency, _ = Currency.objects.get_or_create(
+            code=plan.currency.upper(), defaults={"name": plan.currency.upper(), "symbol": "$"}
+        )
+        PlanPrice.objects.update_or_create(
+            plan=plan,
+            currency=currency,
+            defaults={
+                "monthly_cents": plan.price_monthly_cents,
+                "annual_cents": plan.price_annual_cents,
+                "per_workspace_cents": plan.price_per_workspace_cents,
+                "stripe_price_id_monthly": plan.stripe_price_id_monthly,
+                "stripe_price_id_annual": plan.stripe_price_id_annual,
+                "is_default": True,
+            },
+        )

@@ -50,6 +50,103 @@ FEATURE_KEYS = frozenset(
 )
 
 
+class Currency(models.Model):
+    """A currency this business will take money in.
+
+    **A row rather than an enum**, so adding one is an admin edit rather than a
+    deploy — the same rule every other commercial value here follows (I8, Part 7
+    rule 10). A new market opens on a Tuesday; waiting for a release to price
+    for it is the wrong constraint.
+
+    `minor_units` is not decoration. Amounts are stored in the currency's
+    smallest unit everywhere, and that unit is not always 1/100: JPY and KRW
+    have none at all, so ¥3700 stored as "cents" would render as ¥37.00 and
+    undercharge by a hundred. Formatting reads this; arithmetic never does.
+    """
+
+    #: ISO 4217, upper-case. The join key to Stripe, which speaks the same
+    #: vocabulary — so it is immutable for the same reason `CatalogueItem.code`
+    #: is, and for once we get the validation for free from the standard.
+    code = models.CharField(max_length=3, unique=True)
+    name = models.CharField(max_length=64)
+    symbol = models.CharField(max_length=8, blank=True)
+    #: 2 for USD/EUR/MAD, 0 for JPY/KRW, 3 for a handful of dinars.
+    minor_units = models.PositiveSmallIntegerField(default=2)
+    #: Whether the symbol leads (`$12`) or trails (`12 €`). A display fact that
+    #: differs by locale and is cheaper to store than to special-case.
+    symbol_first = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["code"]
+        verbose_name_plural = "currencies"
+
+    def __str__(self) -> str:
+        return f"{self.code} ({self.name})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.code = self.code.upper()
+        super().save(*args, **kwargs)
+
+    def format(self, minor: int) -> str:
+        """`3700` in USD → `$37.00`; in JPY → `¥3700`.
+
+        Rendering only. Nothing computes with the result, which is why rounding
+        here cannot cost anyone money.
+        """
+        if self.minor_units == 0:
+            amount = str(minor)
+        else:
+            major, remainder = divmod(abs(minor), 10**self.minor_units)
+            amount = f"{'-' if minor < 0 else ''}{major}.{remainder:0{self.minor_units}d}"
+        symbol = self.symbol or self.code
+        return f"{symbol}{amount}" if self.symbol_first else f"{amount} {symbol}"
+
+
+class CataloguePrice(models.Model):
+    """What one catalogue item costs in one currency.
+
+    **A row per currency, not a conversion.** €37 is not $37 through today's FX
+    rate — it is a separate commercial decision, usually a rounder number, and
+    often a different one relative to local buying power. Storing a base price
+    and converting at read time would make every market's price a function of
+    the dollar and move it every morning, which is not something anyone would
+    choose to sell.
+
+    Abstract for the same reason `LedgerEntry` and `CatalogueItem` are: a plan
+    carries three amounts and two Stripe ids, a pack carries one of each, and
+    forcing them into one table would mean half the columns are null in half
+    the rows.
+    """
+
+    currency = models.ForeignKey("billing.Currency", on_delete=models.PROTECT, related_name="+")
+    #: The one used when a customer's own currency is not offered for this item.
+    #: Exactly one per item, enforced in `validation_errors`.
+    is_default = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.full_clean(exclude=None, validate_unique=False)
+        super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        super().clean()
+        errors = self.validation_errors()
+        if errors:
+            raise ValidationError(errors)
+
+    def validation_errors(self) -> dict[str, str]:
+        return {}
+
+
 class CatalogueItem(models.Model):
     """What `Plan` and `Pack` have in common: a commercial row an operator
     retunes in admin (I8), joined to Stripe and to analytics by its `code`.
@@ -203,6 +300,55 @@ QUOTA_FIELDS = frozenset(
 )
 
 
+class PlanPrice(CataloguePrice):
+    """One plan's price in one currency (per-country pricing).
+
+    The three amounts move together because they are one commercial decision:
+    a market where the monthly price is lower is a market where the annual and
+    the per-workspace price are too, and splitting them across rows would let
+    them drift apart with nothing to notice.
+
+    Stripe ids live here rather than on `Plan` because Stripe models this the
+    same way — one product, one price object per currency — so a row here maps
+    to a row there, and a mismatch is visible instead of inferred.
+    """
+
+    plan = models.ForeignKey("billing.Plan", on_delete=models.CASCADE, related_name="prices")
+
+    monthly_cents = models.IntegerField(default=0)
+    annual_cents = models.IntegerField(default=0)
+    #: What the subscription quantity multiplies (P0-17): one subscription per
+    #: organization, quantity = workspace count.
+    per_workspace_cents = models.IntegerField(default=0)
+
+    stripe_price_id_monthly = models.CharField(max_length=64, blank=True)
+    stripe_price_id_annual = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["plan", "currency__code"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["plan", "currency"], name="unique_plan_price_currency"),
+            # One default per plan, enforced by the database rather than by
+            # whoever is editing: two defaults means the resolver picks by row
+            # order, which is a bug that only shows up in one market.
+            models.UniqueConstraint(
+                fields=["plan"],
+                condition=models.Q(is_default=True),
+                name="one_default_price_per_plan",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.plan_id} @ {self.currency_id}"
+
+    def validation_errors(self) -> dict[str, str]:
+        errors = super().validation_errors()
+        for field in ("monthly_cents", "annual_cents", "per_workspace_cents"):
+            if getattr(self, field) < 0:
+                errors[field] = "A price cannot be negative."
+        return errors
+
+
 class PackKind(models.TextChoices):
     CREDITS = "CREDITS", "Credits"
     VIDEO = "VIDEO", "Video units"
@@ -242,6 +388,45 @@ class Pack(CatalogueItem):
         """What one unit in this pack cost. Recorded on the ledger row so a
         revenue question does not have to reconstruct it from the pack."""
         return self.price_cents // self.units
+
+
+class PackPrice(CataloguePrice):
+    """One pack's price in one currency.
+
+    Note what is *not* here: `units`. A pack grants the same number of credits
+    everywhere and only the price changes — varying both would make two markets
+    incomparable in every revenue question anyone later asks.
+    """
+
+    pack = models.ForeignKey("billing.Pack", on_delete=models.CASCADE, related_name="prices")
+    amount_cents = models.IntegerField(default=0)
+    stripe_price_id = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["pack", "currency__code"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["pack", "currency"], name="unique_pack_price_currency"),
+            models.UniqueConstraint(
+                fields=["pack"],
+                condition=models.Q(is_default=True),
+                name="one_default_price_per_pack",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.pack_id} @ {self.currency_id}"
+
+    def validation_errors(self) -> dict[str, str]:
+        errors = super().validation_errors()
+        if self.amount_cents < 0:
+            errors["amount_cents"] = "A pack cannot have a negative price."
+        return errors
+
+    @property
+    def unit_price_cents(self) -> int:
+        """What one unit cost in this currency. Recorded on the ledger row so a
+        revenue question does not have to reconstruct it from the pack."""
+        return self.amount_cents // self.pack.units
 
 
 class SubscriptionStatus(models.TextChoices):

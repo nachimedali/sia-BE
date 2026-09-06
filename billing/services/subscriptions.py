@@ -31,7 +31,7 @@ from billing.models import (
     SubscriptionStatus,
     VideoReason,
 )
-from billing.services import ledger
+from billing.services import ledger, pricing
 from channels.services import park_accounts_over_cap
 from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
@@ -75,11 +75,27 @@ def start_checkout(
     if plan is None or plan.code == FREE_PLAN_CODE:
         raise OCCSError("That plan cannot be subscribed to.", code="invalid_plan")
 
-    price_id = plan.stripe_price_id_annual if cycle == "annual" else plan.stripe_price_id_monthly
+    # Resolved rather than read off the plan: the price and the Stripe id both
+    # depend on which currency this organization is billed in (per-country
+    # pricing). Falls back to the plan's default row, and to the legacy columns
+    # while the price backfill is still rolling out.
+    resolved = pricing.plan_price(plan, organization=workspace.organization, cycle=cycle)
+    price_id = resolved.stripe_price_id
     if not price_id:
         # A plan with no Stripe price is a configuration error, not a user error.
-        logger.error("plan has no Stripe price id", extra={"plan": plan.code, "cycle": cycle})
+        logger.error(
+            "plan has no Stripe price id",
+            extra={"plan": plan.code, "cycle": cycle, "currency": resolved.currency.code},
+        )
         raise OCCSError("This plan is not available for purchase yet.", code="plan_not_purchasable")
+    if resolved.is_fallback:
+        # Charged in a currency this organization did not ask for, because we
+        # do not price this plan in theirs yet. Not an error — an unpriced
+        # market is an operator's to-do — but it must be visible.
+        logger.warning(
+            "charging a fallback currency",
+            extra={"plan": plan.code, "currency": resolved.currency.code},
+        )
 
     if Subscription.current_for(workspace) is not None:
         raise StateConflict(
@@ -104,7 +120,12 @@ def start_checkout(
     )
     logger.info(
         "checkout session created",
-        extra={"workspace_id": workspace.pk, "plan": plan.code, "cycle": cycle},
+        extra={
+            "workspace_id": workspace.pk,
+            "plan": plan.code,
+            "cycle": cycle,
+            "currency": resolved.currency.code,
+        },
     )
     return session
 

@@ -152,6 +152,23 @@ class Organization(models.Model):
     provider_profile_id = models.CharField(max_length=64, blank=True)
     referral_code = models.CharField(max_length=32, unique=True, default=generate_referral_code)
 
+    #: What this company is billed in. **On the organization, not the
+    #: workspace**, because billing pools here (L-1): one company pays one
+    #: invoice, and two brands under it charged in different currencies would
+    #: be two invoices wearing one subscription.
+    #:
+    #: Null means "whatever the catalogue's default is", which is the right
+    #: answer before anyone has said otherwise — and is why this is nullable
+    #: rather than defaulted to USD, a choice that would silently make every
+    #: new market American.
+    billing_currency = models.ForeignKey(
+        "billing.Currency",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="organizations",
+    )
+
     #: Bumped whenever this organization's add-on set changes (P0-24). It is
     #: half of the entitlement cache key, so an add-on being enabled, disabled
     #: or expired mints a new key rather than requiring anything to hunt down
