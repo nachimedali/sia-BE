@@ -1,7 +1,7 @@
 """Measurement (design.md §6.7, §8.9; implementation.md Phase 11).
 
 Four tables closing the loop the rest of the system opened: what each published
-copy earned (`PostMetric`), what people said about it (`Comment`), how the
+copy earned (`PostMetric`), what the audience said (`AudienceComment`), how the
 account itself moved (`AccountSnapshot`), and which old post is worth running
 again (`RepurposeCandidate`).
 
@@ -20,7 +20,7 @@ format attribution is being able to see that.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from django.db import models
 from django.utils import timezone
@@ -37,24 +37,109 @@ class ImmutableCapture(AppendOnly):
         abstract = True
 
 
+class Availability(models.TextChoices):
+    """Why a metric has no value — the distinction C-07 exists to preserve.
+
+    `UNAVAILABLE` and a measured zero must never be stored the same way. A
+    platform that reports nothing is not a platform that measured nothing, and
+    every percentile, benchmark and finding downstream inherits the error if
+    they are conflated.
+    """
+
+    MEASURED = "MEASURED", "Measured"
+    UNAVAILABLE = "UNAVAILABLE", "Provider cannot report this"
+    PENDING = "PENDING", "Provider sync still in flight"
+
+
+class MetricSource(models.TextChoices):
+    """Where a row's numbers came from.
+
+    The reason this exists rather than being inferred from `provider_key`:
+    Part 7 rule 17 has to be enforceable by a queryset. `analysable` filters
+    on this, so no digest, finding, rule proposal or benchmark can be built
+    from a fabricated row even by a caller who never considered the question.
+    """
+
+    PROVIDER = "PROVIDER", "A measurement provider"
+    FAKE = "FAKE", "The test fake — never insight"
+
+
+class PostMetricQuerySet(models.QuerySet["PostMetric"]):
+    def measured(self) -> PostMetricQuerySet:
+        """Rows carrying an actual reading.
+
+        `UNAVAILABLE` and `PENDING` rows record that we asked and got no
+        answer. They exist so a gap is visible, and they must never reach a
+        denominator — a platform that reports nothing would otherwise drag
+        every percentile it appears in toward zero.
+        """
+        return self.filter(availability=Availability.MEASURED)
+
+    def real(self) -> PostMetricQuerySet:
+        return self.filter(source=MetricSource.PROVIDER)
+
+    def analysable(self) -> PostMetricQuerySet:
+        """Measured *and* real. The only queryset statistics may read."""
+        return self.measured().real()
+
+
 class PostMetric(ImmutableCapture):
     post_target = models.ForeignKey(
         "content.PostTarget", on_delete=models.CASCADE, related_name="metrics"
     )
     captured_at = models.DateTimeField()
-    impressions = models.PositiveIntegerField(default=0)
-    likes = models.PositiveIntegerField(default=0)
-    comments = models.PositiveIntegerField(default=0)
-    shares = models.PositiveIntegerField(default=0)
-    clicks = models.PositiveIntegerField(default=0)
-    saves = models.PositiveIntegerField(default=0)
+
+    #: **Null, never zero** (C-07, Part 7 rule 12). A platform that does not
+    #: report a number leaves it `None`; a platform that reports zero stores
+    #: `0`. Before P0-38 both were `0`, which is why every aggregate below
+    #: reads through `analysable()` rather than trusting the column alone.
+    impressions = models.PositiveIntegerField(null=True, blank=True)
+    likes = models.PositiveIntegerField(null=True, blank=True)
+    comments = models.PositiveIntegerField(null=True, blank=True)
+    shares = models.PositiveIntegerField(null=True, blank=True)
+    clicks = models.PositiveIntegerField(null=True, blank=True)
+    saves = models.PositiveIntegerField(null=True, blank=True)
     #: Weighted interactions ÷ impressions, or ÷ followers where the platform
     #: does not report impressions (§8.9). Stored rather than derived so a
-    #: later change to the weighting cannot silently rewrite history.
-    engagement_rate = models.FloatField(default=0)
+    #: later change to the weighting cannot silently rewrite history. `None`
+    #: when neither denominator was available — the same rule as the counts.
+    engagement_rate = models.FloatField(null=True, blank=True)
+
+    #: Post-level reaction breakdown, e.g. `{"like": 40, "celebrate": 6}`
+    #: (L-4a). `None` means the platform does not break reactions down; `{}`
+    #: means it does and there were none. Depth is tiered by plan — total only,
+    #: per-type, or per-type plus reactor list — but the *storage* is always
+    #: whatever the provider gave, with the tier applied on read.
+    reactions = models.JSONField(null=True, blank=True)
+
+    #: Provenance (P0-29, A-16). Which provider answered, under which response
+    #: mapping, and whether it answered at all.
+    availability = models.CharField(
+        max_length=12, choices=Availability.choices, default=Availability.MEASURED
+    )
+    source = models.CharField(
+        max_length=8, choices=MetricSource.choices, default=MetricSource.PROVIDER
+    )
+    provider_key = models.CharField(max_length=32, blank=True)
+    schema_version = models.PositiveSmallIntegerField(default=0)
+
+    #: The provider's answer, verbatim and compressed (C-07b). `raw` is the
+    #: pre-P0-39 uncompressed column, still dual-written; it contracts away
+    #: once every live row carries `raw_payload`.
     raw = models.JSONField(default=dict, blank=True)
+    raw_payload = models.BinaryField(default=bytes, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects: ClassVar[models.Manager[PostMetric]] = PostMetricQuerySet.as_manager()
+
+    @property
+    def payload(self) -> Any:
+        """The stored provider response, decompressed. Falls back to the
+        legacy `raw` column so a reprocess spans the dual-write window."""
+        from common.compression import unpack
+
+        return unpack(self.raw_payload) if self.raw_payload else (self.raw or None)
 
     class Meta:
         ordering: ClassVar[list[str]] = ["-captured_at"]
@@ -77,12 +162,37 @@ class Sentiment(models.TextChoices):
     NEGATIVE = "NEG", "Negative"
 
 
-class Comment(ImmutableCapture):
-    """What someone said, as they said it.
+class AudienceCommentQuerySet(models.QuerySet["AudienceComment"]):
+    def measured(self) -> AudienceCommentQuerySet:
+        """Threads we could actually read.
 
-    Immutable for a second reason beyond the capture argument: a comment edited
-    on our side would no longer be what the platform holds, and the sentiment
-    aggregate would be describing text nobody wrote.
+        An `UNAVAILABLE` marker row says "this platform does not expose
+        comments" — TikTok, at any price (L-3). It is not a comment and must
+        never sit in a denominator: a comment-rate that counted TikTok targets
+        as having zero comments would be measuring our vendor's coverage and
+        calling it audience behaviour (P0-03).
+        """
+        return self.filter(availability=Availability.MEASURED)
+
+
+class AudienceComment(ImmutableCapture):
+    """What the audience said, as they said it — the post-publish surface.
+
+    **Never merged with the internal discussion thread** (C-03, L-3). Phase 2
+    adds `Thread`/`Comment` for the team talking to itself before a post goes
+    out; this is the public talking about it afterwards. Two models, two
+    lists, one rule: a schema that lets them share a table will eventually
+    leak one into the other, and the leak direction that matters is internal
+    review notes appearing on a published post.
+
+    Immutable for a second reason beyond the capture argument: a comment
+    edited on our side would no longer be what the platform holds, and the
+    sentiment aggregate would be describing text nobody wrote.
+
+    The physical table is still `analytics_comment`. The model was renamed
+    when it was promoted to first class (P0-02) and the table deliberately was
+    not — moving it would buy nothing and would make the rename a data
+    migration instead of a no-op.
     """
 
     post_target = models.ForeignKey(
@@ -95,9 +205,20 @@ class Comment(ImmutableCapture):
     sentiment_score = models.FloatField(default=0)
     posted_at = models.DateTimeField()
 
+    #: Per-type breakdown where the platform reports one, e.g.
+    #: `{"like": 12, "celebrate": 3}`. Empty means "asked, none"; the
+    #: unavailable case is carried by `availability`, not by an empty dict.
+    reactions = models.JSONField(default=dict, blank=True)
+    availability = models.CharField(
+        max_length=12, choices=Availability.choices, default=Availability.MEASURED
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects: ClassVar[models.Manager[AudienceComment]] = AudienceCommentQuerySet.as_manager()
+
     class Meta:
+        db_table = "analytics_comment"
         ordering: ClassVar[list[str]] = ["-posted_at"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
             models.UniqueConstraint(
@@ -117,9 +238,13 @@ class AccountSnapshot(ImmutableCapture):
         "channels.SocialAccount", on_delete=models.CASCADE, related_name="snapshots"
     )
     captured_at = models.DateTimeField()
-    followers = models.PositiveIntegerField(default=0)
-    following = models.PositiveIntegerField(default=0)
-    total_posts = models.PositiveIntegerField(default=0)
+    #: Null, never zero — the same rule as `PostMetric` (C-07). An account the
+    #: provider could not read is not an account with no followers, and this
+    #: number is a *denominator* downstream, which makes a fabricated zero
+    #: worse here than almost anywhere else.
+    followers = models.PositiveIntegerField(null=True, blank=True)
+    following = models.PositiveIntegerField(null=True, blank=True)
+    total_posts = models.PositiveIntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -223,3 +348,72 @@ class RepurposeConfig(models.Model):
     def get_solo(cls) -> RepurposeConfig:
         instance, _ = cls.objects.get_or_create(pk=1)
         return instance
+
+
+class ProviderCursor(models.Model):
+    """Where the delta feed was last read from, per provider (P0-31).
+
+    One row per provider, not per account: `/v1/analytics/delta` is a single
+    feed across every connected account, which is the whole reason it replaces
+    per-post polling.
+
+    `bootstrapped_at` is load-bearing. The feed is a rolling seven-day log and
+    cannot replay history, so following it without having first bootstrapped
+    from `/v1/analytics` silently misses every post older than the window. A
+    null here means "not bootstrapped", and the follower refuses to advance
+    until the ladder has run.
+    """
+
+    provider_key = models.CharField(max_length=32, unique=True)
+    cursor = models.CharField(max_length=512, blank=True)
+    bootstrapped_at = models.DateTimeField(null=True, blank=True)
+    #: Consecutive reads that returned nothing. Not an error — a quiet feed is
+    #: normal — but a feed that has been silent for days while posts are
+    #: publishing is a broken integration, and this is what makes that visible.
+    empty_reads = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.provider_key} @ {self.cursor or '(start)'}"
+
+
+class MetricCapability(models.Model):
+    """What a given provider can actually report, per platform, per metric.
+
+    Small table, large consequence. It is keyed by provider as well as platform
+    because coverage is a property of the pair: the same platform reports
+    different things through different vendors, and a swap that silently
+    inherited the old vendor's capability map would fabricate coverage.
+
+    Seeded and admin-editable like every other operational table, so a vendor
+    adding an endpoint is a row edit rather than a deploy.
+    """
+
+    provider_key = models.CharField(max_length=32)
+    platform = models.CharField(max_length=32)
+    metric_key = models.CharField(max_length=64)
+    available = models.BooleanField(default=True)
+    #: Documented lag before the number settles — Instagram demographics run up
+    #: to 48h behind. A capture inside the hint is `PENDING`, not `UNAVAILABLE`:
+    #: one reschedules, the other is recorded as a permanent gap.
+    latency_hint = models.DurationField(null=True, blank=True)
+    note = models.CharField(max_length=280, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["provider_key", "platform", "metric_key"],
+                name="unique_provider_platform_metric",
+            )
+        ]
+        ordering: ClassVar[list[str]] = ["provider_key", "platform", "metric_key"]
+        verbose_name_plural = "metric capabilities"
+
+    def __str__(self) -> str:
+        state = "available" if self.available else "unavailable"
+        return f"{self.provider_key}/{self.platform}/{self.metric_key} ({state})"

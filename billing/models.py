@@ -43,6 +43,9 @@ FEATURE_KEYS = frozenset(
         "auto_publish",
         "analytics_history_days",
         "credits_rollover",
+        # L-4a: replying to an audience comment from inside the app. Reading is
+        # free from the provider; the gate is commercial, not technical.
+        "reply_to_comments",
     }
 )
 
@@ -98,6 +101,19 @@ class CatalogueItem(models.Model):
         return errors
 
 
+class ReactionDetail(models.TextChoices):
+    """How much of a reaction breakdown a plan may see (L-4a).
+
+    Reading costs nothing from the provider, so this is a product ladder, not
+    a cost pass-through — and it degrades, it does not fail: a plan capped at
+    `TOTAL` sees a real total, never a fabricated breakdown.
+    """
+
+    TOTAL = "TOTAL", "Total count only"
+    PER_TYPE = "PER_TYPE", "Per-reaction-type breakdown"
+    REACTORS = "REACTORS", "Per-type plus reactor identities"
+
+
 class Plan(CatalogueItem):
     price_monthly_cents = models.IntegerField(default=0)
     price_annual_cents = models.IntegerField(default=0)
@@ -114,6 +130,28 @@ class Plan(CatalogueItem):
     max_workspace_members = models.IntegerField(default=1)
     max_products = models.IntegerField(default=1)
     trial_days = models.IntegerField(default=0)
+
+    # --- organization tier (BUILD-PLAN L-1/L-4) ---
+    #: The quota trial that replaced Free-forever: N posts, no expiry, no card.
+    trial_post_quota = models.IntegerField(default=0)
+    max_workspaces = models.IntegerField(default=1)
+    price_per_workspace_cents = models.IntegerField(default=0)
+    counts_docs_against_quota = models.BooleanField(default=True)
+    included_views = models.IntegerField(default=0)
+    max_labels = models.IntegerField(default=0)
+    max_campaigns = models.IntegerField(default=0)
+    storage_bytes = models.BigIntegerField(default=0)
+    version_history_days = models.IntegerField(default=0)
+
+    # --- audience engagement (BUILD-PLAN L-4a) ---
+    #: Minutes between audience-comment captures. `0` means this plan is
+    #: driven by the `comment.received` webhook instead of a poll — the
+    #: provider caches reads for ten minutes and says plainly not to poll them,
+    #: so the top tier subscribes rather than tightening the interval.
+    comment_capture_interval_minutes = models.IntegerField(default=1440)
+    reaction_detail = models.CharField(
+        max_length=16, choices=ReactionDetail.choices, default=ReactionDetail.TOTAL
+    )
 
     features = models.JSONField(default=dict, blank=True)
 
@@ -154,6 +192,13 @@ QUOTA_FIELDS = frozenset(
         "scheduling_horizon_days",
         "max_workspace_members",
         "max_products",
+        "trial_post_quota",
+        "max_workspaces",
+        "included_views",
+        "max_labels",
+        "max_campaigns",
+        "version_history_days",
+        "comment_capture_interval_minutes",
     }
 )
 
@@ -423,3 +468,86 @@ class StripeEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.event_type} ({self.event_id})"
+
+
+class AddonStatus(models.TextChoices):
+    TRIALING = "TRIALING", "Trialing"
+    ACTIVE = "ACTIVE", "Active"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class OrganizationAddon(models.Model):
+    """An org-level add-on with its own 30-day trial (BUILD-PLAN Phase 0).
+
+    Separate from `Subscription` because the org carries **one** subscription
+    whose quantity is its workspace count; add-ons are line items on it, each
+    with an independent trial clock that `expire_trials` sweeps. Modelling them
+    as extra subscriptions would make the quantity arithmetic ambiguous.
+    """
+
+    organization = models.ForeignKey(
+        "workspaces.Organization", on_delete=models.CASCADE, related_name="addons"
+    )
+    addon_key = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16, choices=AddonStatus.choices, default=AddonStatus.TRIALING
+    )
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
+    stripe_subscription_item_id = models.CharField(max_length=64, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["organization", "addon_key"], name="unique_org_addon")
+        ]
+        ordering: ClassVar[list[str]] = ["addon_key"]
+
+    def __str__(self) -> str:
+        return f"{self.addon_key} @ {self.organization_id} ({self.status})"
+
+
+class FeatureFlag(models.Model):
+    """Rollout, not entitlement (BUILD-PLAN Part 3).
+
+    Plan features answer "did you pay for this"; a flag answers "has this
+    shipped to you yet". Both resolve through the one entitlement resolver, so
+    a phase can be reverted by flipping a row rather than deploying — and
+    **flag off means pre-phase behaviour, never an error**.
+
+    A null `organization` is the global default, which is what makes a flag
+    switchable for everyone without writing one row per customer.
+    """
+
+    organization = models.ForeignKey(
+        "workspaces.Organization",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="feature_flags",
+    )
+    key = models.CharField(max_length=64)
+    enabled = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["key"],
+                condition=models.Q(organization__isnull=True),
+                name="unique_global_feature_flag",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "key"],
+                condition=models.Q(organization__isnull=False),
+                name="unique_org_feature_flag",
+            ),
+        ]
+        ordering: ClassVar[list[str]] = ["key"]
+
+    def __str__(self) -> str:
+        scope = self.organization_id or "global"
+        return f"{self.key}={self.enabled} ({scope})"

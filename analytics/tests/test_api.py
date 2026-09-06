@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
-from analytics.models import Comment, RepurposeCandidate, Sentiment
+from analytics.models import AudienceComment, RepurposeCandidate, Sentiment
 from analytics.tests.conftest import capture, make_target
 
 pytestmark = pytest.mark.django_db
@@ -85,7 +85,7 @@ def test_sentiment_aggregates_across_the_workspace(auth_client: Any, published_t
     for index, (sentiment, score) in enumerate(
         [(Sentiment.POSITIVE, 1.0), (Sentiment.POSITIVE, 1.0), (Sentiment.NEGATIVE, -1.0)]
     ):
-        Comment.objects.create(
+        AudienceComment.objects.create(
             post_target=published_target,
             external_id=f"c-{index}",
             body="x",
@@ -107,13 +107,13 @@ def test_sentiment_aggregates_across_the_workspace(auth_client: Any, published_t
 
 def test_comments_are_listed_newest_first(auth_client: Any, published_target: Any) -> None:
     now = timezone.now()
-    Comment.objects.create(
+    AudienceComment.objects.create(
         post_target=published_target,
         external_id="old",
         body="older",
         posted_at=now - dt.timedelta(days=1),
     )
-    Comment.objects.create(
+    AudienceComment.objects.create(
         post_target=published_target, external_id="new", body="newer", posted_at=now
     )
 

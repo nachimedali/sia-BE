@@ -28,7 +28,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from analytics.models import Comment, RepurposeCandidate
+from analytics.models import AudienceComment, RepurposeCandidate
 from analytics.serializers import (
     BestTimeSerializer,
     CommentSerializer,
@@ -128,9 +128,9 @@ class AnalyticsCommentsView(_AnalyticsView):
         summary="The most recent comments, newest first",
     )
     def get(self, request: Request) -> Response:
-        comments = Comment.objects.filter(post_target__post__workspace=self.workspace(request))[
-            :COMMENT_FEED_LIMIT
-        ]
+        comments = AudienceComment.objects.measured().filter(
+            post_target__post__workspace=self.workspace(request)
+        )[:COMMENT_FEED_LIMIT]
         return Response(CommentSerializer(comments, many=True).data)
 
 

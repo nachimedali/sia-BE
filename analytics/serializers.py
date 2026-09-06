@@ -16,7 +16,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from analytics.models import Comment, RepurposeCandidate
+from analytics.models import AudienceComment, RepurposeCandidate
 
 
 class TargetPerformanceSerializer(serializers.Serializer[Any]):
@@ -70,9 +70,9 @@ class SentimentSummarySerializer(serializers.Serializer[Any]):
     score = serializers.FloatField()
 
 
-class CommentSerializer(serializers.ModelSerializer[Comment]):
+class CommentSerializer(serializers.ModelSerializer[AudienceComment]):
     class Meta:
-        model = Comment
+        model = AudienceComment
         fields = (
             "id",
             "post_target",

@@ -106,9 +106,10 @@ def test_grounding_never_reaches_a_provider(
     _population(paid_workspace, user, social_account)
 
     def explode(**_kwargs: Any) -> Any:
-        raise AssertionError("prompt assembly must not reach a platform adapter")
+        raise AssertionError("prompt assembly must not reach a provider")
 
-    monkeypatch.setattr("channels.adapters.fake.FakePlatformAdapter.fetch_metrics", explode)
+    monkeypatch.setattr("analytics.providers.fake.FakeMetricsProvider.fetch", explode)
+    monkeypatch.setattr("channels.adapters.fake.FakePlatformAdapter.publish", explode)
 
     prompt = assemble_text_prompt(idea="launch day", workspace=paid_workspace)
 
