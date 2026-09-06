@@ -448,6 +448,44 @@ class VideoLedger(LedgerEntry):
         return f"{self.workspace_id}: {self.delta:+d} video units ({self.reason})"
 
 
+class ReplyReason(models.TextChoices):
+    OUTBOUND = "OUTBOUND", "Reply sent to an audience comment"
+    MONTHLY_RESET = "MONTHLY_RESET", "Monthly allowance reset"
+    MANUAL_ADJUST = "MANUAL_ADJUST", "Manual adjustment"
+
+
+class ReplyLedger(LedgerEntry):
+    """Outbound audience replies, counted against a **pooled org allowance**
+    (L-4a, P0-36).
+
+    Org-scoped from birth rather than workspace-scoped-then-migrated: it is a
+    new table, so it can start where P0-53 is taking the other two rather than
+    needing the same expand/backfill/contract dance later. `workspace` is
+    retained for attribution — who spent it — but the *balance* is the org's,
+    which is what stops one workspace spending another's headroom.
+
+    Append-only like every other ledger. The free tranche is 10,000 outbound
+    messages a month with metered overage beyond it; both numbers live on the
+    plan row, never here (Part 7 rule 10).
+    """
+
+    organization = models.ForeignKey(
+        "workspaces.Organization",
+        on_delete=models.CASCADE,
+        related_name="reply_ledger_entries",
+        null=True,
+        blank=True,
+    )
+    reason = models.CharField(max_length=16, choices=ReplyReason.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reply_ledger_entries",
+    )
+
+
 class StripeEvent(models.Model):
     """Every webhook Stripe has delivered, by its own id.
 

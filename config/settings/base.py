@@ -390,6 +390,12 @@ ZERNIO_TIMEOUT_SECONDS = env.int("ZERNIO_TIMEOUT_SECONDS", default=30)
 
 USE_FAKE_PLATFORM_ADAPTER = env.bool("USE_FAKE_PLATFORM_ADAPTER", default=not ZERNIO_API_KEY)
 
+# HMAC secret for the `comment.received` webhook (P0-35). Empty means the
+# endpoint refuses every delivery, which is the right default: an unconfigured
+# webhook that accepted anything would be an open write path into the audience
+# tables.
+ZERNIO_WEBHOOK_SECRET = env("ZERNIO_WEBHOOK_SECRET", default="")
+
 # The publishing provider fetches media by URL, so a storage-relative path is
 # unusable to it. S3/MinIO already yields absolute URLs; local disk does not.
 PUBLIC_MEDIA_BASE_URL = env("PUBLIC_MEDIA_BASE_URL", default=SITE_URL)
