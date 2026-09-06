@@ -12,7 +12,7 @@ to what publish sends").
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -216,12 +216,60 @@ def render_payloads(
 
 
 def render_post(post: Post, platforms: Iterable[str]) -> dict[str, AdaptedPayload]:
-    """The one call site `/posts/preview/` and the Phase 9 publish task share.
+    """The one call site `/posts/preview/` and the publish task share.
 
     Takes a persisted `Post` rather than loose fields so both callers resolve
     `master_body` and ordered media the same way — a caller that assembled its
     own media list could drift from what `Post.ordered_media()` would return.
+
+    **Per-platform overrides are resolved here and nowhere else** (P1-04).
+    That is the whole of the rule: the moment a target can carry its own body
+    and its own media, there are two plausible places to apply them — the
+    preview view and the publish task — and two places is one too many. A
+    caller passes a platform and receives what will be sent; it is never handed
+    the parts and asked to assemble them.
     """
-    return render_payloads(
-        master_body=post.master_body, media_assets=list(post.ordered_media()), platforms=platforms
-    )
+    assets = list(post.ordered_media())
+    by_id = {asset.id: asset for asset in assets}
+    # One query for the whole render rather than one per platform: preview asks
+    # for every platform at once, and a six-platform post should not cost six
+    # round-trips to answer a question about itself.
+    overrides = {target.platform: target for target in post.targets.all()}
+
+    payloads: dict[str, AdaptedPayload] = {}
+    for platform in platforms:
+        target = overrides.get(platform)
+        payloads[platform] = adapt_for_platform(
+            master_body=_resolved_body(post, target),
+            media_assets=_resolved_media(assets, by_id, target),
+            platform=platform,
+        )
+    return payloads
+
+
+def _resolved_body(post: Post, target: Any) -> str:
+    """The master body, or this target's override.
+
+    **`None` and `""` are different.** Null means inherit; an empty string is a
+    deliberately empty caption, which is legitimate on a video-first platform.
+    Collapsing them with `or` — the obvious one-liner — makes an empty caption
+    unrepresentable and makes clearing an override impossible.
+    """
+    if target is None or target.body_override is None:
+        return str(post.master_body)
+    return str(target.body_override)
+
+
+def _resolved_media(
+    assets: Sequence[MediaLike], by_id: Mapping[int, MediaLike], target: Any
+) -> list[MediaLike]:
+    """The post's ordered media, or this target's own selection.
+
+    The override is a list of ids rather than of assets, so it cannot smuggle
+    in media from another workspace: an id that is not already on the post
+    simply is not found. Order is the override's, because choosing a different
+    order is most of why anyone overrides media at all.
+    """
+    if target is None or target.media_override is None:
+        return list(assets)
+    return [by_id[asset_id] for asset_id in target.media_override if asset_id in by_id]

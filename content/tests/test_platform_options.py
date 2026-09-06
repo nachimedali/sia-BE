@@ -1,0 +1,133 @@
+"""`platform_options`, validated against a declaration rather than a branch
+(P1-02, P1-05).
+
+**This file is Phase 4's insurance policy.** P4-06 is a hard stop: if adding
+X, Pinterest and Google Business Profile needs new code paths rather than new
+rows in `rules.py`, the abstraction is wrong and adding conditionals hides it.
+The way to find that out cheaply is to check now that the validator branches on
+*declared kind* and never on platform name.
+"""
+
+from __future__ import annotations
+
+import pathlib
+
+import pytest
+
+from content.models import Platform
+from content.services import options
+from content.services.rules import PLATFORM_RULES, options_for
+
+
+# -----------------------------------------------------------------------------
+# The declaration is data
+# -----------------------------------------------------------------------------
+def test_the_validator_never_branches_on_platform_name() -> None:
+    """The property Phase 4's cost depends on. A platform name appearing in
+    this module is the first conditional, and the first is the expensive one —
+    every later platform then arrives asking for its own."""
+    source = pathlib.Path(options.__file__ or "").read_text()
+
+    for platform in Platform.values:
+        assert f'"{platform}"' not in source, (
+            f"{platform} is named in the validator. Options are declared in rules.py; "
+            "branching here is the P4-06 hard stop arriving early."
+        )
+
+
+def test_every_declared_option_has_a_checkable_kind() -> None:
+    """A typo in a `kind` would otherwise surface as a validation that quietly
+    accepts anything."""
+    for platform, rule in PLATFORM_RULES.items():
+        for option in rule.options:
+            assert option.kind in options._CHECKS, f"{platform}.{option.key}: {option.kind}"
+
+
+def test_a_choice_option_declares_its_choices() -> None:
+    for rule in PLATFORM_RULES.values():
+        for option in rule.options:
+            if option.kind == "choice":
+                assert option.choices, f"{option.key} is a choice with nothing to choose"
+
+
+def test_a_platform_with_nothing_to_configure_declares_nothing() -> None:
+    """Empty is the honest default — a platform should not inherit a union of
+    every other platform's options."""
+    assert options_for(Platform.THREADS) == {}
+
+
+# -----------------------------------------------------------------------------
+# Validation
+# -----------------------------------------------------------------------------
+def test_a_valid_option_set_passes_and_is_returned_cleaned() -> None:
+    cleaned = options.validate(Platform.LINKEDIN, {"first_comment": "Thanks for reading"})
+
+    assert cleaned["first_comment"] == "Thanks for reading"
+    # Declared defaults are filled in, so every consumer downstream reads one
+    # shape and none has to remember what the default was.
+    assert cleaned["visibility"] == "PUBLIC"
+
+
+def test_an_unknown_key_is_rejected_rather_than_ignored() -> None:
+    """An ignored key is a composer field that silently does nothing — which
+    the user experiences as the feature being broken and the developer
+    experiences as nothing at all."""
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.LINKEDIN, {"not_a_real_option": 1})
+
+    assert "not_a_real_option" in caught.value.errors
+
+
+def test_a_required_option_is_enforced() -> None:
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.YOUTUBE, {})
+
+    assert "title" in caught.value.errors
+
+
+def test_a_choice_outside_the_declared_set_is_rejected() -> None:
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.LINKEDIN, {"visibility": "SECRET"})
+
+    assert "visibility" in caught.value.errors
+
+
+def test_a_boolean_is_not_accepted_for_an_integer() -> None:
+    """`bool` is a subclass of `int` in Python, so an unguarded isinstance
+    would store `True` as a minimum age of 1."""
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.FACEBOOK, {"targeting_min_age": True})
+
+    assert "targeting_min_age" in caught.value.errors
+
+
+def test_a_too_long_string_is_rejected() -> None:
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.YOUTUBE, {"title": "t" * 101})
+
+    assert "title" in caught.value.errors
+
+
+def test_a_list_of_non_strings_is_rejected() -> None:
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.FACEBOOK, {"targeting_countries": ["FR", 33]})
+
+    assert "targeting_countries" in caught.value.errors
+
+
+def test_every_error_is_reported_at_once() -> None:
+    """One message for a form of eight inputs makes the user fix them one
+    round-trip at a time."""
+    with pytest.raises(options.OptionError) as caught:
+        options.validate(Platform.YOUTUBE, {"privacy": "nope", "nonsense": 1})
+
+    assert set(caught.value.errors) == {"privacy", "nonsense", "title"}
+
+
+def test_defaults_are_not_invented_for_options_with_none() -> None:
+    """An option with no declared default stays absent rather than becoming
+    `None` — a key present with a null value reads as "explicitly unset", which
+    is a different statement."""
+    cleaned = options.validate(Platform.YOUTUBE, {"title": "A video"})
+
+    assert "thumbnail_media_id" not in cleaned
