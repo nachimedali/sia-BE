@@ -34,6 +34,7 @@ from billing.models import (
     UNLIMITED,
     AddonStatus,
     OrganizationAddon,
+    PackKind,
     Plan,
     Subscription,
 )
@@ -302,6 +303,21 @@ class Entitlements:
                 suggested_plan=self.plan.code,
             )
 
+    def _purchase_options(self, kind: str) -> list[dict[str, Any]]:
+        """What is on sale that would clear this block, in this org's currency.
+
+        Never allowed to be the reason a 402 fails: a catalogue read that
+        raised here would turn "you need more credits" into a 500, which is a
+        strictly worse answer to the same question.
+        """
+        from billing.services.pricing import purchase_options
+
+        try:
+            return purchase_options(self.workspace, kind=kind)
+        except Exception:
+            logger.warning("could not build purchase options", exc_info=True)
+            return []
+
     def require_credits(self, amount: int) -> None:
         """Preflight only. The authoritative check is inside the debit's
         transaction — this one can be stale by the time the spend happens, and
@@ -314,6 +330,7 @@ class Entitlements:
                 f"This action needs {amount} credits; {available} remaining.",
                 detail={"required": amount, "available": available},
                 suggested_plan=self._suggested_plan(),
+                purchase=self._purchase_options(PackKind.CREDITS),
             )
 
     def require_video_units(self, amount: int) -> None:
@@ -325,6 +342,7 @@ class Entitlements:
                 f"This needs {amount} video unit(s); {available} remaining.",
                 detail={"required": amount, "available": available},
                 suggested_plan=self._suggested_plan(),
+                purchase=self._purchase_options(PackKind.VIDEO),
             )
 
     def require_scheduling_horizon(self, scheduled_at: dt.datetime) -> None:

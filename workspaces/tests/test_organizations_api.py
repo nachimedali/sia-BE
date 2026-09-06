@@ -28,30 +28,52 @@ from workspaces.services import invitations as invitation_service
 pytestmark = pytest.mark.django_db
 
 
-def _subscribe(workspace: Any, organization: Any) -> Subscription:
+def _subscribe(workspace: Any, organization: Any, *, plan: Any = None) -> Subscription:
+    """An active subscription with both lines: the base, and the overage line
+    the extra-workspace quantity moves on (P0-17)."""
     return Subscription.objects.create(
         workspace=workspace,
         organization=organization,
-        plan=workspace.plan,
+        plan=plan or workspace.plan,
         status=SubscriptionStatus.ACTIVE,
         stripe_subscription_id="sub_test_1",
         stripe_subscription_item_id="si_test_1",
+        stripe_overage_item_id="si_overage_1",
     )
+
+
+def _include(organization: Any, plan: Any, workspaces: int) -> None:
+    """Puts the organization on `plan` with a known included allowance.
+
+    Set explicitly rather than relying on the seeded number, so a commercial
+    edit to Pro cannot silently change what these tests are asserting.
+    """
+    plan.max_workspaces = workspaces
+    plan.save(update_fields=["max_workspaces"])
+    organization.plan = plan
+    organization.save(update_fields=["plan"])
 
 
 # -----------------------------------------------------------------------------
 # P0-G2 — the ship gate
 # -----------------------------------------------------------------------------
 def test_second_workspace_created_invited_and_billed_for_two(
-    auth_client: Any, user: Any, workspace: Any, organization: Any, outbox: list[Any]
+    auth_client: Any, user: Any, workspace: Any, organization: Any, plans: Any, outbox: list[Any]
 ) -> None:
     """The gate, walked end to end.
 
     Every step is a place the whole thing could quietly half-work: a workspace
     with no organization, an invite to an address with no account, a quantity
     that never moved.
+
+    "Billed for two" is **tiered**, not per-seat (P0-17: "tiered above
+    `Plan.max_workspaces`"). On a plan including one workspace, the second is
+    one unit of overage — the base line stays at the subscription itself and
+    never moves, because charging it per workspace would bill for the ones the
+    plan already includes.
     """
-    _subscribe(workspace, organization)
+    _include(organization, plans["pro"], workspaces=1)
+    _subscribe(workspace, organization, plan=plans["pro"])
 
     created = auth_client.post(reverse("workspaces"), {"name": "Second Brand"}, format="json")
     assert created.status_code == 201
@@ -60,7 +82,7 @@ def test_second_workspace_created_invited_and_billed_for_two(
     assert second.organization == organization
     # The quantity landed, so the workspace is writable rather than parked.
     assert second.status == WorkspaceStatus.ACTIVE
-    assert _fake_gateway.quantity_updates[-1] == ("si_test_1", 2)
+    assert _fake_gateway.quantity_updates[-1] == ("si_overage_1", 1)
 
     invited = auth_client.post(
         reverse("workspace-invite", args=[second.pk]),
@@ -102,15 +124,102 @@ def _raw_token_for(email: str) -> str:
 
 
 # -----------------------------------------------------------------------------
+# P0-17 — the plan covers its allowance; only the excess is billed
+# -----------------------------------------------------------------------------
+def test_a_workspace_inside_the_allowance_is_not_charged(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """The bug this fixes: billing the total count charged 3 x $37 for what
+    Pro's own pricing page calls $37."""
+    _include(organization, plans["pro"], workspaces=3)
+    _subscribe(workspace, organization, plan=plans["pro"])
+
+    created = auth_client.post(reverse("workspaces"), {"name": "Second Brand"}, format="json")
+
+    assert created.status_code == 201
+    assert Workspace.objects.get(name="Second Brand").status == WorkspaceStatus.ACTIVE
+    # Nothing to charge, so nothing was asked of the gateway at all.
+    assert _fake_gateway.quantity_updates == []
+
+
+def test_only_the_excess_is_billed(
+    user: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    _include(organization, plans["pro"], workspaces=3)
+    for name in ("Second", "Third", "Fourth", "Fifth"):
+        Workspace.objects.create(
+            organization=organization,
+            name=name,
+            slug=Workspace.unique_slug(name),
+            owner=user,
+            plan=workspace.plan,
+        )
+
+    # Five workspaces, three included.
+    assert subscriptions.live_workspace_count(organization) == 5
+    assert subscriptions.included_workspaces(organization) == 3
+    assert subscriptions.billable_overage(organization) == 2
+
+
+def test_an_unlimited_plan_never_bills_an_overage(
+    user: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    _include(organization, plans["advanced"], workspaces=-1)
+    for name in ("Second", "Third"):
+        Workspace.objects.create(
+            organization=organization,
+            name=name,
+            slug=Workspace.unique_slug(name),
+            owner=user,
+            plan=workspace.plan,
+        )
+
+    assert subscriptions.billable_overage(organization) == 0
+
+
+def test_a_parked_workspace_stops_being_billed(
+    user: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """`OVER_LIMIT` is read-only after a downgrade, and read-only must not keep
+    charging."""
+    _include(organization, plans["pro"], workspaces=1)
+    Workspace.objects.create(
+        organization=organization,
+        name="Second",
+        slug=Workspace.unique_slug("Second"),
+        owner=user,
+        plan=workspace.plan,
+        status=WorkspaceStatus.OVER_LIMIT,
+    )
+
+    assert subscriptions.billable_overage(organization) == 0
+
+
+def test_an_overage_with_no_line_to_charge_it_on_parks_rather_than_refuses(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """A configuration error, not a customer error (P0-18)."""
+    _include(organization, plans["pro"], workspaces=1)
+    subscription = _subscribe(workspace, organization, plan=plans["pro"])
+    Subscription.objects.filter(pk=subscription.pk).update(stripe_overage_item_id="")
+
+    created = auth_client.post(reverse("workspaces"), {"name": "Second Brand"}, format="json")
+
+    assert created.status_code == 201
+    assert Workspace.objects.get(name="Second Brand").status == WorkspaceStatus.PENDING_BILLING
+
+
+# -----------------------------------------------------------------------------
 # P0-18 — a failed quantity update parks, never refuses
 # -----------------------------------------------------------------------------
 def test_a_refused_quantity_update_leaves_the_workspace_pending_not_absent(
-    auth_client: Any, workspace: Any, organization: Any
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
 ) -> None:
     """The webhook is the source of truth for what was granted. A workspace the
     customer asked for and cannot see is worse than one they can see and cannot
     yet write to."""
-    _subscribe(workspace, organization)
+    _include(organization, plans["pro"], workspaces=1)
+    _subscribe(workspace, organization, plan=plans["pro"])
     _fake_gateway.fail_quantity_update = True
 
     response = auth_client.post(reverse("workspaces"), {"name": "Third Brand"}, format="json")

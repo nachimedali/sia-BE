@@ -161,3 +161,41 @@ def _fallback_currency(code: str) -> Currency:
     if created:
         logger.warning("created a Currency row on demand", extra={"code": currency.code})
     return currency
+
+
+# -----------------------------------------------------------------------------
+# What is on sale right now (buy on the fly)
+# -----------------------------------------------------------------------------
+def purchase_options(workspace: Any, *, kind: str) -> list[dict[str, Any]]:
+    """The packs that would unblock this request, priced for this customer.
+
+    Attached to the 402 at the moment of the block so a stalled generation
+    becomes a purchase instead of a dead end. Running out of credits does not
+    need a different plan — it needs ten dollars — and routing that through a
+    pricing page turns a thirty-second purchase into an abandoned session.
+
+    Returns `[]` rather than raising when nothing is on sale: an exhausted
+    allowance on a plan with no matching pack is a real state, and the surface
+    should then offer the upgrade path alone rather than an empty buy button.
+    """
+    from billing.models import Pack
+
+    organization = getattr(workspace, "organization", None)
+    offers: list[dict[str, Any]] = []
+    for pack in Pack.objects.filter(kind=kind, is_public=True).order_by("sort_order", "id"):
+        resolved = pack_price(pack, organization=organization)
+        offers.append(
+            {
+                "code": pack.code,
+                "display_name": pack.display_name,
+                "units": pack.units,
+                "amount_minor": resolved.amount_minor,
+                "currency": resolved.currency.code,
+                # Rendered here for the same reason plan prices are: the
+                # symbol, its position and the decimal count are per-currency
+                # facts on the row, and duplicating that formatting in the
+                # client puts ¥37.00 on screen the day Japan opens.
+                "display": resolved.display,
+            }
+        )
+    return offers
