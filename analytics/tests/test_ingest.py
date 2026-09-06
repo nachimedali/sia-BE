@@ -13,10 +13,10 @@ import pytest
 import time_machine
 from django.utils import timezone
 
-from analytics.models import AccountSnapshot, Comment, PostMetric, Sentiment
-from analytics.services import ingest
+from analytics.models import AccountSnapshot, AudienceComment, PostMetric, Sentiment
+from analytics.providers.base import CommentSnapshot, MetricsError
+from analytics.services import ingest, normalise
 from analytics.tests.conftest import make_target
-from channels.adapters.base import CommentSnapshot, MetricSnapshot
 from common.records import AppendOnlyError
 
 pytestmark = pytest.mark.django_db
@@ -28,7 +28,7 @@ PRO_HORIZON = 90
 # test_metrics_polled_on_schedule
 # -----------------------------------------------------------------------------
 def test_metrics_polled_on_schedule(
-    paid_workspace: Any, user: Any, social_account: Any, platform_adapter: Any
+    paid_workspace: Any, user: Any, social_account: Any, metrics_provider: Any
 ) -> None:
     """The full ladder — T+1h, T+6h, T+24h, T+72h, T+7d, then weekly — driven
     with time-machine rather than sleeps (implementation.md §5)."""
@@ -46,7 +46,7 @@ def test_metrics_polled_on_schedule(
 
 
 def test_a_rung_is_taken_once_however_often_the_scan_runs(
-    paid_workspace: Any, user: Any, social_account: Any, platform_adapter: Any
+    paid_workspace: Any, user: Any, social_account: Any, metrics_provider: Any
 ) -> None:
     """Beat ticks hourly but the ladder is sparse after the first week — the
     scan has to be a no-op between rungs, not a capture per tick."""
@@ -63,7 +63,7 @@ def test_a_rung_is_taken_once_however_often_the_scan_runs(
 
 
 def test_a_missed_window_backfills_the_oldest_rung_first(
-    paid_workspace: Any, user: Any, social_account: Any, platform_adapter: Any
+    paid_workspace: Any, user: Any, social_account: Any, metrics_provider: Any
 ) -> None:
     """A worker down for a day must not skip to the newest rung: the decay
     curve the evergreen classification reads would acquire a hole."""
@@ -97,38 +97,45 @@ def test_engagement_rate_falls_back_to_followers_without_impressions() -> None:
     """§8.9: "÷ impressions (or ÷ followers where impressions are
     unavailable)". LinkedIn personal accounts report no impressions (V1), so
     this is the normal case there, not an edge case."""
-    snapshot = MetricSnapshot(impressions=0, likes=10, comments=2, shares=1, saves=1)
+    values = {"impressions": None, "likes": 10, "comments": 2, "shares": 1, "saves": 1}
 
-    rate = ingest.engagement_rate(snapshot, followers=1000)
+    rate = normalise.engagement_rate(values, followers=1000)
 
     # (10*1 + 2*3 + 1*5 + 1*6) / 1000
     assert rate == pytest.approx(0.027)
 
 
-def test_engagement_rate_is_zero_when_nothing_can_be_divided_by() -> None:
-    """An honest "we do not know" rather than a number that would be ranked
-    against posts where we do."""
-    snapshot = MetricSnapshot(likes=10)
+def test_engagement_rate_is_null_when_nothing_can_be_divided_by() -> None:
+    """`None`, not `0.0` (P0-38). A post we cannot measure and a post that
+    earned nothing are different facts, and `0.0` files them together in every
+    percentile that ranks them side by side."""
+    assert normalise.engagement_rate({"likes": 10}, followers=None) is None
+    assert normalise.engagement_rate({"likes": 10}, followers=0) is None
 
-    assert ingest.engagement_rate(snapshot, followers=0) == 0.0
+
+def test_a_measured_zero_is_still_a_zero() -> None:
+    """The other half of the rule. Null is for absence; a platform that
+    reported zero clicks measured zero clicks, and flattening that to null
+    would lose a real observation."""
+    values = {"impressions": 100, "likes": 0, "comments": 0, "shares": 0, "saves": 0}
+
+    assert normalise.engagement_rate(values, followers=None) == 0.0
 
 
 def test_a_provider_failure_leaves_the_rung_for_the_next_tick(
-    published_target: Any, platform_adapter: Any, monkeypatch: Any
+    published_target: Any, metrics_provider: Any, monkeypatch: Any
 ) -> None:
-    from channels.adapters.base import PlatformError
-
     def explode(**_kwargs: Any) -> Any:
-        raise PlatformError("provider down", retryable=True)
+        raise MetricsError("provider down", retryable=True)
 
-    monkeypatch.setattr(platform_adapter, "fetch_metrics", explode)
+    monkeypatch.setattr(metrics_provider, "fetch", explode)
 
     assert ingest.capture_due() == 0
     assert not PostMetric.objects.exists()
 
 
 def test_a_target_with_no_provider_id_is_skipped(
-    paid_workspace: Any, user: Any, social_account: Any, platform_adapter: Any
+    paid_workspace: Any, user: Any, social_account: Any, metrics_provider: Any
 ) -> None:
     """A reminder-delivered post has a target row but never went through a
     provider, so there is nothing to poll."""
@@ -143,7 +150,7 @@ def test_a_target_with_no_provider_id_is_skipped(
 # test_metric_rows_immutable_and_unique_per_capture
 # -----------------------------------------------------------------------------
 def test_metric_rows_immutable_and_unique_per_capture(
-    published_target: Any, platform_adapter: Any
+    published_target: Any, metrics_provider: Any
 ) -> None:
     rung = timezone.now().replace(microsecond=0)
     metric = ingest.capture_target(published_target, rung)
@@ -162,7 +169,7 @@ def test_metric_rows_immutable_and_unique_per_capture(
 
 
 def test_comments_are_immutable_too(published_target: Any) -> None:
-    comment = Comment.objects.create(
+    comment = AudienceComment.objects.create(
         post_target=published_target,
         external_id="c-1",
         body="love this",
@@ -177,9 +184,9 @@ def test_comments_are_immutable_too(published_target: Any) -> None:
 # -----------------------------------------------------------------------------
 # Comments and sentiment
 # -----------------------------------------------------------------------------
-def test_comments_are_ingested_and_classified(published_target: Any, platform_adapter: Any) -> None:
+def test_comments_are_ingested_and_classified(published_target: Any, metrics_provider: Any) -> None:
     now = timezone.now()
-    platform_adapter.comments_for[published_target.provider_post_id] = [
+    metrics_provider.comments_for[published_target.provider_post_id] = [
         CommentSnapshot(external_id="c-1", body="love this", author="@a", posted_at=now),
         CommentSnapshot(external_id="c-2", body="terrible", author="@b", posted_at=now),
         CommentSnapshot(external_id="c-3", body="when does it ship", author="@c", posted_at=now),
@@ -187,27 +194,27 @@ def test_comments_are_ingested_and_classified(published_target: Any, platform_ad
 
     assert ingest.capture_comments(published_target) == 3
 
-    by_id = {c.external_id: c for c in Comment.objects.all()}
+    by_id = {c.external_id: c for c in AudienceComment.objects.all()}
     assert by_id["c-1"].sentiment == Sentiment.POSITIVE
     assert by_id["c-2"].sentiment == Sentiment.NEGATIVE
     assert by_id["c-3"].sentiment == Sentiment.NEUTRAL
 
 
 def test_comment_ingestion_is_idempotent_on_external_id(
-    published_target: Any, platform_adapter: Any
+    published_target: Any, metrics_provider: Any
 ) -> None:
     now = timezone.now()
-    platform_adapter.comments_for[published_target.provider_post_id] = [
+    metrics_provider.comments_for[published_target.provider_post_id] = [
         CommentSnapshot(external_id="c-1", body="love this", posted_at=now)
     ]
 
     assert ingest.capture_comments(published_target) == 1
     assert ingest.capture_comments(published_target) == 0
-    assert Comment.objects.count() == 1
+    assert AudienceComment.objects.count() == 1
 
 
 def test_sentiment_short_circuits_the_provider_for_obvious_comments(
-    published_target: Any, platform_adapter: Any
+    published_target: Any, metrics_provider: Any
 ) -> None:
     """Most comments are three words long; a model call to classify "love this"
     is waste. The lexicon handles those and only the rest reach the provider."""
@@ -215,7 +222,7 @@ def test_sentiment_short_circuits_the_provider_for_obvious_comments(
 
     _fake_text_provider.clear()
     now = timezone.now()
-    platform_adapter.comments_for[published_target.provider_post_id] = [
+    metrics_provider.comments_for[published_target.provider_post_id] = [
         CommentSnapshot(external_id=f"c-{i}", body="love this", posted_at=now) for i in range(5)
     ]
 
@@ -228,7 +235,7 @@ def test_sentiment_short_circuits_the_provider_for_obvious_comments(
 # Account snapshots
 # -----------------------------------------------------------------------------
 def test_account_snapshots_record_growth_and_refresh_the_cached_count(
-    social_account: Any, platform_adapter: Any
+    social_account: Any, metrics_provider: Any
 ) -> None:
     start = dt.datetime(2026, 6, 1, 9, 0, tzinfo=dt.UTC)
     with time_machine.travel(start, tick=False):
@@ -242,7 +249,7 @@ def test_account_snapshots_record_growth_and_refresh_the_cached_count(
 
 
 def test_a_second_snapshot_in_the_same_hour_is_not_a_second_row(
-    social_account: Any, platform_adapter: Any
+    social_account: Any, metrics_provider: Any
 ) -> None:
     with time_machine.travel(dt.datetime(2026, 6, 1, 9, 0, tzinfo=dt.UTC), tick=False):
         assert ingest.snapshot_accounts() == 1
@@ -252,17 +259,16 @@ def test_a_second_snapshot_in_the_same_hour_is_not_a_second_row(
 
 
 def test_a_comment_fetch_failure_does_not_lose_the_metric_capture(
-    published_target: Any, platform_adapter: Any, monkeypatch: Any
+    published_target: Any, metrics_provider: Any, monkeypatch: Any
 ) -> None:
     """Comments are the softer half of a capture: losing them costs an
     aggregate, while losing the metric costs a moment that cannot be
     re-measured."""
-    from channels.adapters.base import PlatformError
 
     def explode(**_kwargs: Any) -> Any:
-        raise PlatformError("comments unavailable")
+        raise MetricsError("comments unavailable")
 
-    monkeypatch.setattr(platform_adapter, "fetch_comments", explode)
+    monkeypatch.setattr(metrics_provider, "fetch_comments", explode)
 
     assert ingest.capture_comments(published_target) == 0
     assert ingest.capture_due() == 1
@@ -280,9 +286,8 @@ def test_a_target_with_no_provider_id_fetches_no_comments(
 
 
 def test_a_failing_account_snapshot_does_not_stop_the_others(
-    social_account: Any, platform_adapter: Any, monkeypatch: Any
+    social_account: Any, metrics_provider: Any, monkeypatch: Any
 ) -> None:
-    from channels.adapters.base import PlatformError
     from channels.models import SocialAccount
 
     healthy = SocialAccount.objects.create(
@@ -291,14 +296,14 @@ def test_a_failing_account_snapshot_does_not_stop_the_others(
         handle="@acme-th",
         provider_account_id="acct-threads-1",
     )
-    original = platform_adapter.fetch_account_stats
+    original = metrics_provider.fetch_account_stats
 
     def sometimes(**kwargs: Any) -> Any:
         if kwargs["provider_account_id"] == social_account.provider_account_id:
-            raise PlatformError("account unavailable")
+            raise MetricsError("account unavailable")
         return original(**kwargs)
 
-    monkeypatch.setattr(platform_adapter, "fetch_account_stats", sometimes)
+    monkeypatch.setattr(metrics_provider, "fetch_account_stats", sometimes)
 
     assert ingest.snapshot_accounts() == 1
     healthy.refresh_from_db()

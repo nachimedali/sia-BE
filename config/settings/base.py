@@ -289,6 +289,15 @@ CELERY_BEAT_SCHEDULE = {
         "task": "analytics.tasks.capture_due_metrics",
         "schedule": crontab(minute=5),
     },
+    # Every ten minutes, and it is the cheap path (P0-31): one call to
+    # `/v1/analytics/delta` returns every snapshot that moved across all
+    # accounts, where the hourly ladder above costs one call per due post. The
+    # ladder stays as the bootstrap and the repair path, because the feed is a
+    # rolling seven-day log and cannot replay history.
+    "analytics-follow-metrics-delta": {
+        "task": "analytics.tasks.follow_metrics_delta",
+        "schedule": crontab(minute="*/10"),
+    },
     # Daily: follower counts move slowly, and this is the denominator
     # `engagement_rate` falls back to where a platform reports no impressions.
     "analytics-snapshot-accounts": {

@@ -63,6 +63,25 @@ def platform_adapter() -> Any:
     return _fake_adapter
 
 
+@pytest.fixture(autouse=True)
+def _isolate_metrics_provider() -> Iterator[None]:
+    """Same reasoning as the publish adapter above, for the measurement port
+    (P0-27). Separate fixture because they are separate ports — a single reset
+    covering both would be the first crack in the separation P0-28 asserts."""
+    from analytics.providers.fake import fake_provider
+
+    fake_provider().reset()
+    yield
+    fake_provider().reset()
+
+
+@pytest.fixture
+def metrics_provider() -> Any:
+    from analytics.providers.fake import fake_provider
+
+    return fake_provider()
+
+
 @pytest.fixture
 def paid_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     """Auto-publish is a paid feature (D4), so every connect and publish test

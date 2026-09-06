@@ -17,6 +17,12 @@ def capture_due_metrics() -> int:
     return ingest.capture_due()
 
 
+@shared_task(name="analytics.tasks.follow_metrics_delta")
+def follow_metrics_delta() -> int:
+    """The cheap path (P0-31): one feed read for every account that moved."""
+    return ingest.follow_delta()
+
+
 @shared_task(name="analytics.tasks.snapshot_accounts")
 def snapshot_accounts() -> int:
     return ingest.snapshot_accounts()

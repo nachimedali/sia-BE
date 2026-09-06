@@ -27,7 +27,7 @@ from typing import Any
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
 
-from analytics.models import Comment, PostMetric, Sentiment
+from analytics.models import AudienceComment, PostMetric, Sentiment
 from common.ranking import percentiles
 from content.models import Post, PostSource, PostTarget, PostTargetState
 
@@ -103,7 +103,14 @@ def _captures_by_target(targets: list[PostTarget]) -> dict[int, list[_Capture]]:
     """
     grouped: dict[int, list[_Capture]] = defaultdict(list)
     rows = (
-        PostMetric.objects.filter(post_target__in=targets)
+        # `analysable()`, not `all()` (P0-33, P0-37). It drops `UNAVAILABLE`
+        # and `PENDING` rows — a platform that reports nothing would otherwise
+        # drag every percentile it appears in toward zero — and it drops
+        # fake-adapter rows, so no statistic here can be computed from
+        # fabricated numbers. Enforced by the queryset rather than by each
+        # caller remembering, which is the whole point.
+        PostMetric.objects.analysable()
+        .filter(post_target__in=targets, engagement_rate__isnull=False)
         .order_by("post_target_id", "captured_at")
         .values_list(*_CAPTURE_COLUMNS)
     )
@@ -305,14 +312,16 @@ def sentiment_summary(workspace_id: int, *, horizon_days: int) -> dict[str, Any]
     of history should not have its sentiment counted over all time.
     """
     since = timezone.now() - dt.timedelta(days=horizon_days)
-    totals = Comment.objects.filter(
-        post_target__post__workspace_id=workspace_id, posted_at__gte=since
-    ).aggregate(
-        total=Count("id"),
-        positive=Count("id", filter=Q(sentiment=Sentiment.POSITIVE)),
-        neutral=Count("id", filter=Q(sentiment=Sentiment.NEUTRAL)),
-        negative=Count("id", filter=Q(sentiment=Sentiment.NEGATIVE)),
-        score=Avg("sentiment_score"),
+    totals = (
+        AudienceComment.objects.measured()
+        .filter(post_target__post__workspace_id=workspace_id, posted_at__gte=since)
+        .aggregate(
+            total=Count("id"),
+            positive=Count("id", filter=Q(sentiment=Sentiment.POSITIVE)),
+            neutral=Count("id", filter=Q(sentiment=Sentiment.NEUTRAL)),
+            negative=Count("id", filter=Q(sentiment=Sentiment.NEGATIVE)),
+            score=Avg("sentiment_score"),
+        )
     )
     totals["score"] = round(totals["score"] or 0.0, 4)
     return totals

@@ -6,7 +6,8 @@
     "non-English item, and one spam item, so stage 2's language filter,",
     "dedup and spam heuristics all have something real to reject. The",
     "'unboxing' items in each kind share vocabulary on purpose — they are",
-    "what stage 4 is expected to cluster together."
+    "what stage 4 is expected to cluster together.",
+    "The absolute dates below are read for their SPACING ONLY: FakeTrendVendor anchors the newest item one day behind the current clock and preserves every gap from there, so the corpus stays inside stage 1's rolling window under any clock. Do not 'refresh' these dates — they never expire."
   ],
   "CREATIVE_CENTER": [
     {
@@ -18,7 +19,12 @@
       "author_followers": 48000,
       "media_url": "https://cdn.example.test/cc-1.mp4",
       "lang": "en",
-      "raw_metrics": { "likes": 41000, "comments": 820, "shares": 2600, "saves": 5100 }
+      "raw_metrics": {
+        "likes": 41000,
+        "comments": 820,
+        "shares": 2600,
+        "saves": 5100
+      }
     },
     {
       "external_id": "cc-2",
@@ -29,7 +35,12 @@
       "author_followers": 22000,
       "media_url": "https://cdn.example.test/cc-2.mp4",
       "lang": "en",
-      "raw_metrics": { "likes": 18000, "comments": 300, "shares": 900, "saves": 2200 }
+      "raw_metrics": {
+        "likes": 18000,
+        "comments": 300,
+        "shares": 900,
+        "saves": 2200
+      }
     },
     {
       "external_id": "cc-3",
@@ -40,7 +51,12 @@
       "author_followers": 400,
       "media_url": "https://cdn.example.test/cc-3.mp4",
       "lang": "en",
-      "raw_metrics": { "likes": 12, "comments": 0, "shares": 0, "saves": 1 }
+      "raw_metrics": {
+        "likes": 12,
+        "comments": 0,
+        "shares": 0,
+        "saves": 1
+      }
     },
     {
       "external_id": "cc-4",
@@ -51,7 +67,12 @@
       "author_followers": 91000,
       "media_url": "https://cdn.example.test/cc-4.jpg",
       "lang": "en",
-      "raw_metrics": { "likes": 30000, "comments": 410, "shares": 1200, "saves": 8800 }
+      "raw_metrics": {
+        "likes": 30000,
+        "comments": 410,
+        "shares": 1200,
+        "saves": 8800
+      }
     },
     {
       "external_id": "cc-5",
@@ -62,7 +83,12 @@
       "author_followers": 120,
       "media_url": "https://cdn.example.test/cc-5.jpg",
       "lang": "en",
-      "raw_metrics": { "likes": 4, "comments": 0, "shares": 0, "saves": 0 }
+      "raw_metrics": {
+        "likes": 4,
+        "comments": 0,
+        "shares": 0,
+        "saves": 0
+      }
     },
     {
       "external_id": "cc-6",
@@ -73,7 +99,12 @@
       "author_followers": 15000,
       "media_url": "https://cdn.example.test/cc-6.mp4",
       "lang": "fr",
-      "raw_metrics": { "likes": 6000, "comments": 90, "shares": 200, "saves": 700 }
+      "raw_metrics": {
+        "likes": 6000,
+        "comments": 90,
+        "shares": 200,
+        "saves": 700
+      }
     }
   ],
   "ADLIB": [
@@ -86,7 +117,12 @@
       "author_followers": 12000,
       "media_url": "https://cdn.example.test/ad-1.jpg",
       "lang": "en",
-      "raw_metrics": { "likes": 900, "comments": 40, "shares": 60, "saves": 220 }
+      "raw_metrics": {
+        "likes": 900,
+        "comments": 40,
+        "shares": 60,
+        "saves": 220
+      }
     },
     {
       "external_id": "ad-2",
@@ -97,7 +133,12 @@
       "author_followers": 9000,
       "media_url": "https://cdn.example.test/ad-2.jpg",
       "lang": "en",
-      "raw_metrics": { "likes": 640, "comments": 22, "shares": 31, "saves": 140 }
+      "raw_metrics": {
+        "likes": 640,
+        "comments": 22,
+        "shares": 31,
+        "saves": 140
+      }
     }
   ],
   "YOUTUBE": [
@@ -110,7 +151,10 @@
       "author_followers": 210000,
       "media_url": "https://www.youtube.com/watch?v=yt-1",
       "lang": "en",
-      "raw_metrics": { "likes": 15000, "comments": 900 }
+      "raw_metrics": {
+        "likes": 15000,
+        "comments": 900
+      }
     }
   ],
   "REDDIT": [
@@ -123,7 +167,10 @@
       "author_followers": 0,
       "media_url": "https://reddit.test/rd-1",
       "lang": "en",
-      "raw_metrics": { "likes": 2400, "comments": 310 }
+      "raw_metrics": {
+        "likes": 2400,
+        "comments": 310
+      }
     }
   ],
   "RSS": [

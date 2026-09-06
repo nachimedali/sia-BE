@@ -30,3 +30,15 @@ EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")
 
 SENTRY_DSN = env("SENTRY_DSN", default="")
+
+# --- fakes cannot run here (P0-37, Part 7 rule 17) ---------------------------
+#
+# `base.py` defaults `USE_FAKE_PLATFORM_ADAPTER` to "on when no API key is
+# configured", which is exactly right for a fresh checkout and exactly wrong
+# here: a production deploy that lost its key would silently start fabricating
+# metrics rather than failing. Pinned off, and the key is read without a
+# fallback so a missing one stops the boot instead.
+USE_FAKE_PLATFORM_ADAPTER = False
+USE_FAKE_AI_PROVIDERS = False
+USE_FAKE_TREND_VENDORS = False
+ZERNIO_API_KEY = env("ZERNIO_API_KEY")

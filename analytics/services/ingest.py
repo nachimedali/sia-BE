@@ -25,16 +25,23 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from collections import defaultdict
+from typing import Any
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from analytics.models import AccountSnapshot, Comment, PostMetric
+from analytics.models import (
+    AccountSnapshot,
+    AudienceComment,
+    Availability,
+    PostMetric,
+    ProviderCursor,
+)
+from analytics.providers import get_metrics_registry
+from analytics.providers.base import MetricsError, MetricsUnsupportedError, RawMetricPayload
+from analytics.services.normalise import normalise
 from analytics.services.sentiment import classify_comments
-from channels.adapters.base import MetricSnapshot, PlatformError
-from channels.adapters.zernio import get_platform_adapter
 from channels.models import SocialAccount, SocialAccountStatus
-from common.ranking import INTERACTION_WEIGHTS
 from content.models import PostTarget, PostTargetState
 
 logger = logging.getLogger(__name__)
@@ -55,6 +62,16 @@ RUNG_TOLERANCE = dt.timedelta(minutes=90)
 #: the rest of the deployment's life just to conclude it is owed nothing.
 MAX_HORIZON_DAYS = 730
 
+#: **The ladder stops here** (U-4, P0-40). The built ladder ran weekly to the
+#: plan horizon with no stop, so an Advanced workspace kept paying a provider
+#: call per post per week for two years to watch numbers that had not moved
+#: since month one. Thirty days covers the whole of the decay curve §8.9
+#: actually reads; beyond it a post is settled.
+#:
+#: A stop, not a shorter horizon: `analytics_history_days` still governs how
+#: long the *history* is readable. This governs how long we keep asking.
+CAPTURE_STOP_DAYS = 30
+
 
 def rungs(published_at: dt.datetime, horizon_days: int) -> list[dt.datetime]:
     """Every capture time this target is owed over its whole life.
@@ -63,7 +80,9 @@ def rungs(published_at: dt.datetime, horizon_days: int) -> list[dt.datetime]:
     lengthens it, a downgrade shortens it) and the ladder has to follow without
     a migration or a queue rewrite.
     """
-    end = published_at + dt.timedelta(days=horizon_days)
+    # Whichever comes first: the plan's horizon, or the point past which a
+    # post's numbers have stopped moving (P0-40).
+    end = published_at + dt.timedelta(days=min(horizon_days, CAPTURE_STOP_DAYS))
     schedule = [published_at + dt.timedelta(hours=hours) for hours in LADDER_HOURS]
 
     moment = schedule[-1] + WEEKLY_INTERVAL
@@ -102,18 +121,13 @@ def due_rung(
     return None
 
 
-def engagement_rate(snapshot: MetricSnapshot, *, followers: int) -> float:
-    """Weighted interactions ÷ impressions, or ÷ followers where the platform
-    reports no impressions (§8.9).
-
-    Zero when neither denominator is available — an honest "we do not know",
-    rather than a number that would be ranked against posts where we do.
-    """
-    weighted = sum(
-        weight * getattr(snapshot, field) for field, weight in INTERACTION_WEIGHTS.items()
-    )
-    denominator = snapshot.impressions or followers
-    return weighted / denominator if denominator else 0.0
+#: The `external_id` of the marker row that records "this platform exposes no
+#: comment endpoint" (P0-03). A sentinel row rather than a flag on `PostTarget`
+#: because `AudienceComment.availability` is where BUILD-PLAN puts the answer,
+#: and because it keeps "unavailable" and "empty" in the same place the reader
+#: is already looking. `AudienceComment.objects.measured()` filters it out, so
+#: no denominator can ever count it as a comment.
+UNAVAILABLE_MARKER = "__comments_unavailable__"
 
 
 def _taken_rungs(targets: list[PostTarget]) -> dict[int, set[dt.datetime]]:
@@ -131,23 +145,94 @@ def _taken_rungs(targets: list[PostTarget]) -> dict[int, set[dt.datetime]]:
 
 
 def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
-    """One rung, for one target. Returns `None` when the capture was already
-    taken — which is a race, not a failure."""
+    """One rung, for one target. Returns `None` when nothing was written —
+    which is a race, a deferral or a sync still in flight, never a failure
+    worth a zero row.
+
+    Three outcomes that used to be one:
+
+    * **measured** — a row with numbers, and nulls for whatever the provider
+      did not report;
+    * **unavailable** — a row with *no* numbers, recording that we asked and
+      this platform does not answer. Excluded from every denominator by
+      `PostMetric.objects.analysable()`;
+    * **pending** — nothing written at all. Zernio's `202` means its own sync
+      has not finished, so the rung stays unmet and the next tick retries it.
+      Writing a row now would make a permanent statement about a moment
+      nobody measured (P0-32).
+    """
     account = target.social_account
     if account is None or not target.provider_post_id:
         return None
 
+    registry = get_metrics_registry()
+    provider = registry.for_platform(target.platform)
+    if provider is None:
+        # Nobody covers this platform. That is an answer — unavailable — and
+        # A-19 says it is stored as one rather than as six zeros.
+        return _write(target, rung, _uncovered(target), provider=None, followers=None)
+
     try:
-        snapshot = get_platform_adapter().fetch_metrics(
-            platform=target.platform, provider_post_id=target.provider_post_id
-        )
-    except PlatformError:
-        # `metrics_q` is below publishing in priority and the last capture stays
-        # valid — a provider hiccup means this rung is retried on the next tick,
-        # not that the ladder breaks.
+        payload = provider.fetch(platform=target.platform, provider_post_id=target.provider_post_id)
+    except MetricsError:
+        # `metrics_q` is below publishing in priority and the last capture
+        # stays valid — a provider hiccup means this rung is retried on the
+        # next tick, not that the ladder breaks.
         logger.warning("metric capture failed", exc_info=True, extra={"target_id": target.pk})
         return None
 
+    if payload.is_pending:
+        logger.info("metric capture pending", extra={"target_id": target.pk})
+        return None
+
+    return _write(
+        target,
+        rung,
+        payload,
+        provider=provider,
+        followers=account.followers_cached or None,
+        reactions=_post_reactions(provider, target),
+    )
+
+
+def _post_reactions(provider: Any, target: PostTarget) -> dict[str, int] | None:
+    """The post's reaction breakdown, or `None` where the platform does not
+    give one. Zernio breaks reactions down for Facebook and LinkedIn
+    organisation pages only; everywhere else the honest answer is `None`, not
+    a dict of zeros per reaction type nobody reported."""
+    fetch = getattr(provider, "fetch_reactions", None)
+    if fetch is None:
+        return None
+    try:
+        breakdown: dict[str, int] | None = fetch(
+            platform=target.platform, provider_post_id=target.provider_post_id
+        )
+    except MetricsError:
+        return None
+    return breakdown
+
+
+def _uncovered(target: PostTarget) -> RawMetricPayload:
+    return RawMetricPayload(
+        provider_key="",
+        platform=target.platform,
+        provider_post_id=target.provider_post_id,
+        schema_version=0,
+        availability=Availability.UNAVAILABLE,
+        fetched_at=timezone.now(),
+    )
+
+
+def _write(
+    target: PostTarget,
+    rung: dt.datetime,
+    payload: RawMetricPayload,
+    *,
+    provider: Any,
+    followers: int | None,
+    reactions: dict[str, int] | None = None,
+) -> PostMetric | None:
+    normalised = normalise(payload, provider=provider, followers=followers, reactions=reactions)
     try:
         # The savepoint is load-bearing, not decoration: catching an
         # `IntegrityError` without one leaves the surrounding transaction
@@ -157,14 +242,7 @@ def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
             return PostMetric.objects.create(
                 post_target=target,
                 captured_at=rung,
-                impressions=snapshot.impressions,
-                likes=snapshot.likes,
-                comments=snapshot.comments,
-                shares=snapshot.shares,
-                clicks=snapshot.clicks,
-                saves=snapshot.saves,
-                engagement_rate=engagement_rate(snapshot, followers=account.followers_cached),
-                raw=snapshot.raw,
+                **normalised.as_model_fields(),
             )
     except IntegrityError:
         # Another worker took this rung between the due check and the insert.
@@ -173,22 +251,40 @@ def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
 
 
 def capture_comments(target: PostTarget) -> int:
-    """New comments on one target, classified and stored.
+    """New audience comments on one target, classified and stored.
 
     Watermarked on the newest comment already held, so a post with a thousand
     comments does not re-classify all of them on every capture — sentiment is a
     provider call per batch, and the stored classification never changes because
     the comment never changes.
+
+    **A platform with no comment endpoint writes an unavailability marker, not
+    nothing** (P0-03). TikTok is the case: silence there is our vendor's
+    coverage, not the audience's opinion, and a comment-rate that counted it as
+    zero would be measuring the wrong thing.
     """
     if not target.provider_post_id:
         return 0
 
-    newest = target.post_comments.order_by("-posted_at").values_list("posted_at", flat=True).first()
+    provider = get_metrics_registry().for_comments(target.platform)
+    if provider is None:
+        _mark_comments_unavailable(target)
+        return 0
+
+    newest = (
+        target.post_comments.measured()
+        .order_by("-posted_at")
+        .values_list("posted_at", flat=True)
+        .first()
+    )
     try:
-        fetched = get_platform_adapter().fetch_comments(
+        fetched = provider.fetch_comments(
             platform=target.platform, provider_post_id=target.provider_post_id, since=newest
         )
-    except PlatformError:
+    except MetricsUnsupportedError:
+        _mark_comments_unavailable(target)
+        return 0
+    except MetricsError:
         logger.warning("comment fetch failed", exc_info=True, extra={"target_id": target.pk})
         return 0
 
@@ -205,9 +301,9 @@ def capture_comments(target: PostTarget) -> int:
         return 0
 
     classified = classify_comments([snapshot.body for snapshot in fresh])
-    Comment.objects.bulk_create(
+    AudienceComment.objects.bulk_create(
         [
-            Comment(
+            AudienceComment(
                 post_target=target,
                 external_id=snapshot.external_id,
                 author=snapshot.author,
@@ -215,12 +311,28 @@ def capture_comments(target: PostTarget) -> int:
                 sentiment=verdict.sentiment,
                 sentiment_score=verdict.score,
                 posted_at=snapshot.posted_at or timezone.now(),
+                reactions=snapshot.reactions or {},
+                availability=Availability.MEASURED,
             )
             for snapshot, verdict in zip(fresh, classified, strict=True)
         ],
         ignore_conflicts=True,
     )
     return len(fresh)
+
+
+def _mark_comments_unavailable(target: PostTarget) -> None:
+    """One sentinel row per target, idempotent. Says "we asked; this platform
+    does not answer" so the surface can render unavailable rather than an
+    empty thread that reads as "nobody said anything"."""
+    AudienceComment.objects.get_or_create(
+        post_target=target,
+        external_id=UNAVAILABLE_MARKER,
+        defaults={
+            "availability": Availability.UNAVAILABLE,
+            "posted_at": timezone.now(),
+        },
+    )
 
 
 def capture_due() -> int:
@@ -274,33 +386,142 @@ def capture_due() -> int:
 
 def snapshot_accounts() -> int:
     """Daily follower counts, for the denominator `engagement_rate` falls back
-    to and for the account-growth line on `/app/analytics`."""
+    to and for the account-growth line on `/app/analytics`.
+
+    Reads through the metrics port, not the publish adapter: a follower count
+    is measurement, and after P0-30 the publish adapter has no method that
+    returns one.
+    """
     moment = timezone.now().replace(minute=0, second=0, microsecond=0)
+    registry = get_metrics_registry()
     taken = 0
     for account in SocialAccount.objects.filter(status=SocialAccountStatus.ACTIVE):
+        provider = registry.for_platform(account.platform)
+        fetch = getattr(provider, "fetch_account_stats", None)
+        if fetch is None:
+            continue
         try:
-            stats = get_platform_adapter().fetch_account_stats(
-                provider_account_id=account.provider_account_id
-            )
-        except PlatformError:
+            stats = fetch(provider_account_id=account.provider_account_id)
+        except MetricsError:
             logger.warning(
                 "account snapshot failed", exc_info=True, extra={"account_id": account.pk}
             )
             continue
 
+        followers = stats.get("followers")
         _snapshot, created = AccountSnapshot.objects.get_or_create(
             social_account=account,
             captured_at=moment,
             defaults={
-                "followers": stats.followers,
-                "following": stats.following,
-                "total_posts": stats.total_posts,
+                "followers": followers,
+                "following": stats.get("following"),
+                "total_posts": stats.get("total_posts"),
             },
         )
         if created:
             # Kept on the account so `engagement_rate` has a denominator
-            # without joining the snapshot table on every capture.
-            account.followers_cached = stats.followers
-            account.save(update_fields=["followers_cached", "updated_at"])
+            # without joining the snapshot table on every capture. Left
+            # untouched when the provider did not report one — a stale real
+            # number beats a fresh zero as a divisor.
+            if followers is not None:
+                account.followers_cached = followers
+                account.save(update_fields=["followers_cached", "updated_at"])
             taken += 1
     return taken
+
+
+def follow_delta() -> int:
+    """The cheap capture path (P0-31).
+
+    One call returns every snapshot that moved across every account, instead of
+    one call per due post — by the vendor's own measurement, 1,599 calls/hour
+    down to 205 over ~1,600 accounts.
+
+    **A delta arrival satisfies a due rung; it does not create a new one.** The
+    ladder still decides *when* a post is measured, because the whole analytics
+    layer is built on captures at nominal rung times and unique on
+    `(post_target, captured_at)`. The feed changes the transport, not the
+    schedule — which is what keeps it a drop-in cost reduction rather than a
+    reshaping of every downstream comparison.
+
+    Refuses to advance until the ladder has bootstrapped this provider: the
+    feed is a rolling seven-day log, so following it first would silently skip
+    every post older than the window and never come back for them.
+    """
+    from billing.services.entitlements import entitlements_for
+
+    registry = get_metrics_registry()
+    provider = next(
+        (p for p in registry.all() if hasattr(p, "changed_since")),
+        None,
+    )
+    if provider is None:
+        return 0
+
+    state, _ = ProviderCursor.objects.get_or_create(provider_key=provider.key)
+    if state.bootstrapped_at is None:
+        logger.info("delta feed not bootstrapped yet", extra={"provider": provider.key})
+        return 0
+
+    try:
+        payloads, next_cursor = provider.changed_since(state.cursor)
+    except MetricsError:
+        logger.warning("delta feed read failed", exc_info=True, extra={"provider": provider.key})
+        return 0
+
+    moment = timezone.now()
+    by_provider_id = {
+        target.provider_post_id: target
+        for target in PostTarget.objects.filter(
+            state=PostTargetState.PUBLISHED,
+            provider_post_id__in=[p.provider_post_id for p in payloads if p.provider_post_id],
+        ).select_related("social_account", "post__workspace__plan")
+    }
+
+    written = 0
+    horizons: dict[int, int] = {}
+    for payload in payloads:
+        target = by_provider_id.get(payload.provider_post_id)
+        if target is None:
+            continue
+        workspace = target.post.workspace
+        if workspace.pk not in horizons:
+            horizons[workspace.pk] = entitlements_for(workspace).analytics_horizon_days()
+
+        rung = due_rung(target, horizons[workspace.pk], now=moment)
+        if rung is None:
+            # Nothing owed. The feed reports every movement; the ladder decides
+            # which of them we keep.
+            continue
+        account = target.social_account
+        row = _write(
+            target,
+            rung,
+            payload,
+            provider=provider,
+            followers=(account.followers_cached or None) if account else None,
+        )
+        if row is not None:
+            written += 1
+
+    state.cursor = next_cursor
+    state.empty_reads = 0 if payloads else state.empty_reads + 1
+    state.save(update_fields=["cursor", "empty_reads", "updated_at"])
+
+    if written:
+        logger.info("captured metrics from delta feed", extra={"count": written})
+    return written
+
+
+def mark_bootstrapped(provider_key: str) -> None:
+    """Called once the ladder has taken a first capture for every live target.
+
+    Separate from `follow_delta` so the ordering is explicit rather than
+    implied: bootstrap, then follow. The alternative — the follower deciding
+    for itself that enough history exists — is the kind of guess that goes
+    wrong quietly.
+    """
+    ProviderCursor.objects.update_or_create(
+        provider_key=provider_key,
+        defaults={"bootstrapped_at": timezone.now()},
+    )

@@ -12,8 +12,10 @@ from django.contrib import admin
 
 from analytics.models import (
     AccountSnapshot,
-    Comment,
+    AudienceComment,
+    MetricCapability,
     PostMetric,
+    ProviderCursor,
     RepurposeCandidate,
     RepurposeConfig,
 )
@@ -22,17 +24,25 @@ from common.admin import ReadOnlyAdmin, all_fields_except_id
 
 @admin.register(PostMetric)
 class PostMetricAdmin(ReadOnlyAdmin):
-    list_display = ("post_target", "captured_at", "impressions", "likes", "engagement_rate")
-    list_filter = ("post_target__platform",)
+    list_display = (
+        "post_target",
+        "captured_at",
+        "availability",
+        "source",
+        "impressions",
+        "likes",
+        "engagement_rate",
+    )
+    list_filter = ("post_target__platform", "availability", "source", "provider_key")
     readonly_fields = all_fields_except_id(PostMetric)
 
 
-@admin.register(Comment)
+@admin.register(AudienceComment)
 class CommentAdmin(ReadOnlyAdmin):
-    list_display = ("author", "sentiment", "posted_at", "post_target")
-    list_filter = ("sentiment", "post_target__platform")
+    list_display = ("author", "sentiment", "availability", "posted_at", "post_target")
+    list_filter = ("sentiment", "availability", "post_target__platform")
     search_fields = ("author", "body")
-    readonly_fields = all_fields_except_id(Comment)
+    readonly_fields = all_fields_except_id(AudienceComment)
 
 
 @admin.register(AccountSnapshot)
@@ -58,3 +68,25 @@ class RepurposeConfigAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
     def has_delete_permission(self, request: object, obj: object = None) -> bool:
         return False
+
+
+@admin.register(MetricCapability)
+class MetricCapabilityAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Editable, unlike the capture tables. C-07's whole point is that
+    coverage is operational knowledge that changes when a vendor ships an
+    endpoint — a row edit, not a deploy.
+
+    Only `available=False` rows do anything: normalisation reads this as a set
+    of *negatives*. A pair with no row is undeclared, not declared-available,
+    and the payload settles it.
+    """
+
+    list_display = ("provider_key", "platform", "metric_key", "available", "latency_hint")
+    list_filter = ("provider_key", "platform", "available")
+    search_fields = ("metric_key", "note")
+
+
+@admin.register(ProviderCursor)
+class ProviderCursorAdmin(ReadOnlyAdmin):
+    list_display = ("provider_key", "cursor", "bootstrapped_at", "empty_reads", "updated_at")
+    readonly_fields = all_fields_except_id(ProviderCursor)

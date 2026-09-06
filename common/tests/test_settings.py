@@ -19,6 +19,10 @@ REQUIRED_PROD_ENV = {
     "EMAIL_HOST_USER": "mailer",
     "EMAIL_HOST_PASSWORD": "secret",
     "DEFAULT_FROM_EMAIL": "no-reply@example.com",
+    # Required without a fallback on purpose (P0-37): a deploy that lost its
+    # measurement key must fail at boot rather than quietly fall back to the
+    # fake and start fabricating metrics.
+    "ZERNIO_API_KEY": "zk-test",
 }
 
 
@@ -47,6 +51,15 @@ def test_prod_does_not_expose_the_browsable_api(prod_settings) -> None:
     assert prod_settings.REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] == [
         "rest_framework.renderers.JSONRenderer"
     ]
+
+
+def test_prod_cannot_run_on_fakes(prod_settings) -> None:
+    """Part 7 rule 17. `base.py` turns each fake on when its key is absent,
+    which is right for a fresh checkout and wrong for a deploy — a lost key
+    would start fabricating rather than failing. Prod pins them off."""
+    assert prod_settings.USE_FAKE_PLATFORM_ADAPTER is False
+    assert prod_settings.USE_FAKE_AI_PROVIDERS is False
+    assert prod_settings.USE_FAKE_TREND_VENDORS is False
 
 
 def test_dev_settings_import_cleanly() -> None:
