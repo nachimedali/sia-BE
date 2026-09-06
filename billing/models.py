@@ -465,10 +465,15 @@ class Subscription(models.Model):
     cancel_at_period_end = models.BooleanField(default=False)
 
     stripe_subscription_id = models.CharField(max_length=64, unique=True)
-    #: The line item the workspace quantity moves on (P0-17). One subscription
-    #: per organization, quantity = workspace count, tiered above
-    #: `Plan.max_workspaces`.
+    #: The base plan line. Quantity is always 1: this is the subscription
+    #: itself, and it already covers `Plan.max_workspaces` workspaces.
     stripe_subscription_item_id = models.CharField(max_length=64, blank=True)
+    #: The **overage** line, priced at `price_per_workspace_cents` (P0-17:
+    #: "tiered above `Plan.max_workspaces`"). Its quantity is the number of
+    #: workspaces *beyond* the included allowance, which is why it is a second
+    #: item rather than a quantity on the line above: charging the base line
+    #: per workspace would bill for the ones the plan already includes.
+    stripe_overage_item_id = models.CharField(max_length=64, blank=True)
     #: Written alongside `workspace` during the org migration. Nullable until
     #: the backfill has run everywhere; nothing reads it during expand.
     organization = models.ForeignKey(

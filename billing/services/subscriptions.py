@@ -385,8 +385,34 @@ def live_workspace_count(organization: Any) -> int:
     )
 
 
+def included_workspaces(organization: Any) -> int:
+    """How many workspaces this organization's plan already covers.
+
+    `Plan.max_workspaces` is an *allowance*, not merely a ceiling — the base
+    price buys that many (P0-17). An unlimited plan includes everything and
+    therefore never bills an overage.
+    """
+    plan = getattr(organization, "plan", None)
+    cap = getattr(plan, "max_workspaces", 1) if plan is not None else 1
+    return 0 if cap == UNLIMITED_CAP else int(cap)
+
+
+def billable_overage(organization: Any) -> int:
+    """Workspaces beyond the included allowance — the quantity actually billed.
+
+    **Not the total count.** Billing the total charges for the workspaces the
+    plan already includes: an organization on Pro, which includes three, would
+    pay 3 x $37 for what its own pricing page calls $37. That was the shape of
+    the bug this function exists to make impossible to write again.
+    """
+    plan = getattr(organization, "plan", None)
+    if plan is not None and getattr(plan, "max_workspaces", 1) == UNLIMITED_CAP:
+        return 0
+    return max(0, live_workspace_count(organization) - included_workspaces(organization))
+
+
 def sync_workspace_quantity(organization: Any) -> bool:
-    """Tells the gateway how many workspaces to bill for. Returns success.
+    """Tells the gateway how many *extra* workspaces to bill for. Returns success.
 
     **Never raises at the caller** (P0-18). A workspace whose quantity update
     failed stays `PENDING_BILLING` and read-only; the customer can see what
@@ -411,16 +437,36 @@ def sync_workspace_quantity(organization: Any) -> bool:
         ).update(status=WorkspaceStatus.ACTIVE)
         return True
 
-    quantity = live_workspace_count(organization)
+    quantity = billable_overage(organization)
+    if quantity == 0:
+        # Everything fits inside the plan's allowance, so there is nothing to
+        # charge and nothing to ask the gateway. The workspaces are billed —
+        # by the base subscription — so they are active, not pending.
+        Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.PENDING_BILLING
+        ).update(status=WorkspaceStatus.ACTIVE)
+        return True
+
+    if not subscription.stripe_overage_item_id:
+        # An overage to charge and no line to charge it on is a configuration
+        # error, not a customer error. The workspace stays PENDING_BILLING and
+        # read-only rather than being refused (P0-18) — the customer can see
+        # what they asked for and support can see why it is parked.
+        logger.error(
+            "subscription has no overage item; workspaces stay pending",
+            extra={"organization_id": organization.pk, "overage": quantity},
+        )
+        return False
+
     try:
         get_billing_gateway().update_subscription_quantity(
-            subscription_item_id=subscription.stripe_subscription_item_id, quantity=quantity
+            subscription_item_id=subscription.stripe_overage_item_id, quantity=quantity
         )
     except BillingGatewayError:
         logger.warning(
             "subscription quantity update failed; workspaces stay pending",
             exc_info=True,
-            extra={"organization_id": organization.pk, "quantity": quantity},
+            extra={"organization_id": organization.pk, "overage": quantity},
         )
         return False
 
