@@ -14,7 +14,15 @@ from django import forms
 from django.contrib import admin, messages
 from django.http import HttpRequest
 
-from billing.models import CreditLedger, Pack, Plan, StripeEvent, Subscription, VideoLedger
+from billing.models import (
+    FEATURE_KEYS,
+    CreditLedger,
+    Pack,
+    Plan,
+    StripeEvent,
+    Subscription,
+    VideoLedger,
+)
 from billing.services import ledger
 
 logger = logging.getLogger(__name__)
@@ -51,19 +59,137 @@ class ImmutableCodeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
 @admin.register(Plan)
 class PlanAdmin(ImmutableCodeAdmin):
+    """**This screen is where every commercial number lives** (I8, Part 7 rule
+    10). Prices, quotas, caps and the per-plan feature map are rows, not
+    constants and not environment variables — so raising a credit allowance or
+    changing a price is an edit here, applied on the next request, with no
+    deploy and no risk of two environments disagreeing about what a customer
+    bought.
+
+    Grouped into fieldsets rather than left as one flat wall of thirty inputs:
+    an operator changing a price should not have to scroll past the audience
+    capture cadence to find it, and the groups are also the reader's map of
+    what a plan actually *is*.
+
+    Two things the cache does not need to be told about. The entitlement
+    snapshot is keyed on `plan.updated_at`, so saving here mints a new key and
+    the old one is simply never asked for again — there is no eviction step to
+    forget. Balances are never cached at all.
+    """
+
     list_display = (
         "code",
         "display_name",
         "price_monthly_cents",
+        "price_per_workspace_cents",
+        "max_workspaces",
         "monthly_ai_credits",
-        "included_videos",
-        "max_social_accounts",
+        "trial_post_quota",
         "is_public",
         "sort_order",
     )
-    list_filter = ("is_public",)
+    list_filter = ("is_public", "reaction_detail")
     search_fields = ("code", "display_name")
     save_on_top = True
+
+    fieldsets = (
+        (
+            "Identity",
+            {
+                "fields": ("code", "display_name", "tagline", "is_public", "sort_order"),
+                "description": (
+                    "`code` is the join key for Stripe mapping and analytics, so it is "
+                    "frozen once the row exists (D13). Withdraw a plan by unsetting "
+                    "<em>is public</em> — deleting one would orphan its subscribers."
+                ),
+            },
+        ),
+        (
+            "Price",
+            {
+                "fields": (
+                    "currency",
+                    "price_monthly_cents",
+                    "price_annual_cents",
+                    "price_per_workspace_cents",
+                    "stripe_price_id_monthly",
+                    "stripe_price_id_annual",
+                ),
+                "description": (
+                    "In <strong>cents</strong>. One subscription per organization with "
+                    "quantity = workspace count, so <em>price per workspace</em> is what "
+                    "the quantity multiplies; the monthly price is the first workspace."
+                ),
+            },
+        ),
+        (
+            "Trial",
+            {
+                "fields": ("trial_days", "trial_post_quota"),
+                "description": (
+                    "Two different trials. <em>trial days</em> is a clock, for the paid "
+                    "plans. <em>trial post quota</em> is the quota trial that replaced "
+                    "Free-forever — N posts, no expiry, no card, pooled across the whole "
+                    "organization. Set one or the other, not both."
+                ),
+            },
+        ),
+        (
+            "Quotas",
+            {
+                "fields": (
+                    "monthly_ai_credits",
+                    "included_videos",
+                    "max_social_accounts",
+                    "max_workspaces",
+                    "max_workspace_members",
+                    "max_products",
+                    "max_scheduled_posts",
+                    "max_autopublish_posts",
+                    "scheduling_horizon_days",
+                    "max_labels",
+                    "max_campaigns",
+                    "included_views",
+                    "version_history_days",
+                    "storage_bytes",
+                    "counts_docs_against_quota",
+                ),
+                "description": (
+                    "<strong>-1 means unlimited</strong> — except for "
+                    "<em>max social accounts</em>, which is per-seat cost with the "
+                    "publishing provider and may never be unlimited (I6). The model "
+                    "refuses that combination rather than letting it save."
+                ),
+            },
+        ),
+        (
+            "Audience engagement",
+            {
+                "fields": ("comment_capture_interval_minutes", "reaction_detail"),
+                "description": (
+                    "Reading comments is free from the vendor, so this ladder is "
+                    "freshness and depth rather than cost. "
+                    "<strong>0 minutes means webhook-driven</strong>, not "
+                    "&ldquo;poll constantly&rdquo;: the provider caches its read "
+                    "endpoints for ten minutes and says plainly not to poll them."
+                ),
+            },
+        ),
+        (
+            "Features",
+            {
+                "fields": ("features",),
+                "description": (
+                    "A JSON object. Unknown keys are rejected on save, so a typo is a "
+                    "validation error rather than a feature that silently never turns "
+                    "on. Valid keys: <code>"
+                    + "</code>, <code>".join(sorted(FEATURE_KEYS))
+                    + "</code>. Most are booleans; "
+                    "<code>analytics_history_days</code> is a number of days."
+                ),
+            },
+        ),
+    )
 
     def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         """Deleting a plan with subscribers would orphan live workspaces.
@@ -74,6 +200,13 @@ class PlanAdmin(ImmutableCodeAdmin):
         if obj is None:
             return True
         return not obj.workspaces.exists() and not obj.subscriptions.exists()
+
+    def get_fieldsets(self, request: HttpRequest, obj: Any = None) -> Any:
+        """`code` is read-only once the row exists, and Django refuses to render
+        a read-only field it also finds in `fieldsets` unless it is declared —
+        so on an edit the identity group drops it into `readonly_fields`'
+        keeping instead of listing it twice."""
+        return self.fieldsets
 
     def save_model(self, request: HttpRequest, obj: Plan, form: Any, change: bool) -> None:
         if change and form.changed_data:
@@ -94,7 +227,13 @@ class PlanAdmin(ImmutableCodeAdmin):
 class PackAdmin(ImmutableCodeAdmin):
     """Pack size and price are editable here for the same reason plan quotas
     are (I8). Withdraw a pack by unsetting `is_public`: deleting it would leave
-    the ledger rows it produced pointing at nothing an operator can name."""
+    the ledger rows it produced pointing at nothing an operator can name.
+
+    A pack is a prepaid top-up rather than a subscription, which is why it has
+    `units` and no recurrence: buying one appends a ledger row, and the balance
+    is the sum of the rows. Changing `units` here changes what the *next*
+    purchase grants and never what a past one did.
+    """
 
     list_display = (
         "code",
