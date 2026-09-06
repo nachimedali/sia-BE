@@ -170,6 +170,27 @@ class Entitlements:
         """
         return int(self.feature("analytics_history_days") or 0)
 
+    # --- audience engagement (L-4a, P0-34) -------------------------------
+    def comment_capture_interval(self) -> dt.timedelta | None:
+        """How often audience comments are polled, or `None` when this plan is
+        driven by the `comment.received` webhook instead.
+
+        `None` rather than "every minute": the provider caches both read
+        endpoints for ten minutes and says plainly not to poll them, so the
+        top tier subscribes. Tightening an interval towards real time would
+        cost the vendor's goodwill and return the same cached page.
+        """
+        minutes = self.quota("comment_capture_interval_minutes")
+        return None if minutes <= 0 else dt.timedelta(minutes=minutes)
+
+    def reaction_detail(self) -> str:
+        """How much of a reaction breakdown this plan may see.
+
+        Degrades, never fails: a plan capped at `TOTAL` sees a real total, not
+        a fabricated breakdown and not an error.
+        """
+        return str(self.plan.reaction_detail)
+
     # --- gates -----------------------------------------------------------
     def _suggested_plan(self, feature_key: str | None = None) -> str:
         if feature_key in ADVANCED_ONLY:

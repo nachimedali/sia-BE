@@ -12,16 +12,19 @@ was charged and refunded survives the correction.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import Any
 
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 
 from billing.models import (
     UNLIMITED,
     CreditLedger,
     CreditReason,
+    ReplyReason,
     VideoLedger,
     VideoReason,
 )
@@ -382,3 +385,81 @@ def find_drift[LedgerT: (CreditLedger, VideoLedger)](
                 }
             )
     return drifted
+
+
+# -----------------------------------------------------------------------------
+# Outbound audience replies — pooled at organization level (L-4a, P0-36)
+# -----------------------------------------------------------------------------
+#: Outbound messages included per calendar month before metering begins. On the
+#: plan row rather than here would be better still; it is a vendor number
+#: rather than a commercial one — Zernio's own free tranche — so it lives with
+#: the other vendor constants and is overridable per organization by an admin.
+REPLY_FREE_ALLOWANCE = 10_000
+
+
+def replies_used_this_month(organization: Any, *, now: dt.datetime | None = None) -> int:
+    """How many outbound replies the whole organization has spent this month.
+
+    Summed, never cached (Part 7 rule 5). Pooled across every workspace in the
+    org, which is the point: a workspace must not be able to spend another's
+    headroom, and it cannot, because there is only one pool and one counter.
+    """
+    from billing.models import ReplyLedger
+
+    moment = now or timezone.now()
+    start = moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    total = ReplyLedger.objects.filter(
+        organization=organization, reason=ReplyReason.OUTBOUND, created_at__gte=start
+    ).aggregate(total=Sum("delta"))["total"]
+    return abs(int(total or 0))
+
+
+@transaction.atomic
+def debit_reply(
+    workspace: Workspace,
+    *,
+    actor: Any = None,
+    allowance: int = REPLY_FREE_ALLOWANCE,
+    note: str = "",
+) -> Any:
+    """Records one outbound reply against the org's pooled allowance.
+
+    Raises 402 at exhaustion rather than metering silently: the overage is
+    real money ($0.0001 a message beyond the tranche) and a surprise line item
+    is worse than a refusal the user can act on.
+
+    The lock is on the organization row and spans only the insert — never a
+    provider call. A reply that reached the platform and then failed to record
+    is recoverable; a lock held across a network call is not.
+    """
+    from billing.models import ReplyLedger
+
+    organization = getattr(workspace, "organization", None)
+    if organization is None:
+        raise InsufficientCredits(
+            "This workspace is not attached to an organization yet.",
+            detail={"workspace": workspace.pk},
+        )
+
+    type(organization).objects.select_for_update().filter(pk=organization.pk).exists()
+
+    used = replies_used_this_month(organization)
+    if used >= allowance:
+        raise InsufficientCredits(
+            f"This organization has used its {allowance} included replies this month.",
+            detail={"used": used, "allowance": allowance},
+        )
+
+    balance = (
+        ReplyLedger.objects.filter(organization=organization).aggregate(total=Sum("delta"))["total"]
+        or 0
+    )
+    return ReplyLedger.objects.create(
+        organization=organization,
+        workspace=workspace,
+        delta=-1,
+        balance_after=int(balance) - 1,
+        reason=ReplyReason.OUTBOUND,
+        actor=actor,
+        note=note,
+    )

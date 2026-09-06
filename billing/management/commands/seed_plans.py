@@ -45,7 +45,12 @@ PLANS: list[dict[str, Any]] = [
             "auto_publish": False,
             "analytics_history_days": 7,
             "credits_rollover": False,
+            "reply_to_comments": False,
         },
+        # L-4a: daily capture, totals only, no reply. Reading is free from the
+        # provider, so the ladder is freshness and depth, not cost.
+        "comment_capture_interval_minutes": 1440,
+        "reaction_detail": "TOTAL",
     },
     {
         "code": "pro",
@@ -75,7 +80,11 @@ PLANS: list[dict[str, Any]] = [
             "auto_publish": True,
             "analytics_history_days": 90,
             "credits_rollover": False,
+            "reply_to_comments": False,
         },
+        # L-4a: every six hours, per-type breakdown, still no reply.
+        "comment_capture_interval_minutes": 360,
+        "reaction_detail": "PER_TYPE",
     },
     {
         "code": "advanced",
@@ -106,7 +115,12 @@ PLANS: list[dict[str, Any]] = [
             "auto_publish": True,
             "analytics_history_days": 730,
             "credits_rollover": False,
+            "reply_to_comments": True,
         },
+        # L-4a: `0` means webhook-driven, not "poll constantly" — the provider
+        # caches both read endpoints for ten minutes and says not to poll.
+        "comment_capture_interval_minutes": 0,
+        "reaction_detail": "REACTORS",
     },
 ]
 

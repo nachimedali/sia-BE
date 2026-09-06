@@ -14,12 +14,16 @@ time-machine in tests (implementation.md §5: never sleep).
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 
 from django.conf import settings
+from redis.exceptions import RedisError
 
 from common.redis import get_redis
+
+logger = logging.getLogger(__name__)
 
 # KEYS[1] = bucket key
 # ARGV = capacity, refill_per_second, now, requested, ttl, reserve
@@ -137,10 +141,17 @@ class ProviderRateLimiter:
     cross keeps total throughput bounded to `capacity`/`refill_per_second`
     regardless of the mix.
 
-    Keyed on `(platform, social_account_id)`. `social_account_id` is `None`
-    until `channels.SocialAccount` exists (Phase 9) — the same deferred-field
-    shape as A32/A47/A48/A54: the caller passes what it has today, and the
-    key simply grows more specific once the model lands.
+    Keyed on `(provider, platform, connection)` (P0-41). The provider
+    dimension is what makes the ledger survive measurement moving to a second
+    vendor: today publishing and capture draw one Zernio bucket, and if they
+    ever draw separate quotas the key already separates them without a
+    redesign. `social_account_id` is the connection.
+
+    **Redis down does not mean unlimited** (P0-43). A failed bucket call falls
+    through to a conservative Postgres counter: publishing keeps its
+    allowance, capture is refused outright. Refusing background work while
+    the limiter is blind is the safe direction — a deferred capture costs
+    nothing, and an unbounded one can exhaust the quota a publish needs.
     """
 
     #: Fraction of capacity background traffic may never draw into. design.md
@@ -155,9 +166,15 @@ class ProviderRateLimiter:
         *,
         capacity: int,
         refill_per_second: float,
+        provider: str = "zernio",
     ) -> None:
         account = social_account_id if social_account_id is not None else "-"
-        self._bucket = TokenBucket(f"provider:{platform}:{account}", capacity, refill_per_second)
+        self.provider = provider
+        self.platform = platform
+        self.connection = str(account)
+        self._bucket = TokenBucket(
+            f"provider:{provider}:{platform}:{account}", capacity, refill_per_second
+        )
 
     @property
     def _reserve(self) -> float:
@@ -167,16 +184,56 @@ class ProviderRateLimiter:
         self, tokens: float = 1, *, now: float | None = None
     ) -> RateLimitResult:
         """Highest priority (design.md §5.1: `publish_q`). May spend the
-        reserve — nothing is held back from it."""
-        return self._bucket.consume(tokens, now=now)
+        reserve — nothing is held back from it.
+
+        **Publishing is never blocked by capture** (Part 7 rule 11), which is
+        why this is also the branch that keeps working when Redis does not.
+        """
+        try:
+            return self._bucket.consume(tokens, now=now)
+        except RedisError:
+            logger.warning("rate budget degraded to Postgres", extra={"provider": self.provider})
+            return self._degraded_publish(tokens)
 
     def consume_for_background(
         self, tokens: float = 1, *, now: float | None = None
     ) -> RateLimitResult:
         """Metrics polling and trend harvesting (design.md §5.1: `metrics_q`,
         `trends_q`). Refused once granting it would cross into the reserve,
-        leaving that floor untouched for publish."""
-        return self._bucket.consume(tokens, now=now, reserve=self._reserve)
+        leaving that floor untouched for publish.
+
+        A refusal is not an error. The caller reschedules — see
+        `analytics.services.ingest`, where an exception here would pollute the
+        failure metrics publishing alerts on.
+        """
+        try:
+            return self._bucket.consume(tokens, now=now, reserve=self._reserve)
+        except RedisError:
+            # Blind, so conservative: never unlimited (P0-43). Publishing
+            # keeps its allowance above; background work waits for Redis.
+            logger.warning(
+                "rate budget degraded to Postgres, refusing background draw",
+                extra={"provider": self.provider, "platform": self.platform},
+            )
+            return RateLimitResult(allowed=False, remaining=0.0, retry_after=60.0)
+
+    def _degraded_publish(self, tokens: float) -> RateLimitResult:
+        """The Postgres fallback. A coarse per-window counter — no refill
+        curve, no reserve — because its only job is to keep publishing inside
+        the provider's cap while the real limiter is unreachable."""
+        from common.models import RateBudgetWindow
+
+        consumed = RateBudgetWindow.consume(
+            provider=self.provider,
+            connection=f"{self.platform}:{self.connection}",
+            limit=self._bucket.capacity,
+            tokens=tokens,
+        )
+        return RateLimitResult(
+            allowed=consumed,
+            remaining=0.0,
+            retry_after=0.0 if consumed else 60.0,
+        )
 
     def reset(self) -> None:
         self._bucket.reset()

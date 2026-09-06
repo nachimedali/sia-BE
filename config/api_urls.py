@@ -30,9 +30,11 @@ from analytics.views import (
     AnalyticsOverviewView,
     AnalyticsPostsView,
     AnalyticsSentimentView,
+    AudienceCommentReplyView,
     RepurposeAcceptView,
     RepurposeDismissView,
     RepurposeQueueView,
+    ZernioCommentWebhookView,
 )
 from billing.views import (
     BillingPortalView,
@@ -132,6 +134,21 @@ urlpatterns = [
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
     path("analytics/comments/", AnalyticsCommentsView.as_view(), name="analytics-comments"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
+    # L-4a. A plain path like its siblings, and the `{pk}` is resolved through
+    # a workspace-filtered queryset inside the view — another tenant's comment
+    # id is a 404, not a 403 (Part 7 rule 3).
+    path(
+        "analytics/comments/<int:pk>/reply/",
+        AudienceCommentReplyView.as_view(),
+        name="analytics-comment-reply",
+    ),
+    # Unauthenticated by necessity, authenticated by signature — the same
+    # shape as the Stripe handler, and next to it in spirit if not in the file.
+    path(
+        "webhooks/zernio/comment/",
+        ZernioCommentWebhookView.as_view(),
+        name="webhook-zernio-comment",
+    ),
     path(
         "analytics/repurpose/<int:pk>/accept/",
         RepurposeAcceptView.as_view(),

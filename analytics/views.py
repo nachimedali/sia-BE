@@ -21,15 +21,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema
+from rest_framework import status
 from rest_framework.generics import get_object_or_404
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from analytics import webhooks
 from analytics.models import AudienceComment, RepurposeCandidate
 from analytics.serializers import (
+    AudienceReplyResultSerializer,
+    AudienceReplySerializer,
     BestTimeSerializer,
     CommentSerializer,
     OverviewSerializer,
@@ -37,9 +42,10 @@ from analytics.serializers import (
     SentimentSummarySerializer,
     TargetPerformanceSerializer,
 )
-from analytics.services import repurposing, signals
+from analytics.services import audience, repurposing, signals
 from billing.permissions import HasFeature
 from billing.services.entitlements import entitlements_for
+from common.exceptions import OCCSError
 from common.workspaces import active_workspace
 from workspaces.models import Workspace
 
@@ -132,6 +138,73 @@ class AnalyticsCommentsView(_AnalyticsView):
             post_target__post__workspace=self.workspace(request)
         )[:COMMENT_FEED_LIMIT]
         return Response(CommentSerializer(comments, many=True).data)
+
+
+class AudienceCommentReplyView(APIView):
+    """`POST /analytics/comments/{id}/reply/` — Advanced only (L-4a, P0-36).
+
+    The gate is commercial, not technical: reading is free from the provider
+    and outbound is nearly so, but answering an audience comment without
+    leaving the app is what the top plan sells. Lower plans read, analyse, and
+    reply in the native app — they are not refused the *comment*, only the
+    reply.
+
+    402 at allowance exhaustion, pooled across the organization, so one
+    workspace cannot spend another's headroom.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=AudienceReplySerializer,
+        responses={201: AudienceReplyResultSerializer},
+        summary="Reply to an audience comment",
+    )
+    def post(self, request: Request, pk: int) -> Response:
+        # Workspace-filtered lookup, so another tenant's comment id is a 404
+        # rather than a 403 — the queryset is the boundary, not a check after
+        # the fetch (Part 7 rule 3).
+        comment = get_object_or_404(
+            AudienceComment.objects.measured().filter(
+                post_target__post__workspace=active_workspace(request)
+            ),
+            pk=pk,
+        )
+        payload = AudienceReplySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        external_id = audience.reply_to(
+            comment, body=payload.validated_data["body"], actor=request.user
+        )
+        return Response({"external_id": external_id}, status=status.HTTP_201_CREATED)
+
+
+class ZernioCommentWebhookView(APIView):
+    """`POST /webhooks/zernio/comment/` — the Advanced tier's capture path.
+
+    Unauthenticated by necessity, authenticated by signature, exactly like the
+    Stripe handler. Always 200 on a verified body, even when nothing was
+    stored: a provider treats a non-2xx as "retry", and there is nothing to
+    retry about a comment for a post we do not publish.
+    """
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+
+    @csrf_exempt
+    @extend_schema(request=None, responses={200: None}, summary="Zernio comment webhook")
+    def post(self, request: Request) -> Response:
+        signature = request.META.get("HTTP_X_ZERNIO_SIGNATURE", "")
+        try:
+            webhooks.verify(request.body, signature)
+        except webhooks.WebhookSignatureError as exc:
+            raise OCCSError(
+                "Webhook signature verification failed.", code="invalid_signature"
+            ) from exc
+
+        payload = request.data if isinstance(request.data, dict) else {}
+        stored = webhooks.ingest_comment_event(payload)
+        return Response({"received": True, "stored": stored}, status=status.HTTP_200_OK)
 
 
 class RepurposeQueueView(_RepurposeView):

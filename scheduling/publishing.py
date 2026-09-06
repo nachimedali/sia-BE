@@ -156,6 +156,18 @@ def _limiter(account: SocialAccount) -> ProviderRateLimiter:
     )
 
 
+def capture_limiter(account: SocialAccount) -> ProviderRateLimiter:
+    """The same bucket measurement draws on (C-06).
+
+    Exported so `analytics.services.ingest` shares this budget rather than
+    keeping its own — two independently-sized buckets could jointly exceed the
+    provider's real cap, since neither would know about the other's draw. One
+    bucket with a floor only publishing may cross is what makes "publishing is
+    never blocked by capture" (Part 7 rule 11) a property rather than a hope.
+    """
+    return _limiter(account)
+
+
 def _record_failure(target: PostTarget, error: PlatformError) -> None:
     target.attempt_count += 1
     target.error_detail = {

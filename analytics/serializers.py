@@ -101,3 +101,18 @@ class RepurposeCandidateSerializer(serializers.ModelSerializer[RepurposeCandidat
             "surfaced_at",
         )
         read_only_fields = fields
+
+
+class AudienceReplySerializer(serializers.Serializer[dict[str, str]]):
+    """The body of an outbound reply (P0-36).
+
+    Length-capped at the tightest platform limit rather than the loosest: a
+    reply accepted here and rejected by the platform costs the org's allowance
+    for nothing, because the debit is already recorded by then.
+    """
+
+    body = serializers.CharField(max_length=1000, trim_whitespace=True)
+
+
+class AudienceReplyResultSerializer(serializers.Serializer[dict[str, str]]):
+    external_id = serializers.CharField()

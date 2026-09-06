@@ -379,6 +379,68 @@ class ProviderCursor(models.Model):
         return f"{self.provider_key} @ {self.cursor or '(start)'}"
 
 
+class AudienceCaptureState(models.Model):
+    """When this target's audience comments were last read (P0-34, L-4a).
+
+    Stored rather than derived from the newest `AudienceComment`: a post with
+    no new comments would otherwise look like a post that was never polled,
+    and the plan's cadence would be ignored precisely on the quiet posts where
+    polling is pure waste.
+    """
+
+    post_target = models.OneToOneField(
+        "content.PostTarget", on_delete=models.CASCADE, related_name="audience_state"
+    )
+    last_captured_at = models.DateTimeField(null=True, blank=True)
+    #: Set when the platform has told us it will never report comments here,
+    #: so the cadence check does not keep waking a target that cannot answer.
+    unavailable = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.post_target_id} @ {self.last_captured_at or 'never'}"
+
+
+class CaptureDeferral(models.Model):
+    """How many times one rung has been put off for want of provider budget
+    (P0-44, C-06).
+
+    A deferral is not a failure — it costs nothing and the next tick retries —
+    but a rung deferred over and over is a *gap*, and a gap that nobody records
+    silently shrinks the sample size behind a confidence grade. At
+    `MAX_DEFERRALS` the capture is abandoned and an `UNAVAILABLE` snapshot is
+    written in its place, which is what takes it out of every denominator
+    through the queryset rather than through anyone's memory.
+
+    Rows are cleared when the rung is finally captured, so a healthy target
+    accumulates nothing.
+    """
+
+    #: Three consecutive windows, per C-06. Beyond this the number would be
+    #: stale enough that recording the gap is more honest than recording the
+    #: reading.
+    MAX_DEFERRALS = 3
+
+    post_target = models.ForeignKey(
+        "content.PostTarget", on_delete=models.CASCADE, related_name="capture_deferrals"
+    )
+    rung = models.DateTimeField()
+    count = models.PositiveSmallIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["post_target", "rung"], name="unique_deferral_per_rung")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.post_target_id} @ {self.rung:%Y-%m-%d %H:%M} x{self.count}"
+
+
 class MetricCapability(models.Model):
     """What a given provider can actually report, per platform, per metric.
 

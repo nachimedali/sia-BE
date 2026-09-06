@@ -83,6 +83,16 @@ def metrics_provider() -> Any:
 
 
 @pytest.fixture
+def organization(workspace: Any) -> Any:
+    """The org `provision_workspace` created alongside the workspace (P0-45).
+
+    Derived rather than constructed, so a test can never assert against an
+    organization the application would not have made.
+    """
+    return workspace.organization
+
+
+@pytest.fixture
 def paid_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     """Auto-publish is a paid feature (D4), so every connect and publish test
     needs a plan that has it. Pro rather than Advanced: five social accounts

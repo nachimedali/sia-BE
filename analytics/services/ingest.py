@@ -32,8 +32,10 @@ from django.utils import timezone
 
 from analytics.models import (
     AccountSnapshot,
+    AudienceCaptureState,
     AudienceComment,
     Availability,
+    CaptureDeferral,
     PostMetric,
     ProviderCursor,
 )
@@ -165,6 +167,9 @@ def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
     if account is None or not target.provider_post_id:
         return None
 
+    if not _budget_allows(account):
+        return _defer(target, rung)
+
     registry = get_metrics_registry()
     provider = registry.for_platform(target.platform)
     if provider is None:
@@ -212,6 +217,46 @@ def _post_reactions(provider: Any, target: PostTarget) -> dict[str, int] | None:
     return breakdown
 
 
+def _budget_allows(account: SocialAccount) -> bool:
+    """Whether capture may draw on the provider budget right now (P0-42).
+
+    Capture consumes only what publishing has left. On exhaustion this returns
+    `False` and the caller **reschedules** — it does not raise. A deferred
+    capture costs nothing, while a raised exception pollutes the failure
+    metrics publishing alerts on, which is how a quiet budget squeeze would
+    end up reading as a publishing outage.
+    """
+    from scheduling.publishing import capture_limiter
+
+    return bool(capture_limiter(account).consume_for_background())
+
+
+def _defer(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
+    """Put this rung off, and give up on it after `MAX_DEFERRALS` (P0-44).
+
+    Giving up writes an `UNAVAILABLE` row rather than nothing. That is the
+    difference between a gap that is visible in the data and a gap that is
+    only visible as a smaller-than-expected sample count three phases later,
+    inside a confidence grade nobody can explain.
+    """
+    record, _ = CaptureDeferral.objects.get_or_create(post_target=target, rung=rung)
+    record.count += 1
+    record.save(update_fields=["count", "updated_at"])
+
+    if record.count < CaptureDeferral.MAX_DEFERRALS:
+        logger.info(
+            "capture deferred for provider budget",
+            extra={"target_id": target.pk, "deferrals": record.count},
+        )
+        return None
+
+    logger.warning(
+        "capture abandoned after repeated deferral; recording a gap",
+        extra={"target_id": target.pk, "rung": rung.isoformat()},
+    )
+    return _write(target, rung, _uncovered(target), provider=None, followers=None)
+
+
 def _uncovered(target: PostTarget) -> RawMetricPayload:
     return RawMetricPayload(
         provider_key="",
@@ -248,6 +293,10 @@ def _write(
         # Another worker took this rung between the due check and the insert.
         # The unique constraint is the arbiter, exactly as intended.
         return None
+    finally:
+        # A rung that finally landed is not a gap any more. Cleared here rather
+        # than at the call site so no capture path can forget.
+        CaptureDeferral.objects.filter(post_target=target, rung=rung).delete()
 
 
 def capture_comments(target: PostTarget) -> int:
@@ -269,6 +318,9 @@ def capture_comments(target: PostTarget) -> int:
     provider = get_metrics_registry().for_comments(target.platform)
     if provider is None:
         _mark_comments_unavailable(target)
+        return 0
+
+    if not _comment_capture_is_due(target):
         return 0
 
     newest = (
@@ -297,6 +349,7 @@ def capture_comments(target: PostTarget) -> int:
         ).values_list("external_id", flat=True)
     )
     fresh = [snapshot for snapshot in fetched if snapshot.external_id not in known]
+    _note_comment_capture(target)
     if not fresh:
         return 0
 
@@ -321,6 +374,36 @@ def capture_comments(target: PostTarget) -> int:
     return len(fresh)
 
 
+def _note_comment_capture(target: PostTarget) -> None:
+    """Records that we asked, whatever the answer was. A poll that found
+    nothing still spent the cadence — not recording it would turn a quiet post
+    into one that is polled on every tick."""
+    AudienceCaptureState.objects.update_or_create(
+        post_target=target, defaults={"last_captured_at": timezone.now()}
+    )
+
+
+def _comment_capture_is_due(target: PostTarget) -> bool:
+    """Whether this plan's cadence permits another read (P0-34).
+
+    Daily on the quota trial, six-hourly on Pro, webhook-driven on Advanced.
+    Resolved from the plan row, never from a constant — L-4a is a commercial
+    ladder and Part 7 rule 10 says no commercial number is hardcoded.
+    """
+    from billing.services.entitlements import entitlements_for
+
+    interval = entitlements_for(target.post.workspace).comment_capture_interval()
+    if interval is None:
+        # Webhook-driven. Polling would return the provider's ten-minute cache
+        # and spend goodwill for nothing; `comment.received` is the path.
+        return False
+
+    state, _ = AudienceCaptureState.objects.get_or_create(post_target=target)
+    if state.last_captured_at is None:
+        return True
+    return timezone.now() - state.last_captured_at >= interval
+
+
 def _mark_comments_unavailable(target: PostTarget) -> None:
     """One sentinel row per target, idempotent. Says "we asked; this platform
     does not answer" so the surface can render unavailable rather than an
@@ -332,6 +415,9 @@ def _mark_comments_unavailable(target: PostTarget) -> None:
             "availability": Availability.UNAVAILABLE,
             "posted_at": timezone.now(),
         },
+    )
+    AudienceCaptureState.objects.update_or_create(
+        post_target=target, defaults={"unavailable": True, "last_captured_at": timezone.now()}
     )
 
 
