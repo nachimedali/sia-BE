@@ -29,7 +29,7 @@ from billing.permissions import HasFeature
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 from products.models import AutopilotConfig, AutopilotDraft, AutopilotDraftStatus, Product
 from products.serializers import (
     AutopilotConfigSerializer,
@@ -64,7 +64,7 @@ class ProductViewSet(
     def perform_create(self, serializer: BaseSerializer[Product]) -> None:
         assert isinstance(serializer, ProductSerializer)  # always this view's own serializer_class
         data = serializer.validated_data
-        serializer.instance = create_product(workspace=active_workspace(self.request), **data)
+        serializer.instance = create_product(workspace=request_workspace(self.request), **data)
 
     def perform_update(self, serializer: BaseSerializer[Product]) -> None:
         assert isinstance(serializer, ProductSerializer)  # always this view's own serializer_class
@@ -127,7 +127,7 @@ class _AutopilotView(APIView):
         # Filtered by workspace before the pk is applied, so another
         # workspace's draft is a 404 here rather than a 403 (design.md A9).
         return get_object_or_404(
-            AutopilotDraft.objects.filter(product__workspace=active_workspace(request)), pk=pk
+            AutopilotDraft.objects.filter(product__workspace=request_workspace(request)), pk=pk
         )
 
 
@@ -139,7 +139,7 @@ class AutopilotQueueView(_AutopilotView):
     def get(self, request: Request) -> Response:
         drafts = (
             AutopilotDraft.objects.filter(
-                product__workspace=active_workspace(request),
+                product__workspace=request_workspace(request),
                 status=AutopilotDraftStatus.PENDING,
             )
             .select_related("product")

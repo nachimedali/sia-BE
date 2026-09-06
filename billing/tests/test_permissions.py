@@ -71,7 +71,7 @@ def test_anonymous_callers_are_401_not_402(workspace) -> None:
 
 def test_the_permission_raises_rather_than_returning_false(workspace, user) -> None:
     """Returning False would produce DRF's own 403 and lose the upgrade payload."""
-    from common.workspaces import active_workspace
+    from common.workspaces import request_workspace
 
     request = APIRequestFactory().get("/playbook/")
     force_authenticate(request, user=user)
@@ -81,7 +81,7 @@ def test_the_permission_raises_rather_than_returning_false(workspace, user) -> N
     with pytest.raises(FeatureNotAvailable):
         HasFeature("playbook")().has_permission(drf_request, PlaybookView())
 
-    assert active_workspace(drf_request) == workspace
+    assert request_workspace(drf_request) == workspace
 
 
 def test_unauthenticated_client_gets_the_envelope(workspace) -> None:

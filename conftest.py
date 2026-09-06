@@ -141,6 +141,16 @@ def user(db: None) -> Any:
 
 
 @pytest.fixture
+def other_user(db: None) -> Any:
+    """A second account with no workspace of its own until a test gives it one.
+    Every cross-tenant assertion needs one, and four files were making it by
+    hand."""
+    from django.contrib.auth import get_user_model
+
+    return get_user_model().objects.create_user(email="sam@example.com", password=PASSWORD)
+
+
+@pytest.fixture
 def auth_client(user: Any) -> Any:
     """An APIClient carrying `user`'s identity, bypassing the login endpoint."""
     from rest_framework.test import APIClient
@@ -148,6 +158,13 @@ def auth_client(user: Any) -> Any:
     api = APIClient()
     api.force_authenticate(user)
     return api
+
+
+@pytest.fixture
+def seeded_plans(plans: dict[str, Any]) -> dict[str, Any]:
+    """Alias for `plans`, for the handful of modules that also import the
+    `billing.services.plans` module and would otherwise shadow it."""
+    return plans
 
 
 @pytest.fixture

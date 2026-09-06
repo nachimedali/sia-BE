@@ -29,7 +29,7 @@ from rest_framework.views import APIView
 from billing.permissions import HasFeature
 from billing.services.entitlements import entitlements_for
 from common.exceptions import OCCSError
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 from content.models import Platform
 from trends import services
 from trends.models import TrendItem
@@ -109,7 +109,7 @@ class TrendListView(APIView):
         ),
     )
     def get(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         platform = _resolve_platform(request.query_params.get("platform"), workspace)
         unlocked = bool(entitlements_for(workspace).feature(FEATURE_KEY))
 
@@ -133,7 +133,7 @@ class TrendRefreshView(APIView):
         summary="Force a re-extraction for this workspace's category",
     )
     def post(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
 
         payload = TrendRefreshRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)

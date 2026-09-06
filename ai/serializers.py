@@ -133,12 +133,12 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
         `GET /billing/entitlements/`; none of the three relies on this one
         having run."""
         from ai.services.costing import preflight_require_credits
-        from common.workspaces import active_workspace
+        from common.workspaces import request_workspace
 
         request = self.context.get("request")
         if request is not None:
             preflight_require_credits(
-                active_workspace(request), kind=attrs["kind"], mode=attrs["mode"]
+                request_workspace(request), kind=attrs["kind"], mode=attrs["mode"]
             )
         return attrs
 

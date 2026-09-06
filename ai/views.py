@@ -36,7 +36,7 @@ from ai.services.revisions import create_revision
 from ai.tasks import run_generation_task
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace, authenticated_user
+from common.workspaces import authenticated_user, request_workspace
 
 
 class GenerateView(APIView):
@@ -58,7 +58,7 @@ class GenerateView(APIView):
         ),
     )
     def post(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         serializer = GenerateRequestSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -131,4 +131,4 @@ class VoiceProfileViewSet(
     queryset = VoiceProfile.objects.all()
 
     def perform_create(self, serializer: Any) -> None:
-        serializer.save(workspace=active_workspace(self.request))
+        serializer.save(workspace=request_workspace(self.request))

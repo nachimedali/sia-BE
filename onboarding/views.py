@@ -14,7 +14,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from common.workspaces import active_workspace, authenticated_user
+from common.workspaces import authenticated_user, request_workspace
 from onboarding.serializers import OnboardingSerializer
 from onboarding.services.wizard import complete_onboarding
 
@@ -32,7 +32,7 @@ class OnboardingView(APIView):
         ),
     )
     def get(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         return Response(OnboardingSerializer(workspace, context={"request": request}).data)
 
     @extend_schema(
@@ -42,7 +42,7 @@ class OnboardingView(APIView):
         description="Partial by design: each step PATCHes only the fields it owns.",
     )
     def patch(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         serializer = OnboardingSerializer(
             workspace, data=request.data, partial=True, context={"request": request}
         )
@@ -64,5 +64,5 @@ class OnboardingCompleteView(APIView):
         ),
     )
     def post(self, request: Request) -> Response:
-        workspace = complete_onboarding(active_workspace(request), authenticated_user(request))
+        workspace = complete_onboarding(request_workspace(request), authenticated_user(request))
         return Response(OnboardingSerializer(workspace, context={"request": request}).data)

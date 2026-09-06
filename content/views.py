@@ -26,7 +26,7 @@ from billing.permissions import HasFeature
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace, authenticated_user
+from common.workspaces import authenticated_user, request_workspace
 from content.models import MediaAsset, Platform, Post, PostMediaAttachment, PostStatus
 from content.serializers import (
     MediaAssetSerializer,
@@ -112,7 +112,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         assert isinstance(serializer, PostSerializer)  # always this view's own serializer_class
         data = serializer.validated_data
         serializer.instance = create_post(
-            workspace=active_workspace(self.request),
+            workspace=request_workspace(self.request),
             author=authenticated_user(self.request),
             master_body=data.get("master_body", ""),
             category=data.get("category"),
@@ -141,7 +141,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
 
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         platforms = data.get("platforms") or [
             p for p in workspace.platforms if p in Platform.values
         ]
@@ -362,6 +362,6 @@ class MediaAssetViewSet(
         if upload is None:
             raise OCCSError("No file was uploaded.", code="missing_file")
 
-        asset = ingest_media(workspace=active_workspace(request), upload=upload)
+        asset = ingest_media(workspace=request_workspace(request), upload=upload)
         serializer = self.get_serializer(asset)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
