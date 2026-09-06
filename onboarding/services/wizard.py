@@ -14,6 +14,19 @@ from workspaces.models import Workspace
 
 TOTAL_STEPS = 6
 
+# --- scope (BUILD-PLAN L-1, P0-58) -------------------------------------------
+#
+# The wizard collects two different kinds of thing, and the org migration made
+# the difference matter. Email verification and plan selection belong to the
+# **account and the company**: they are answered once, and answering them again
+# for a second brand is a worse question than a redundant one — it implies the
+# second brand might be on a different plan, which it cannot be.
+#
+# Brand, market and operating preferences belong to the **workspace**. Each new
+# brand genuinely needs them, and each has different answers.
+ORG_SCOPE_STEPS: frozenset[int] = frozenset({1, 5})
+WORKSPACE_SCOPE_STEPS: frozenset[int] = frozenset({2, 3, 4})
+
 # design.md §10.4. What makes a step *done* — deliberately only the one thing
 # each step exists to collect, not every field on it.
 #
@@ -60,15 +73,59 @@ def completed_steps(workspace: Workspace, user: User) -> list[int]:
     )
     if workspace.plan_id:
         done.append(5)
+    # A later brand inherits the org's answers rather than being asked again
+    # (P0-58). Marking them done rather than hiding them keeps the rail honest:
+    # they *are* satisfied, just not by this workspace.
+    if is_shortened(workspace):
+        done.extend(step for step in ORG_SCOPE_STEPS if step not in done)
     if workspace.onboarding_complete:
         done.append(6)
     return sorted(done)
 
 
+def is_shortened(workspace: Workspace) -> bool:
+    """Whether this workspace re-runs the **brand steps only** (P0-58).
+
+    True for the second and every later brand in an organization: the account
+    is already verified and the company is already on a plan, so asking again
+    is not merely redundant — it implies the new brand could be on a different
+    plan, which the model does not allow (L-1: billing is per workspace,
+    entitlement is per organization).
+
+    Keyed on there being an *earlier* workspace rather than on a flag, so it
+    cannot drift out of step with reality: delete the first brand and the next
+    one legitimately becomes the first again.
+    """
+    organization_id = workspace.organization_id
+    if organization_id is None:
+        return False
+    return (
+        Workspace.objects.filter(organization_id=organization_id, onboarding_complete=True)
+        .exclude(pk=workspace.pk)
+        .exists()
+    )
+
+
+def steps_for(workspace: Workspace) -> list[int]:
+    """Which steps this workspace actually has to answer.
+
+    The full six on a first run; the three brand steps plus the finish on every
+    later one.
+    """
+    if not is_shortened(workspace):
+        return list(range(1, TOTAL_STEPS + 1))
+    return sorted(WORKSPACE_SCOPE_STEPS | {TOTAL_STEPS})
+
+
 def current_step(workspace: Workspace, user: User) -> int:
-    """The first step not yet satisfied — this is what makes it resumable."""
+    """The first step not yet satisfied — this is what makes it resumable.
+
+    Walks `steps_for`, not `range(1, 7)`: a shortened run must not park the
+    user on a step it never intends to show them.
+    """
     done = set(completed_steps(workspace, user))
-    return next((step for step in range(1, TOTAL_STEPS + 1) if step not in done), TOTAL_STEPS)
+    applicable = steps_for(workspace)
+    return next((step for step in applicable if step not in done), applicable[-1])
 
 
 def complete_onboarding(workspace: Workspace, user: User) -> Workspace:
