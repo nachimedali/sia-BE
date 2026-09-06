@@ -20,7 +20,7 @@ import logging
 from billing.gateways.base import CheckoutSession
 from billing.gateways.stripe import get_billing_gateway
 from billing.models import Pack, PackKind
-from billing.services import ledger
+from billing.services import ledger, pricing
 from billing.services.entitlements import entitlements_for
 from common.exceptions import OCCSError
 from workspaces.models import Workspace
@@ -46,24 +46,39 @@ def start_purchase(
         # sell something it cannot spend.
         entitlements_for(workspace).require_feature("video_generation")
 
-    if not pack.stripe_price_id:
+    # Resolved by the organization's billing currency (per-country pricing),
+    # falling back to the pack's default row and then to its legacy column.
+    resolved = pricing.pack_price(pack, organization=workspace.organization)
+    if not resolved.stripe_price_id:
         # A pack with no Stripe price is a configuration error, not a user error.
-        logger.error("pack has no Stripe price id", extra={"pack": pack.code})
+        logger.error(
+            "pack has no Stripe price id",
+            extra={"pack": pack.code, "currency": resolved.currency.code},
+        )
         raise OCCSError("This pack is not available for purchase yet.", code="pack_not_purchasable")
+    if resolved.is_fallback:
+        logger.warning(
+            "charging a fallback currency",
+            extra={"pack": pack.code, "currency": resolved.currency.code},
+        )
 
     session = get_billing_gateway().create_checkout_session(
         mode="payment",
         workspace_id=workspace.pk,
         customer_id=workspace.stripe_customer_id or None,
         customer_email=workspace.owner.email,
-        price_id=pack.stripe_price_id,
+        price_id=resolved.stripe_price_id,
         metadata={PACK_CODE_KEY: pack.code},
         success_url=success_url,
         cancel_url=cancel_url,
     )
     logger.info(
         "pack checkout session created",
-        extra={"workspace_id": workspace.pk, "pack": pack.code},
+        extra={
+            "workspace_id": workspace.pk,
+            "pack": pack.code,
+            "currency": resolved.currency.code,
+        },
     )
     return session
 
@@ -83,8 +98,15 @@ def fulfil_purchase(workspace: Workspace, *, pack_code: str) -> None:
 
     note = f"{pack.display_name} pack"
     if pack.kind == PackKind.VIDEO:
+        # The unit cost recorded on the ledger is the one actually charged, in
+        # the currency actually charged — reconstructing it from `pack` later
+        # would quote a dollar figure against a euro payment.
+        paid = pricing.pack_price(pack, organization=workspace.organization)
         ledger.purchase_video_units(
-            workspace, pack.units, unit_cost_cents=pack.unit_price_cents, note=note
+            workspace,
+            pack.units,
+            unit_cost_cents=paid.amount_minor // pack.units,
+            note=f"{note} ({paid.currency.code})",
         )
     else:
         ledger.purchase_credits(workspace, pack.units, note=note)

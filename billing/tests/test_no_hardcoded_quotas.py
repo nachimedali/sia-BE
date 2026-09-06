@@ -18,6 +18,7 @@ wolf gets deleted. Check 2 catches them in the shape that actually matters.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -55,13 +56,39 @@ def _application_sources() -> list[Path]:
     ]
 
 
+def _prose_lines(source: str) -> set[int]:
+    """Line numbers that are inside a string literal, docstrings included.
+
+    A number in prose is an example, not a quota. The `#` strip below handles
+    trailing comments, but a docstring explaining that "3700 is $37.00" has no
+    comment marker on the line at all — so the spans are found by parsing
+    rather than by looking for quotes.
+
+    Deliberately not a blanket "skip anything that looks like prose": the guard
+    is only useful if it still catches `cost = 3700` two lines further down.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # pragma: no cover — the suite would not import either
+        return set()
+
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            lines.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    return lines
+
+
 def test_no_hardcoded_quota_literals_in_app_code() -> None:
     """I8."""
     offenders: list[str] = []
 
     for path in _application_sources():
         source = path.read_text()
+        prose = _prose_lines(source)
         for lineno, line in enumerate(source.splitlines(), start=1):
+            if lineno in prose:
+                continue
             code = line.split("#", 1)[0]
 
             for literal in PRICE_AND_ALLOWANCE_LITERALS:

@@ -9,14 +9,40 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from billing.models import CreditLedger, Pack, Plan, VideoLedger
 
 
+class ResolvedPriceSerializer(serializers.Serializer[Any]):
+    """What this caller actually pays, in the currency they are billed in.
+
+    `display` is rendered server-side rather than in the browser: the symbol,
+    its position and the number of decimals are all per-currency facts that
+    live on the `Currency` row, and duplicating that formatting in TypeScript
+    would put ¥37.00 on a pricing page the day someone opens Japan.
+
+    `is_fallback` is honest rather than hidden — it says "priced in USD because
+    we do not price this in your currency yet", which is a different statement
+    from "this costs dollars".
+    """
+
+    amount_minor = serializers.IntegerField(read_only=True)
+    currency = serializers.CharField(source="currency.code", read_only=True)
+    display = serializers.CharField(read_only=True)
+    is_fallback = serializers.BooleanField(read_only=True)
+
+
 class PlanSerializer(serializers.ModelSerializer[Plan]):
     features = serializers.JSONField(read_only=True)
     quotas = serializers.SerializerMethodField()
+    #: What *this* caller pays, resolved against their organization's billing
+    #: currency. The `price_*_cents` columns beside it are the catalogue
+    #: default and stay for the pricing page's anonymous case, where there is
+    #: no organization to resolve against.
+    price = serializers.SerializerMethodField()
+    price_annual = serializers.SerializerMethodField()
 
     class Meta:
         model = Plan
@@ -27,11 +53,51 @@ class PlanSerializer(serializers.ModelSerializer[Plan]):
             "price_monthly_cents",
             "price_annual_cents",
             "currency",
+            "price",
+            "price_annual",
             "trial_days",
             "sort_order",
             "features",
             "quotas",
         )
+
+    def _organization(self) -> Any:
+        """The caller's organization, or `None` on the public pricing page.
+
+        `None` is the ordinary case here, not an edge one: `/billing/plans/` is
+        deliberately unauthenticated so the pricing page needs no session, and
+        an anonymous visitor resolves to the catalogue default.
+        """
+        request: Any = self.context.get("request")
+        user = getattr(request, "user", None)
+        if request is None or user is None or not getattr(user, "is_authenticated", False):
+            return None
+        from common.workspaces import request_workspace
+
+        try:
+            return request_workspace(request).organization
+        except Exception:
+            # A pricing page must never 500. Any failure to resolve a
+            # workspace — no membership, an ambiguous account, Redis down —
+            # simply means "quote the catalogue default", which is the same
+            # answer an anonymous visitor gets.
+            return None
+
+    @extend_schema_field(ResolvedPriceSerializer)
+    def get_price(self, obj: Plan) -> dict[str, Any]:
+        from billing.services import pricing
+
+        return ResolvedPriceSerializer(
+            pricing.plan_price(obj, organization=self._organization())
+        ).data
+
+    @extend_schema_field(ResolvedPriceSerializer)
+    def get_price_annual(self, obj: Plan) -> dict[str, Any]:
+        from billing.services import pricing
+
+        return ResolvedPriceSerializer(
+            pricing.plan_price(obj, organization=self._organization(), cycle="annual")
+        ).data
 
     def get_quotas(self, obj: Plan) -> dict[str, int]:
         from billing.models import QUOTA_FIELDS

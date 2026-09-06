@@ -17,8 +17,11 @@ from django.http import HttpRequest
 from billing.models import (
     FEATURE_KEYS,
     CreditLedger,
+    Currency,
     Pack,
+    PackPrice,
     Plan,
+    PlanPrice,
     StripeEvent,
     Subscription,
     VideoLedger,
@@ -57,6 +60,68 @@ class ImmutableCodeAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         return ("code",) if obj else ()
 
 
+@admin.register(Currency)
+class CurrencyAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Add a currency here; no deploy needed.
+
+    That is the whole reason this is a table rather than an enum (I8, Part 7
+    rule 10) — a new market opens on a Tuesday, and waiting for a release to
+    price for it is the wrong constraint.
+
+    **`minor units` is the field to get right.** Amounts are stored in the
+    currency's smallest unit everywhere, and that unit is not always 1/100:
+    JPY and KRW have none, a few dinars have three. Getting it wrong corrupts
+    no stored amount — arithmetic never reads it — but it will render ¥3700 as
+    ¥37.00 on the pricing page.
+
+    Withdraw a currency by unsetting *is active*: deleting one is refused by
+    the database while any price or organization still points at it.
+    """
+
+    list_display = ("code", "name", "symbol", "minor_units", "symbol_first", "is_active")
+    list_editable = ("symbol", "minor_units", "symbol_first", "is_active")
+    list_filter = ("is_active", "minor_units")
+    search_fields = ("code", "name")
+
+
+class PlanPriceInline(admin.TabularInline):  # type: ignore[type-arg]
+    """Per-country pricing, edited beside the plan it prices.
+
+    An inline rather than its own screen because a price is meaningless without
+    the plan — and because setting one currency's price while looking at
+    another's is how two markets end up accidentally identical.
+
+    Amounts are in the currency's **minor units**: 3700 is $37.00, and 3700 is
+    also ¥3700. Leave a Stripe id blank and checkout falls back to the plan's
+    own — which is what makes adding a second currency safe before its Stripe
+    prices exist.
+    """
+
+    model = PlanPrice
+    extra = 0
+    fields = (
+        "currency",
+        "monthly_cents",
+        "annual_cents",
+        "per_workspace_cents",
+        "stripe_price_id_monthly",
+        "stripe_price_id_annual",
+        "is_default",
+    )
+    autocomplete_fields = ("currency",)
+
+
+class PackPriceInline(admin.TabularInline):  # type: ignore[type-arg]
+    """The same, for a pack. Note there is no `units` here: a pack grants the
+    same number of credits everywhere and only the price changes — varying both
+    would make two markets incomparable in every revenue question."""
+
+    model = PackPrice
+    extra = 0
+    fields = ("currency", "amount_cents", "stripe_price_id", "is_default")
+    autocomplete_fields = ("currency",)
+
+
 @admin.register(Plan)
 class PlanAdmin(ImmutableCodeAdmin):
     """**This screen is where every commercial number lives** (I8, Part 7 rule
@@ -91,12 +156,20 @@ class PlanAdmin(ImmutableCodeAdmin):
     list_filter = ("is_public", "reaction_detail")
     search_fields = ("code", "display_name")
     save_on_top = True
+    inlines = (PlanPriceInline,)
 
     fieldsets = (
         (
             "Identity",
             {
-                "fields": ("code", "display_name", "tagline", "is_public", "sort_order"),
+                "fields": (
+                    "code",
+                    "display_name",
+                    "tagline",
+                    "currency",
+                    "is_public",
+                    "sort_order",
+                ),
                 "description": (
                     "`code` is the join key for Stripe mapping and analytics, so it is "
                     "frozen once the row exists (D13). Withdraw a plan by unsetting "
@@ -108,7 +181,6 @@ class PlanAdmin(ImmutableCodeAdmin):
             "Price",
             {
                 "fields": (
-                    "currency",
                     "price_monthly_cents",
                     "price_annual_cents",
                     "price_per_workspace_cents",
@@ -116,9 +188,12 @@ class PlanAdmin(ImmutableCodeAdmin):
                     "stripe_price_id_annual",
                 ),
                 "description": (
-                    "In <strong>cents</strong>. One subscription per organization with "
-                    "quantity = workspace count, so <em>price per workspace</em> is what "
-                    "the quantity multiplies; the monthly price is the first workspace."
+                    "The <strong>default</strong> price, in the currency's minor units. "
+                    "Per-country prices are the <em>Plan prices</em> rows below, and they "
+                    "take precedence for an organization billed in that currency — €37 is "
+                    "a separate decision from $37, not a conversion of it. One "
+                    "subscription per organization with quantity = workspace count, so "
+                    "<em>price per workspace</em> is what the quantity multiplies."
                 ),
             },
         ),
@@ -241,11 +316,13 @@ class PackAdmin(ImmutableCodeAdmin):
         "kind",
         "units",
         "price_cents",
+        "currency",
         "is_public",
         "sort_order",
     )
     list_filter = ("kind", "is_public")
     search_fields = ("code", "display_name")
+    inlines = (PackPriceInline,)
 
 
 @admin.register(Subscription)
