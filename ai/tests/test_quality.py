@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from django.test import override_settings
 from PIL import Image
 
 from ai.providers.fake import FORCE_LOW_SIMILARITY_SENTINEL, FakeTextProvider
@@ -109,7 +110,14 @@ def test_no_restrictions_skips_the_brand_constraint_check() -> None:
     assert "brand_constraints" not in result.checks
 
 
-def test_text_legibility_always_passes_and_says_why() -> None:
+def test_legibility_is_absent_rather_than_always_passing() -> None:
+    """C-11 / P0-04. The stub used to report `passed: True` for a check it
+    never performed, which implies coverage that does not exist — worse than
+    no check, because a reader of `checks` cannot tell the difference.
+
+    This asserts the *absence*, so reinstating the key without an OCR port
+    behind it fails the build rather than quietly restoring the lie.
+    """
     result = run_image_quality_gate(
         content=_png(),
         requested_aspect="1:1",
@@ -119,8 +127,7 @@ def test_text_legibility_always_passes_and_says_why() -> None:
         identity_similarity_threshold=0.6,
     )
 
-    assert result.checks["text_legibility"]["passed"] is True
-    assert "Phase 14" in result.checks["text_legibility"]["detail"]
+    assert "text_legibility" not in result.checks
 
 
 def test_text_gate_passes_clean_copy() -> None:
@@ -163,3 +170,31 @@ def test_the_repurpose_ceiling_is_wired_in_before_repurpose_generations_are() ->
         "into run_image_quality_gate so REPURPOSE_MAX_SIMILARITY is enforced, "
         "then delete this test."
     )
+
+
+# -----------------------------------------------------------------------------
+# The video port — C-11 / P0-04
+# -----------------------------------------------------------------------------
+def test_a_fresh_checkout_resolves_a_video_provider() -> None:
+    """Part 7 rule 6: every external dependency is a port with a fake, and a
+    fresh checkout runs end to end with zero third-party accounts."""
+    from ai.providers.video import get_video_provider
+
+    provider = get_video_provider()
+
+    assert provider is not None
+    result = provider.generate(
+        prompt="a mug on a table", reference_images=[], aspect="9:16", duration_seconds=6.0
+    )
+    assert result.mime == "video/mp4"
+    assert result.provider == "fake"
+
+
+@override_settings(USE_FAKE_AI_PROVIDERS=False, VIDEO_PROVIDER_API_KEY="")
+def test_an_unconfigured_deployment_has_no_video_provider() -> None:
+    """`None`, not a fake. C-11's complaint was a gate in front of nothing; the
+    fix is a port that admits when it is empty rather than one that quietly
+    produces a clip nobody rendered."""
+    from ai.providers.video import get_video_provider
+
+    assert get_video_provider() is None

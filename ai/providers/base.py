@@ -93,6 +93,49 @@ class ImageProvider(Protocol):
     ) -> ImageGenerationResult: ...
 
 
+@dataclass(frozen=True)
+class VideoResult:
+    """One rendered clip.
+
+    `content` rather than a URL: the ingestion path stores bytes and mints its
+    own signed URL, so a provider handing back a link would put a second,
+    expiring source of truth for the same asset into the system.
+    """
+
+    content: bytes
+    mime: str
+    duration_seconds: float
+    provider: str
+    model: str
+    latency_ms: int
+
+
+class VideoProvider(Protocol):
+    """Video generation (C-11 / P0-04).
+
+    **The port exists; no paid vendor sits behind it.** C-11's complaint was
+    that video was "gated correctly, no provider" — a gate in front of nothing.
+    Two options were open: remove the gate, or put a port with a fake behind
+    it so a fresh checkout runs end to end (Part 7 rule 6). The port is the
+    better of the two, because the gate itself is correct and deleting it would
+    have to be undone the day a vendor is chosen.
+
+    In production `get_video_provider()` resolves to `None` and the pipeline
+    says so plainly, rather than a fake quietly producing a clip nobody
+    rendered.
+    """
+
+    def generate(
+        self,
+        *,
+        prompt: str,
+        reference_images: list[bytes],
+        aspect: str,
+        duration_seconds: float,
+        model: str | None = None,
+    ) -> VideoResult: ...
+
+
 class EmbeddingProvider(Protocol):
     """Text → vector, for the trend clustering in design.md §8.4.
 

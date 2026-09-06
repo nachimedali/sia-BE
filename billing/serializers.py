@@ -56,6 +56,13 @@ class EntitlementsSerializer(serializers.Serializer[Any]):
     trial_ends_at = serializers.DateTimeField(read_only=True, allow_null=True)
     is_trialing = serializers.BooleanField(read_only=True)
     trial_days_remaining = serializers.IntegerField(read_only=True)
+    #: The second entitlement axis (P0-24, P0-59). Org add-ons alongside the
+    #: org plan — the UI needs both to render `data-plan` + `data-addons`.
+    addons = serializers.ListField(child=serializers.CharField(), read_only=True)
+    #: The quota trial's balance (L-4, P0-20). `null` on every other plan,
+    #: which is what tells the UI not to render a trial counter at all —
+    #: distinct from `0`, which would mean "the trial is spent".
+    trial_posts_remaining = serializers.IntegerField(read_only=True, allow_null=True)
 
 
 class CreditLedgerSerializer(serializers.ModelSerializer[CreditLedger]):

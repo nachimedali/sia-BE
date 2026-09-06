@@ -57,6 +57,7 @@ from ai.models import (
 from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
+from ai.providers.video import get_video_provider
 from ai.services import prompting, quality
 from ai.services.costing import resolve_cost
 from billing.services import ledger
@@ -119,13 +120,19 @@ def create_generation(
         raise GenerationModeNotAvailableError(detail={"mode": mode})
 
     if kind == GenerationKind.VIDEO:
-        # The entitlement gate is real even though nothing behind it is
-        # (Phase 14 builds the provider) — Free must be blocked here, not
-        # only once a VideoProvider exists to call.
+        # Entitlement first, availability second, and the order matters: a Free
+        # workspace must see 402-upgrade rather than "no provider configured",
+        # because the second answer would be true and useless — upgrading is
+        # what they need to hear.
         entitlements.require_feature("video_generation")
-        raise GenerationKindNotAvailableError(
-            "Video generation lands in a later phase.", detail={"kind": kind}
-        )
+        if get_video_provider() is None:
+            # C-11 / P0-04: the gate used to stand in front of nothing. It now
+            # stands in front of a port, and this is what an unconfigured
+            # deployment says — plainly, rather than a fake quietly producing a
+            # clip nobody rendered.
+            raise GenerationKindNotAvailableError(
+                "No video provider is configured for this deployment.", detail={"kind": kind}
+            )
     if kind not in {GenerationKind.TEXT, GenerationKind.IMAGE}:
         raise GenerationKindNotAvailableError(detail={"kind": kind})
 

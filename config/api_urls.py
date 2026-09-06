@@ -65,6 +65,7 @@ from reminders.views import (
     ReminderSnoozeView,
     ReminderViewSet,
 )
+from tools.views import ToolListView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
 from workspaces.views import (
     ApiKeyView,
@@ -119,6 +120,12 @@ urlpatterns = [
     # the token is the credential. Hash-only, single-use, 14 days.
     path("invites/<str:token>/accept/", InvitationAcceptView.as_view(), name="invite-accept"),
     path("billing/addons/", OrganizationAddonView.as_view(), name="billing-addons"),
+    # C-11 / P0-04: `/app/tools` had a frontend and no backend, so it 404'd.
+    # Built rather than removed — six small forms over machinery that already
+    # exists. `POST` is the one endpoint that calls a provider in-request; see
+    # `tools/views.py` for why that exception is scoped rather than general.
+    path("tools/", ToolListView.as_view(), name="tools"),
+    path("tools/<str:slug>/", ToolRunView.as_view(), name="tool-run"),
     # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
     path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
     path("onboarding/", OnboardingView.as_view(), name="onboarding"),
