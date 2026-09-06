@@ -29,7 +29,7 @@ def test_plans_are_public_so_the_pricing_page_needs_no_session(plans) -> None:
     response = APIClient().get(PLANS_URL)
 
     assert response.status_code == 200
-    assert [row["code"] for row in response.json()] == ["free", "pro", "advanced"]
+    assert [row["code"] for row in response.json()] == ["trial", "free", "pro", "advanced"]
 
 
 def test_plan_payload_carries_the_quotas_the_pricing_page_renders(plans) -> None:
@@ -47,7 +47,11 @@ def test_non_public_plans_are_hidden(plans) -> None:
     plan.is_public = False
     plan.save()
 
-    assert [row["code"] for row in APIClient().get(PLANS_URL).json()] == ["free", "advanced"]
+    assert [row["code"] for row in APIClient().get(PLANS_URL).json()] == [
+        "trial",
+        "free",
+        "advanced",
+    ]
 
 
 # -----------------------------------------------------------------------------

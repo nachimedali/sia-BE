@@ -298,6 +298,17 @@ CELERY_BEAT_SCHEDULE = {
         "task": "analytics.tasks.follow_metrics_delta",
         "schedule": crontab(minute="*/10"),
     },
+    # Nightly, after the ledger reconciliation it complements. Reports only —
+    # a repair here would hide the write path that caused the drift (P0-62).
+    "billing-reconcile-organizations": {
+        "task": "billing.tasks.reconcile_organizations",
+        "schedule": crontab(hour=3, minute=15),
+    },
+    # 02:45, as BUILD-PLAN Phase 0 specifies, alongside the plan-trial sweep.
+    "billing-expire-addon-trials": {
+        "task": "billing.tasks.expire_addon_trials",
+        "schedule": crontab(hour=2, minute=45),
+    },
     # Daily: follower counts move slowly, and this is the denominator
     # `engagement_rate` falls back to where a platform reports no impressions.
     "analytics-snapshot-accounts": {

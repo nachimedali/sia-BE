@@ -339,6 +339,22 @@ class LedgerEntry(AppendOnly):
 
     append_only_hint = "write a compensating row instead of updating this one (I4)."
 
+    #: **Re-scoped to the organization** (L-1, P0-53): entitlement accounting
+    #: pools at the company, so the balance is the org's. `workspace` is
+    #: retained for *attribution* — which brand spent it — and is not the
+    #: aggregation key after the cut-over.
+    #:
+    #: Nullable through the backfill. Append-only tables are re-scoped by
+    #: adding a nullable FK and filling it with raw SQL in a data migration —
+    #: the one sanctioned exception to "never rewrite", recorded in a
+    #: `MigrationNote` row.
+    organization = models.ForeignKey(
+        "workspaces.Organization",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="%(class)s_entries",
+    )
     workspace = models.ForeignKey(
         "workspaces.Workspace", on_delete=models.CASCADE, related_name="%(class)s_entries"
     )
@@ -482,13 +498,6 @@ class ReplyLedger(LedgerEntry):
     plan row, never here (Part 7 rule 10).
     """
 
-    organization = models.ForeignKey(
-        "workspaces.Organization",
-        on_delete=models.CASCADE,
-        related_name="reply_ledger_entries",
-        null=True,
-        blank=True,
-    )
     reason = models.CharField(max_length=16, choices=ReplyReason.choices)
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
