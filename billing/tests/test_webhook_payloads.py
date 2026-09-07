@@ -74,8 +74,8 @@ def test_a_subscription_for_an_unknown_workspace_is_dropped_quietly(pro) -> None
 def test_a_subscription_is_attributed_by_customer_when_metadata_is_missing(workspace, pro) -> None:
     """Subscriptions created in the Stripe dashboard carry no metadata, so the
     customer id is the only link back."""
-    workspace.stripe_customer_id = "cus_1"
-    workspace.save(update_fields=["stripe_customer_id"])
+    workspace.organization.stripe_customer_id = "cus_1"
+    workspace.organization.save(update_fields=["stripe_customer_id"])
 
     webhooks.process_event(_subscription(workspace, metadata={}))
 
@@ -89,7 +89,7 @@ def test_a_price_we_do_not_recognise_is_refused_rather_than_guessed(workspace, p
 
     assert not Subscription.objects.exists()
     workspace.refresh_from_db()
-    assert workspace.plan.code == "free"
+    assert workspace.organization.plan.code == "free"
 
 
 def test_a_subscription_with_no_line_items_is_refused(workspace, pro) -> None:
@@ -114,7 +114,7 @@ def test_an_expanded_customer_object_is_read_the_same_as_a_string(workspace, pro
     )
 
     workspace.refresh_from_db()
-    assert workspace.stripe_customer_id == "cus_expanded"
+    assert workspace.organization.stripe_customer_id == "cus_expanded"
 
 
 def test_a_checkout_session_without_a_reference_is_ignored(workspace) -> None:
@@ -127,7 +127,7 @@ def test_a_checkout_session_without_a_reference_is_ignored(workspace) -> None:
     )
 
     workspace.refresh_from_db()
-    assert workspace.stripe_customer_id == ""
+    assert workspace.organization.stripe_customer_id == ""
 
 
 def test_a_checkout_session_for_a_deleted_workspace_does_not_crash(pro) -> None:
@@ -153,7 +153,7 @@ def test_an_unknown_stripe_status_does_not_entitle(workspace, pro) -> None:
     assert Subscription.objects.get(stripe_subscription_id="sub_1").status == (
         SubscriptionStatus.INCOMPLETE
     )
-    assert workspace.plan.code == "free"
+    assert workspace.organization.plan.code == "free"
 
 
 # -----------------------------------------------------------------------------
@@ -202,8 +202,8 @@ def test_a_payment_failure_for_an_unknown_subscription_is_ignored(workspace) -> 
 
 
 def test_a_repeated_customer_id_is_not_rewritten(workspace) -> None:
-    workspace.stripe_customer_id = "cus_same"
-    workspace.save(update_fields=["stripe_customer_id"])
+    workspace.organization.stripe_customer_id = "cus_same"
+    workspace.organization.save(update_fields=["stripe_customer_id"])
     before = workspace.updated_at
 
     webhooks.process_event(

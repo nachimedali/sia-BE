@@ -16,6 +16,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from common.text import HASHTAG_RE
+from content.services.options import resolve as resolve_options
 from content.services.rules import PLATFORM_RULES
 
 if TYPE_CHECKING:
@@ -38,10 +40,6 @@ class MediaLike(Protocol):
     file: Any
 
 
-# A hashtag starts at a word boundary so "a#b" is not one. `\w` already covers
-# unicode word characters under Python's default (unicode) regex mode.
-_HASHTAG_RE = re.compile(r"(?<!\w)#(\w+)")
-
 # Reserves room for the " (12/12)" suffix a thread chunk gets numbered with.
 _THREAD_SUFFIX_BUDGET = 8
 
@@ -53,6 +51,10 @@ class AdaptedMedia:
     id: int
     kind: str
     url: str
+    #: Always a string, never null and never absent (P1-06). An image with no
+    #: alt text renders `""`; a consumer that has to tell three states of a
+    #: string apart is one that will eventually get one of them wrong.
+    alt: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,10 @@ class AdaptedPayload:
     thread: list[str] = field(default_factory=list)
     hashtags: list[str] = field(default_factory=list)
     media: list[AdaptedMedia] = field(default_factory=list)
+    #: Per-platform composer settings, resolved against `rules.py` (P1-11):
+    #: declared defaults filled in, undeclared or unusable keys dropped. Always
+    #: present, `{}` for a platform with nothing to configure.
+    options: dict[str, Any] = field(default_factory=dict)
     truncated: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -74,7 +80,8 @@ class AdaptedPayload:
             "body": self.body,
             "thread": list(self.thread),
             "hashtags": list(self.hashtags),
-            "media": [{"id": m.id, "kind": m.kind, "url": m.url} for m in self.media],
+            "media": [{"id": m.id, "kind": m.kind, "url": m.url, "alt": m.alt} for m in self.media],
+            "options": dict(self.options),
             "truncated": self.truncated,
             "warnings": list(self.warnings),
         }
@@ -84,7 +91,7 @@ def _extract_hashtags(body: str) -> list[str]:
     """Order-preserving, case-preserving, de-duplicated by lowercase form."""
     seen: set[str] = set()
     hashtags: list[str] = []
-    for match in _HASHTAG_RE.findall(body):
+    for match in HASHTAG_RE.findall(body):
         key = match.lower()
         if key in seen:
             continue
@@ -94,7 +101,7 @@ def _extract_hashtags(body: str) -> list[str]:
 
 
 def _strip_hashtags(body: str) -> str:
-    stripped = _HASHTAG_RE.sub("", body)
+    stripped = HASHTAG_RE.sub("", body)
     # Collapse the double space, or blank line, a removed hashtag leaves behind.
     stripped = re.sub(r"[ \t]{2,}", " ", stripped)
     stripped = re.sub(r"[ \t]+(?=\n|$)", "", stripped)
@@ -139,8 +146,22 @@ def _split_into_thread(text: str, limit: int) -> list[str]:
 
 
 def adapt_for_platform(
-    *, master_body: str, media_assets: Sequence[MediaLike], platform: str
+    *,
+    master_body: str,
+    media_assets: Sequence[MediaLike],
+    platform: str,
+    alt_text: Mapping[int, str] | None = None,
+    options: Mapping[str, Any] | None = None,
+    workspace: Any = None,
 ) -> AdaptedPayload:
+    """`alt_text` maps media id → description for *this* target. Passed in
+    rather than read off the asset because alt text is a property of the use,
+    not of the file (P1-06) — the engine is handed the resolution, it does not
+    perform it.
+
+    `options` is the **stored** `platform_options`, resolved here rather than by
+    the caller. That keeps P1-04's rule intact for the third overridable thing:
+    body, media and now settings all become what publish sends in one place."""
     rule = PLATFORM_RULES[platform]
     hashtags = _extract_hashtags(master_body)
     warnings: list[str] = []
@@ -186,8 +207,14 @@ def adapt_for_platform(
             f"{over_cap_count} asset(s) dropped: {platform} allows at most {rule.max_media}."
         )
 
+    descriptions = alt_text or {}
     media = [
-        AdaptedMedia(id=asset.id, kind=asset.kind, url=asset.file.url if asset.file else "")
+        AdaptedMedia(
+            id=asset.id,
+            kind=asset.kind,
+            url=asset.file.url if asset.file else "",
+            alt=descriptions.get(asset.id, ""),
+        )
         for asset in kept
     ]
 
@@ -197,19 +224,32 @@ def adapt_for_platform(
         thread=thread,
         hashtags=hashtags,
         media=media,
+        options=resolve_options(platform, dict(options or {}), workspace=workspace),
         truncated=truncated,
         warnings=warnings,
     )
 
 
 def render_payloads(
-    *, master_body: str, media_assets: Sequence[MediaLike], platforms: Iterable[str]
+    *,
+    master_body: str,
+    media_assets: Sequence[MediaLike],
+    platforms: Iterable[str],
+    alt_text: Mapping[int, str] | None = None,
+    options: Mapping[str, Mapping[str, Any]] | None = None,
+    workspace: Any = None,
 ) -> dict[str, AdaptedPayload]:
     """The one mapping both `render_post` and `PostPreviewView` build — a
     platform, adapted, for each requested platform."""
+    per_platform = options or {}
     return {
         platform: adapt_for_platform(
-            master_body=master_body, media_assets=media_assets, platform=platform
+            master_body=master_body,
+            media_assets=media_assets,
+            platform=platform,
+            alt_text=alt_text,
+            options=per_platform.get(platform),
+            workspace=workspace,
         )
         for platform in platforms
     }
@@ -229,8 +269,26 @@ def render_post(post: Post, platforms: Iterable[str]) -> dict[str, AdaptedPayloa
     caller passes a platform and receives what will be sent; it is never handed
     the parts and asked to assemble them.
     """
-    assets = list(post.ordered_media())
+    # `post.media_attachments.all()` evaluated exactly **once**, not through
+    # `Post.ordered_attachments()` — that helper does its own `.all()`
+    # internally, and calling it here and then reading `media_attachments`
+    # again for the override rows would be two evaluations of the same
+    # relation. Prefetched, Django's cache would absorb the second one; not
+    # prefetched (`scheduling.publishing.build_targets` loads a plain `Post`
+    # with no such prefetch), it is a second query. Fetching once and
+    # partitioning in Python holds the "one query" property either way.
+    all_attachments = list(post.media_attachments.all())
+    attachments = [a for a in all_attachments if a.target_override_id is None]
+    assets = [attachment.media_asset for attachment in attachments]
     by_id = {asset.id: asset for asset in assets}
+    base_alt = {a.media_asset_id: a.alt_text for a in attachments}
+    target_alt: dict[int, dict[int, str]] = {}
+    for attachment in all_attachments:
+        if attachment.target_override_id is not None:
+            target_alt.setdefault(attachment.target_override_id, {})[attachment.media_asset_id] = (
+                attachment.alt_text
+            )
+
     # One query for the whole render rather than one per platform: preview asks
     # for every platform at once, and a six-platform post should not cost six
     # round-trips to answer a question about itself.
@@ -243,6 +301,9 @@ def render_post(post: Post, platforms: Iterable[str]) -> dict[str, AdaptedPayloa
             master_body=_resolved_body(post, target),
             media_assets=_resolved_media(assets, by_id, target),
             platform=platform,
+            alt_text=_resolved_alt_text(base_alt, target_alt, target),
+            options=target.platform_options if target is not None else {},
+            workspace=post.workspace,
         )
     return payloads
 
@@ -273,3 +334,23 @@ def _resolved_media(
     if target is None or target.media_override is None:
         return list(assets)
     return [by_id[asset_id] for asset_id in target.media_override if asset_id in by_id]
+
+
+def _resolved_alt_text(
+    base: Mapping[int, str], per_target: Mapping[int, Mapping[int, str]], target: Any
+) -> dict[int, str]:
+    """The post-level description, or this target's own.
+
+    An **empty** override falls back to the base text rather than publishing a
+    blank description: unlike a body, where "" is a deliberately empty caption,
+    a blank alt text is never a choice anybody makes on purpose — it is the
+    field being cleared. Clearing an override means "use what the post says",
+    which is the only reading that lets a user undo a per-platform edit.
+    """
+    resolved = dict(base)
+    if target is None:
+        return resolved
+    for asset_id, text in per_target.get(target.id, {}).items():
+        if text:
+            resolved[asset_id] = text
+    return resolved

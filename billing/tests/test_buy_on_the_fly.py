@@ -60,8 +60,8 @@ def test_only_the_matching_kind_is_offered(workspace: Any, catalogue: None) -> N
 
 
 def test_video_exhaustion_offers_video_packs(workspace: Any, plans: Any, catalogue: None) -> None:
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
 
     with pytest.raises(InsufficientVideoUnits) as caught:
         entitlements_for(workspace).require_video_units(999)

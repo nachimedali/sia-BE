@@ -22,6 +22,7 @@ from ai.models import (
     VoiceProfile,
 )
 from common.workspaces import scope_related_field_to_workspace
+from content.models import MediaAsset
 from content.serializers import MediaAssetSerializer
 from products.models import Product
 
@@ -119,12 +120,18 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
     scene = serializers.CharField(allow_blank=True, default="")
     is_batch = serializers.BooleanField(default=False)
     n = serializers.IntegerField(default=3, min_value=1, max_value=6)
+    #: `CAPTION` only — the image to read (P1-13). Scoped to the caller's own
+    #: workspace like every other reference on this serializer.
+    source_media = serializers.PrimaryKeyRelatedField(
+        queryset=MediaAsset.objects.none(), required=False, allow_null=True
+    )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         scope_related_field_to_workspace(self.fields["product"], request, Product)
         scope_related_field_to_workspace(self.fields["voice_profile"], request, VoiceProfile)
+        scope_related_field_to_workspace(self.fields["source_media"], request, MediaAsset)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         """The first of I5's four gates (design.md §8.1) — credits are
@@ -134,6 +141,9 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
         having run."""
         from ai.services.costing import preflight_require_credits
         from common.workspaces import request_workspace
+
+        if attrs["mode"] == GenerationMode.CAPTION and not attrs.get("source_media"):
+            raise serializers.ValidationError({"source_media": "A caption needs an image to read."})
 
         request = self.context.get("request")
         if request is not None:
@@ -146,3 +156,12 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
 class ReviseRequestSerializer(serializers.Serializer[Any]):
     instructions = serializers.CharField()
     n = serializers.IntegerField(default=1, min_value=1, max_value=6)
+
+
+class RankedHashtagSerializer(serializers.Serializer[Any]):
+    tag = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class HashtagSuggestionSerializer(serializers.Serializer[Any]):
+    hashtags = RankedHashtagSerializer(many=True)

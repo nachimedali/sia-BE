@@ -29,8 +29,8 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def trial_workspace(workspace: Any, organization: Any) -> Any:
     plan = Plan.objects.get(code="trial")
-    workspace.plan = plan
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plan
+    workspace.organization.save(update_fields=["plan"])
     organization.plan = plan
     organization.save(update_fields=["plan"])
     return workspace
@@ -128,8 +128,6 @@ def test_the_quota_is_pooled_across_the_organization(
         organization=organization,
         name="Sibling",
         slug=Workspace.unique_slug("Sibling"),
-        owner=user,
-        plan=trial_workspace.plan,
     )
 
     trial.consume_trial_post(trial_workspace)
@@ -197,8 +195,8 @@ def test_reminder_is_available_on_every_plan(
     gating it would leave those formats unreachable rather than merely unpaid.
     This test is what keeps a future entitlement check out of that branch."""
     plan = Plan.objects.get(code=code)
-    workspace.plan = plan
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plan
+    workspace.organization.save(update_fields=["plan"])
     organization.plan = plan
     organization.save(update_fields=["plan"])
 

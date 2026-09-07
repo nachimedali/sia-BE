@@ -201,8 +201,8 @@ def test_free_tier_cannot_auto_publish(
     schedule endpoint's own 402 cannot possibly catch.
     """
     post = _make_due(_scheduled_post(paid_workspace, user, body="Not on Free"))
-    paid_workspace.plan = plans["free"]
-    paid_workspace.save(update_fields=["plan"])
+    paid_workspace.organization.plan = plans["free"]
+    paid_workspace.organization.save(update_fields=["plan"])
     post.refresh_from_db()
 
     with pytest.raises(FeatureNotAvailable):

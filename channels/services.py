@@ -44,23 +44,54 @@ class AccountNotPublishableError(StateConflict):
 
 
 def active_accounts(workspace: Workspace) -> Any:
+    """This workspace's own publishable accounts.
+
+    **Reach, not accounting.** A post in one brand must never publish through
+    another brand's account, however the allowance is shared — which is why
+    `pooled_accounts` below is a separate function rather than this one taking
+    a wider filter.
+    """
     return SocialAccount.objects.filter(
         workspace=workspace, status=SocialAccountStatus.ACTIVE
     ).order_by("connected_at", "pk")
 
 
+def pooled_accounts(workspace: Workspace) -> Any:
+    """Every publishable account in the workspace's **organization** (P1-14).
+
+    L-1: entitlement accounting pools at the company, so a five-account plan is
+    five accounts across the whole organization and not five per brand. Counted
+    per workspace, the one cap I6 calls *hard* would scale with how many
+    workspaces someone created.
+
+    Ordered oldest-first across the org, because that ordering is what decides
+    who survives a downgrade — and the answer has to be "the connections the
+    company has actually been publishing from", not "whoever is in this
+    workspace".
+    """
+    return SocialAccount.objects.filter(
+        workspace__organization_id=workspace.organization_id,
+        status=SocialAccountStatus.ACTIVE,
+    ).order_by("connected_at", "pk")
+
+
 def enforce_account_cap(workspace: Workspace) -> None:
-    """Refuses when connecting one more would exceed the workspace's cap."""
+    """Refuses when connecting one more would exceed the organization's cap."""
     entitlements = entitlements_for(workspace)
-    entitlements.check_quota(QUOTA_KEY, active_accounts(workspace).count() + 1)
+    entitlements.check_quota(QUOTA_KEY, pooled_accounts(workspace).count() + 1)
 
 
 def park_accounts_over_cap(workspace: Workspace) -> None:
     """Marks the newest accounts beyond the cap `OVER_LIMIT` (I10: mark, never
-    delete). Called on downgrade; the oldest connections survive, because
-    those are the ones the workspace has been publishing from."""
+    delete). Called on downgrade; the oldest connections survive, because those
+    are the ones the organization has been publishing from.
+
+    Pooled like the cap it enforces — parking per workspace against an
+    org-wide limit would leave the company over its cap with every workspace
+    individually under it.
+    """
     limit = entitlements_for(workspace).quota(QUOTA_KEY)
-    over_cap = [account.pk for account in active_accounts(workspace)[limit:]]
+    over_cap = [account.pk for account in pooled_accounts(workspace)[limit:]]
     if not over_cap:
         return
     SocialAccount.objects.filter(pk__in=over_cap).update(
@@ -68,7 +99,11 @@ def park_accounts_over_cap(workspace: Workspace) -> None:
     )
     logger.info(
         "parked social accounts over plan cap",
-        extra={"workspace_id": workspace.pk, "count": len(over_cap), "limit": limit},
+        extra={
+            "organization_id": workspace.organization_id,
+            "count": len(over_cap),
+            "limit": limit,
+        },
     )
 
 

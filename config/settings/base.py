@@ -333,6 +333,28 @@ CELERY_BEAT_SCHEDULE = {
         "task": "products.tasks.run_due_autopilot",
         "schedule": crontab(hour=5, minute=0),
     },
+    # Nightly, in the quiet hour before the billing sweeps. Version history
+    # ages out under `Plan.version_history_days`; the job stops at a checkpoint
+    # rather than at a date, so a run that is skipped for a week costs nothing
+    # but a little storage (P1-08).
+    "content-prune-post-revisions": {
+        "task": "content.tasks.prune_post_revisions",
+        "schedule": crontab(hour=1, minute=50),
+    },
+    # Hourly, though each rule only fills its own `horizon_days` window — the
+    # scan recomputes a grid rather than draining a queue, so running it more
+    # often costs one query per active rule and running it less often costs
+    # nothing at all. Hourly rather than daily because a rule created at 10:00
+    # for "every day at 09:00" should have tomorrow's draft ready before
+    # someone opens the calendar this afternoon, not the next morning (P1-10).
+    #
+    # **A missed run is not a missed post.** The grid recomputes the *current*
+    # window; it never replays slots that passed while nothing was running,
+    # which is why a worker down for a week backfills instead of flooding.
+    "content-materialise-recurrence": {
+        "task": "content.tasks.recurrence_materialise",
+        "schedule": crontab(minute=20),
+    },
 }
 
 # -----------------------------------------------------------------------------
@@ -408,6 +430,16 @@ ZERNIO_API_KEY = env("ZERNIO_API_KEY", default="")
 ZERNIO_TIMEOUT_SECONDS = env.int("ZERNIO_TIMEOUT_SECONDS", default=30)
 
 USE_FAKE_PLATFORM_ADAPTER = env.bool("USE_FAKE_PLATFORM_ADAPTER", default=not ZERNIO_API_KEY)
+
+# -----------------------------------------------------------------------------
+# Media editing (P1-12). Image editing runs on Pillow, already a dependency, so
+# it needs no vendor and defaults to the real adapter. Video trimming needs a
+# codec — a system dependency Part 7 rule 6 says a fresh checkout must not
+# require — so it resolves to nothing until a backend is named, and the
+# service says so plainly rather than a fake producing a clip nobody rendered.
+# -----------------------------------------------------------------------------
+VIDEO_EDITOR_BACKEND = env("VIDEO_EDITOR_BACKEND", default="")
+USE_FAKE_MEDIA_EDITOR = env.bool("USE_FAKE_MEDIA_EDITOR", default=False)
 
 # HMAC secret for the `comment.received` webhook (P0-35). Empty means the
 # endpoint refuses every delivery, which is the right default: an unconfigured

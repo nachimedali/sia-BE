@@ -131,12 +131,28 @@ def _restriction_lines(product: Product | None) -> list[str]:
     return [f"Hard constraints — must not be violated:\n{constraints}"]
 
 
+#: Mode-specific framing, appended to the shared system prompt (P1-13).
+#: Declared as data for the same reason `rules.py` is: a new mode should be a
+#: row, not a branch in the assembler.
+MODE_INSTRUCTIONS: dict[str, str] = {
+    "CAPTION": (
+        "Write a caption for the attached image. Describe what is actually in "
+        "the picture; never invent a detail the image does not show."
+    ),
+    "SUGGEST": (
+        "Propose distinct post ideas, not variations of one. Each should be "
+        "something this brand could plausibly publish next week."
+    ),
+}
+
+
 def assemble_text_prompt(
     *,
     idea: str,
     workspace: Workspace,
     product: Product | None = None,
     voice_profile: VoiceProfile | None = None,
+    mode: str = "",
 ) -> GroundedPrompt:
     # Resolved once each. Both are real queries — the performance signal walks
     # every capture in the plan's horizon — so computing them a second time to
@@ -163,7 +179,16 @@ def assemble_text_prompt(
     if performance:
         user_lines.append(performance)
 
-    system = "\n".join([TEXT_SYSTEM_PROMPT, *_voice_lines(workspace, voice_profile)])
+    mode_instruction = MODE_INSTRUCTIONS.get(mode)
+    if mode_instruction:
+        grounding["mode_instruction"] = mode
+    system = "\n".join(
+        [
+            TEXT_SYSTEM_PROMPT,
+            *_voice_lines(workspace, voice_profile),
+            *filter(None, [mode_instruction]),
+        ]
+    )
     return GroundedPrompt(system=system, user="\n\n".join(user_lines), grounding=grounding)
 
 

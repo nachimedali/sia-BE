@@ -129,12 +129,9 @@ def reconcile_stripe_quantity() -> list[dict[str, Any]]:
 
 def reconcile_organizations() -> int:
     """The org-dimension sweep. Returns how many findings were raised."""
-    from billing.services.plans import parity_drift
-
     findings: list[dict[str, Any]] = []
     findings.extend(reconcile_ledger_scope())
     findings.extend(reconcile_stripe_quantity())
-    findings.extend({"issue": "plan parity", **row} for row in parity_drift())
 
     if findings:
         logger.error(

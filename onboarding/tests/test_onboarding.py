@@ -250,8 +250,6 @@ def test_a_second_brand_runs_the_brand_steps_only(workspace, user, plans) -> Non
         organization=workspace.organization,
         name="Second Brand",
         slug=Workspace.unique_slug("Second Brand"),
-        owner=user,
-        plan=workspace.plan,
     )
 
     assert wizard.is_shortened(second) is True
@@ -270,8 +268,6 @@ def test_the_shortened_run_starts_on_a_brand_step(workspace, user, plans) -> Non
         organization=workspace.organization,
         name="Second Brand",
         slug=Workspace.unique_slug("Second Brand"),
-        owner=user,
-        plan=workspace.plan,
     )
 
     assert wizard.current_step(second, user) == 2
@@ -289,8 +285,6 @@ def test_org_scope_steps_read_as_done_on_a_second_brand(workspace, user, plans) 
         organization=workspace.organization,
         name="Second Brand",
         slug=Workspace.unique_slug("Second Brand"),
-        owner=user,
-        plan=workspace.plan,
     )
 
     done = wizard.completed_steps(second, user)
@@ -311,8 +305,6 @@ def test_deleting_the_first_brand_makes_the_next_one_first_again(workspace, user
         organization=workspace.organization,
         name="Second Brand",
         slug=Workspace.unique_slug("Second Brand"),
-        owner=user,
-        plan=workspace.plan,
     )
     assert wizard.is_shortened(second) is True
 

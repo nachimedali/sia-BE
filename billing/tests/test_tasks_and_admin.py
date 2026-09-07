@@ -28,14 +28,14 @@ def test_grant_task_grants_and_then_stops(workspace) -> None:
 
 
 def test_trial_expiry_task_downgrades(workspace, plans) -> None:
-    workspace.plan = plans["pro"]
-    workspace.trial_ends_at = timezone.now() - dt.timedelta(days=1)
-    workspace.save(update_fields=["plan", "trial_ends_at"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.trial_ends_at = timezone.now() - dt.timedelta(days=1)
+    workspace.organization.save(update_fields=["plan", "trial_ends_at"])
 
     assert tasks.expire_trials() == 1
 
     workspace.refresh_from_db()
-    assert workspace.plan.code == "free"
+    assert workspace.organization.plan.code == "free"
 
 
 def test_reconcile_task_is_quiet_when_the_ledgers_agree(workspace) -> None:
@@ -60,8 +60,8 @@ def test_reconcile_task_counts_every_drifted_row(workspace) -> None:
 
 def test_a_workspace_without_a_plan_is_skipped_rather_than_crashing(workspace) -> None:
     """Reachable when seed_plans has never run; the sweep must not stop."""
-    workspace.plan = None
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = None
+    workspace.organization.save(update_fields=["plan"])
 
     assert tasks.grant_monthly_allowances() == 0
 

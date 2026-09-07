@@ -115,29 +115,41 @@ def test_a_budget_below_the_current_usage_still_only_refuses_the_next_spend(
 
 
 # -----------------------------------------------------------------------------
-# Dual-write parity — P0-54
+# One place the plan lives — P0-54, P0-55, P0-56
 # -----------------------------------------------------------------------------
-def test_set_plan_writes_both_rows(workspace: Any, seeded_plans: Any) -> None:
+def test_set_plan_writes_the_organization(workspace: Any, seeded_plans: Any) -> None:
     plans.set_plan(workspace, seeded_plans["pro"])
     workspace.refresh_from_db()
 
-    assert workspace.plan == seeded_plans["pro"]
     assert workspace.organization.plan == seeded_plans["pro"]
-    assert plans.parity_drift() == []
 
 
-def test_parity_drift_reports_and_does_not_repair(workspace: Any, seeded_plans: Any) -> None:
-    """Part 7 rule 7. Repairing would hide the write path that bypassed
-    `set_plan`, and that path is the actual bug."""
-    workspace.plan = seeded_plans["advanced"]
-    workspace.save(update_fields=["plan"])
+def test_there_is_no_second_place_a_plan_could_live(workspace: Any) -> None:
+    """What the dual-write parity metric used to watch for, now structural.
 
-    drift = plans.parity_drift()
+    `parity_drift` existed because two columns held the plan and could
+    disagree; the contract step dropped the workspace copy, so the drift it
+    reported is no longer expressible. This asserts the *reason* the metric
+    was retired rather than leaving a permanently-empty check behind — if a
+    shadow column ever comes back, this fails and the metric has to come back
+    with it.
+    """
+    field_names = {field.name for field in workspace._meta.get_fields()}
 
-    assert [row["workspace"] for row in drift] == [workspace.pk]
-    workspace.refresh_from_db()
-    assert workspace.plan == seeded_plans["advanced"]
-    assert workspace.organization.plan != seeded_plans["advanced"]
+    assert "plan" not in field_names
+    assert "trial_ends_at" not in field_names
+    assert "stripe_customer_id" not in field_names
+    assert not hasattr(plans, "parity_drift")
+
+
+def test_the_resolver_reads_the_organization_not_the_workspace(
+    workspace: Any, seeded_plans: Any
+) -> None:
+    """P0-55. The cut-over, asserted from the outside: change only the
+    organization and the entitlement answer must change with it."""
+    plans.set_plan(workspace, seeded_plans["advanced"])
+
+    assert entitlements_for(workspace).plan.code == "advanced"
 
 
 # -----------------------------------------------------------------------------
@@ -206,8 +218,6 @@ def test_one_workspace_cannot_spend_anothers_headroom(
         organization=organization,
         name="Sibling Brand",
         slug=Workspace.unique_slug("Sibling Brand"),
-        owner=user,
-        plan=workspace.plan,
     )
 
     ledger.debit_reply(workspace, allowance=2)

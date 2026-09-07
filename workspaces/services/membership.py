@@ -88,7 +88,7 @@ def add_member(workspace: Workspace, *, email: str, role: str, invited_by: Any) 
 
 
 def change_role(membership: Membership, *, role: str) -> Membership:
-    if membership.user_id == membership.workspace.owner_id:
+    if membership.user_id == membership.workspace.organization.owner_id:
         raise CannotModifyOwnerError(detail={"membership": membership.pk})
     _require_assignable(role)
     membership.role = role
@@ -97,6 +97,6 @@ def change_role(membership: Membership, *, role: str) -> Membership:
 
 
 def remove_member(membership: Membership) -> None:
-    if membership.user_id == membership.workspace.owner_id:
+    if membership.user_id == membership.workspace.organization.owner_id:
         raise CannotModifyOwnerError(detail={"membership": membership.pk})
     membership.delete()

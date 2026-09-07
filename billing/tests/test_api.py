@@ -65,8 +65,8 @@ def test_entitlements_reflect_a_quota_edit_on_the_next_request(
     auth_client, workspace, plans
 ) -> None:
     """I5, end to end through HTTP — the layer the UI actually reads."""
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
 
     assert auth_client.get(ENTITLEMENTS_URL).json()["quotas"]["max_products"] == 10
 
@@ -163,8 +163,8 @@ def test_portal_without_a_customer_is_a_409(auth_client, workspace) -> None:
 
 
 def test_portal_returns_a_url_once_stripe_knows_the_customer(auth_client, workspace) -> None:
-    workspace.stripe_customer_id = "cus_9"
-    workspace.save(update_fields=["stripe_customer_id"])
+    workspace.organization.stripe_customer_id = "cus_9"
+    workspace.organization.save(update_fields=["stripe_customer_id"])
 
     response = auth_client.post(PORTAL_URL, format="json")
 

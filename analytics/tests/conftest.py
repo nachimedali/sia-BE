@@ -43,8 +43,8 @@ def other_workspace(plans: dict[str, Any]) -> tuple[Any, Any, Any]:
 
     user = get_user_model().objects.create_user(email="other@example.com", password="pw")
     workspace = provision_workspace(user, name="Other Studio")
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     account = SocialAccount.objects.create(
         workspace=workspace,
         platform="instagram",

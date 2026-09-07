@@ -54,6 +54,11 @@ app.conf.task_routes = {
     "accounts.tasks.*": {"queue": "remind_q"},
     "scheduling.tasks.remind*": {"queue": "remind_q"},
     "content.tasks.media*": {"queue": "media_q"},
+    # Periodic content bookkeeping — revision retention, and the recurrence
+    # slot scan. `metrics_q` because it is the pool the billing sweeps already
+    # share: nobody is waiting on these, and they must never delay a publish.
+    "content.tasks.prune*": {"queue": "metrics_q"},
+    "content.tasks.recurrence*": {"queue": "metrics_q"},
     "ai.tasks.video*": {"queue": "media_q"},
     "ai.tasks.*": {"queue": "ai_q"},
     # Autopilot's body is generation, so it shares the pool sized for provider

@@ -34,6 +34,12 @@ class GenerationMode(models.TextChoices):
     AUTOPILOT = "AUTOPILOT", "Autopilot"
     RECIPE = "RECIPE", "Recipe"
     REVISION = "REVISION", "Revision"
+    #: Caption written from an image the workspace already owns (P1-13). A
+    #: vision call, so it needs `Generation.source_media` — a caption mode with
+    #: no image is a text generation wearing the wrong name.
+    CAPTION = "CAPTION", "Caption"
+    #: Post ideas grounded in the workspace's own top-percentile posts (P1-13).
+    SUGGEST = "SUGGEST", "Suggest"
 
 
 class GenerationStatus(models.TextChoices):
@@ -104,6 +110,16 @@ class Generation(models.Model):
     )
     parent_generation = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="revisions"
+    )
+    #: The image a `CAPTION` generation read (P1-13). Nullable because every
+    #: other mode has no source image, and `SET_NULL` because deleting the
+    #: picture must not delete the record of what was generated from it.
+    source_media = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="captions",
     )
 
     output_type = models.CharField(max_length=32, blank=True)

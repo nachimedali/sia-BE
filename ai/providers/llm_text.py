@@ -36,45 +36,80 @@ def _post(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return unwrap_json_response(response, label="LLM provider")
 
 
+def _image_url_part(image_bytes: bytes) -> dict[str, Any]:
+    """One image, as a multimodal message part. The one place an image
+    becomes a `data:` URL for this provider — `caption` and
+    `classify_constraints` both attach a picture to a chat message and must
+    agree on how."""
+    encoded = base64.b64encode(image_bytes).decode()
+    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
+
+
+def _complete(*, messages: list[dict[str, Any]], model: str, n: int) -> TextGenerationResult:
+    """One chat-completion call, parsed into the shape every text-returning
+    method on this provider needs. `generate` and `caption` differ only in
+    what messages they send — this is everything after that: the request,
+    the variant list, the usage numbers, the timing."""
+    started = time.monotonic()
+    with _client() as client:
+        payload = _post(client, {"model": model, "n": n, "messages": messages})
+    variants = [
+        TextVariant(body=choice["message"]["content"]) for choice in payload.get("choices", [])
+    ]
+    usage = payload.get("usage", {})
+    return TextGenerationResult(
+        variants=variants,
+        provider=settings.LLM_PROVIDER,
+        model=model,
+        tokens_in=usage.get("prompt_tokens", 0),
+        tokens_out=usage.get("completion_tokens", 0),
+        latency_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
 class LLMTextProvider:
     def generate(
         self, *, system: str, prompt: str, n: int, model: str | None = None
     ) -> TextGenerationResult:
-        model = model or settings.LLM_DEFAULT_MODEL
-        started = time.monotonic()
-        with _client() as client:
-            payload = _post(
-                client,
+        return _complete(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            model=model or settings.LLM_DEFAULT_MODEL,
+            n=n,
+        )
+
+    def caption(
+        self, *, system: str, prompt: str, image_bytes: bytes, n: int, model: str | None = None
+    ) -> TextGenerationResult:
+        """The same chat endpoint as `generate`, with the image attached
+        (P1-13) — the multimodal message shape `classify_constraints` below
+        already uses, so there is one way this provider sends a picture.
+        """
+        return _complete(
+            messages=[
+                {"role": "system", "content": system},
                 {
-                    "model": model,
-                    "n": n,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}, _image_url_part(image_bytes)],
                 },
-            )
-        variants = [
-            TextVariant(body=choice["message"]["content"]) for choice in payload.get("choices", [])
-        ]
-        usage = payload.get("usage", {})
-        return TextGenerationResult(
-            variants=variants,
-            provider=settings.LLM_PROVIDER,
-            model=model,
-            tokens_in=usage.get("prompt_tokens", 0),
-            tokens_out=usage.get("completion_tokens", 0),
-            latency_ms=int((time.monotonic() - started) * 1000),
+            ],
+            model=model or settings.LLM_DEFAULT_MODEL,
+            n=n,
         )
 
     def classify_constraints(self, *, image_bytes: bytes, restrictions: list[str]) -> list[str]:
         """Vision-as-labelling (design.md §5): one multimodal call, reused by
         the quality gate's brand-constraint check rather than a second port.
+
+        Not routed through `_complete` — the response here is a classification
+        read off raw text, not a `TextGenerationResult` of variants, so there
+        is nothing of `_complete`'s parsing this call would reuse.
         """
         if not restrictions:
             return []
 
-        encoded = base64.b64encode(image_bytes).decode()
         instruction = (
             "List which of these constraints, if any, this image violates. "
             "Reply with one violated constraint per line, verbatim, or the "
@@ -91,10 +126,7 @@ class LLMTextProvider:
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": instruction},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{encoded}"},
-                                },
+                                _image_url_part(image_bytes),
                             ],
                         }
                     ],

@@ -1,14 +1,5 @@
-"""Fixtures shared by the content suite."""
+"""Fixtures shared by the content suite.
 
-from __future__ import annotations
-
-from typing import Any
-
-import pytest
-
-
-@pytest.fixture
-def media_asset(workspace: Any, make_png_upload: Any) -> Any:
-    from content.services.media import ingest_media
-
-    return ingest_media(workspace=workspace, upload=make_png_upload())
+`media_asset` moved to the root `conftest.py` once ai/ needed it too (P1-13) —
+the same one-copy-per-file collapse `make_png_upload` went through before it.
+"""

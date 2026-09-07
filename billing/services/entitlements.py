@@ -3,10 +3,16 @@
 One resolver. Never a scattered `if plan == "advanced"` — that pattern is how a
 feature ends up gated in three places and ungated in a fourth.
 
-**Resolution order:** `Workspace.plan` → trial override → cache.
+**Resolution order:** `Organization.plan` → trial override → cache.
 
-The trial override is the defensive half. A workspace on a trial carries the
-paid plan on `Workspace.plan` and gets full entitlements; when the trial lapses
+The plan lives on the organization because entitlement accounting pools there
+(L-1): one company pays one invoice, and a 6-post package is 6 posts across
+every brand under it. `Workspace.plan` was the pre-migration home and is gone
+(P0-55/P0-56) — a shadow copy of the authoritative column is where drift comes
+from, so there is no second place to read.
+
+The trial override is the defensive half. An organization on a trial carries the
+paid plan on `Organization.plan` and gets full entitlements; when the trial lapses
 without payment, the Beat task downgrades it. Between lapse and that task
 running, the plan row still says "pro" — so the resolver checks the clock itself
 and resolves Free. Entitlements must not depend on a periodic task having run.
@@ -79,6 +85,17 @@ def _org_plan(workspace: Workspace) -> Plan | None:
     return organization.plan if organization is not None else None
 
 
+def _org_trial_ends_at(workspace: Workspace) -> dt.datetime | None:
+    """The add-on trial clock, which lives on the organization (L-1).
+
+    `None` for a workspace with no organization — an unbackfilled row, which
+    `provision_workspace` cannot produce — and "no trial" is the safe reading:
+    it resolves the plan as paid-or-free on its merits rather than expiring it.
+    """
+    organization = getattr(workspace, "organization", None)
+    return organization.trial_ends_at if organization is not None else None
+
+
 def _cache_key(workspace: Workspace, plan: Plan) -> str:
     # `updated_at` in the key is the invalidation: an admin edit mints a new key
     # rather than requiring every workspace on the plan to be hunted down. The
@@ -97,13 +114,11 @@ class Entitlements:
 
     # --- resolution ------------------------------------------------------
     def _resolve_plan(self) -> Plan:
-        # **Still the workspace copy** — this is the dual-write step, not the
-        # cut-over (P0-54). The organization is where the plan lives after
-        # P0-55, and `billing.services.plans.set_plan` already writes both, but
-        # reads do not move until a full billing cycle of parity has been
-        # asserted in production. Swapping the order here early is exactly the
-        # shortcut the migration discipline exists to prevent.
-        plan = self.workspace.plan or _org_plan(self.workspace)
+        # The organization, and only the organization (P0-55). There is no
+        # workspace fallback: a second source would silently answer whenever
+        # the first was null, which is exactly how a backfill gap turns into a
+        # customer on the wrong plan instead of a visible error.
+        plan = _org_plan(self.workspace)
         if plan is None:
             return _free_plan()
 
@@ -119,7 +134,7 @@ class Entitlements:
 
     def _trial_has_lapsed(self, plan: Plan) -> bool:
         """True when the trial has run out and nothing has been paid."""
-        ends_at = self.workspace.trial_ends_at
+        ends_at = _org_trial_ends_at(self.workspace)
         if ends_at is None or ends_at > timezone.now():
             return False
         if plan.code == FREE_PLAN_CODE:
@@ -378,7 +393,7 @@ class Entitlements:
     def as_dict(self) -> dict[str, Any]:
         """What `GET /billing/entitlements/` returns, and what the UI gates on
         before acting (design.md §10.5)."""
-        ends_at = self.workspace.trial_ends_at
+        ends_at = _org_trial_ends_at(self.workspace)
         remaining = ends_at - timezone.now() if ends_at else None
         is_trialing = remaining is not None and remaining.total_seconds() > 0
 

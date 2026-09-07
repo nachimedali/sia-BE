@@ -188,7 +188,11 @@ def test_publish_absolutises_relative_media_urls(zernio: list[httpx.Request]) ->
     )
 
     body = json.loads(zernio[-1].content)
-    assert body["mediaItems"] == [{"type": "image", "url": "https://cdn.occs.test/media/a.png"}]
+    # `altText` travels with every item, empty included (P1-06): omitting the
+    # key on some items and not others is how a provider mismaps a carousel.
+    assert body["mediaItems"] == [
+        {"type": "image", "url": "https://cdn.occs.test/media/a.png", "altText": ""}
+    ]
 
 
 def test_publish_treats_a_409_with_an_existing_id_as_a_replay(monkeypatch: Any) -> None:

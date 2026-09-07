@@ -221,7 +221,7 @@ def _generate(
         # The owner, not the operator: nobody pressed a button, and
         # `Generation.user` has to point at someone who still exists when the
         # ledger row it backs is audited.
-        user=product.workspace.owner,
+        user=product.workspace.organization.owner,
         kind=kind,
         mode=GenerationMode.AUTOPILOT,
         prompt=brief,
@@ -483,14 +483,20 @@ def approve_draft(
     variant = draft.generation.variants.first()
     post = create_post(
         workspace=workspace,
-        author=workspace.owner,
+        author=workspace.organization.owner,
         master_body=draft.caption,
         category=workspace.category,
         media_assets=[variant.media_asset] if variant and variant.media_asset else [],
     )
     # Not settable through `create_post` — `PostSerializer` marks all three
     # read-only (A49) precisely so only the phase that owns them writes them.
-    update_post(post, source=PostSource.AUTOPILOT, product=product, generation=draft.generation)
+    update_post(
+        post,
+        reason="autopilot",
+        source=PostSource.AUTOPILOT,
+        product=product,
+        generation=draft.generation,
+    )
 
     mode = (
         DeliveryMode.AUTO_PUBLISH if entitlements.feature("auto_publish") else DeliveryMode.REMINDER

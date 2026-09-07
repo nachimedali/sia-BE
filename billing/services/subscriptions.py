@@ -5,9 +5,10 @@ workspace is paid because a checkout session was created — it decides that whe
 the webhook says so. A user who abandons the Stripe page, or whose card is
 declined after the redirect, must not end up entitled.
 
-`Workspace.plan` is what `Entitlements` resolves from, so every path that
-changes billing state ends by writing that field and letting the cache key
-rotate with it.
+`Organization.plan` is what `Entitlements` resolves from (L-1: billing pools at
+the company, not the brand), so every path that changes billing state ends by
+writing that field and letting the cache key rotate with it. Writes go through
+`billing.services.plans.set_plan`, which is the one writer.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from billing.models import (
     VideoReason,
 )
 from billing.services import ledger, pricing
+from billing.services.plans import set_plan
 from channels.services import park_accounts_over_cap
 from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
@@ -106,13 +108,13 @@ def start_checkout(
 
     # One trial per workspace (§8.1). Stripe enforces the same rule per billing
     # identity, which catches the second workspace on one card.
-    trial_days = plan.trial_days if workspace.trial_ends_at is None else 0
+    trial_days = plan.trial_days if workspace.organization.trial_ends_at is None else 0
 
     session = get_billing_gateway().create_checkout_session(
         mode="subscription",
         workspace_id=workspace.pk,
-        customer_id=workspace.stripe_customer_id or None,
-        customer_email=workspace.owner.email,
+        customer_id=workspace.organization.stripe_customer_id or None,
+        customer_email=workspace.organization.owner.email,
         price_id=price_id,
         trial_days=trial_days,
         success_url=success_url,
@@ -131,13 +133,13 @@ def start_checkout(
 
 
 def open_portal(workspace: Workspace, *, return_url: str) -> PortalSession:
-    if not workspace.stripe_customer_id:
+    if not workspace.organization.stripe_customer_id:
         raise StateConflict(
             "This workspace has never been billed, so it has no portal.",
             code="no_billing_customer",
         )
     return get_billing_gateway().create_portal_session(
-        customer_id=workspace.stripe_customer_id, return_url=return_url
+        customer_id=workspace.organization.stripe_customer_id, return_url=return_url
     )
 
 
@@ -202,14 +204,12 @@ def apply_subscription_state(
 
 
 def _move_to_plan(workspace: Workspace, plan: Plan, *, trialing: bool) -> None:
-    fields = ["plan", "updated_at"]
-    workspace.plan = plan
+    set_plan(workspace, plan)
 
-    if trialing and workspace.trial_ends_at is None:
-        workspace.trial_ends_at = timezone.now() + dt.timedelta(days=plan.trial_days)
-        fields.append("trial_ends_at")
-
-    workspace.save(update_fields=fields)
+    organization = workspace.organization
+    if trialing and organization.trial_ends_at is None:
+        organization.trial_ends_at = timezone.now() + dt.timedelta(days=plan.trial_days)
+        organization.save(update_fields=["trial_ends_at", "updated_at"])
 
 
 def _grant_period_allowances(
@@ -250,12 +250,12 @@ def downgrade_to_free(workspace: Workspace, *, reason: str = "trial expired") ->
     Both mark; neither deletes.
     """
     plan = free_plan()
-    if workspace.plan_id == plan.pk:
+    organization = workspace.organization
+    if organization.plan_id == plan.pk:
         return workspace
 
-    previous = workspace.plan.code if workspace.plan else "none"
-    workspace.plan = plan
-    workspace.save(update_fields=["plan", "updated_at"])
+    previous = organization.plan.code if organization.plan else "none"
+    set_plan(workspace, plan)
 
     # The Free allowance replaces the paid one; credits already spent stay spent.
     ledger.grant_credits(
@@ -327,8 +327,8 @@ def grant_due_period_allowances() -> int:
     from billing.models import CreditLedger
 
     granted = 0
-    for workspace in Workspace.objects.select_related("plan").iterator():
-        plan = workspace.plan
+    for workspace in Workspace.objects.select_related("organization__plan").iterator():
+        plan = workspace.organization.plan
         if plan is None:
             continue
 
@@ -355,10 +355,12 @@ def expire_lapsed_trials() -> int:
     than about closing a gate.
     """
     now = timezone.now()
-    candidates = Workspace.objects.filter(trial_ends_at__lt=now).exclude(plan__code=FREE_PLAN_CODE)
+    candidates = Workspace.objects.filter(organization__trial_ends_at__lt=now).exclude(
+        organization__plan__code=FREE_PLAN_CODE
+    )
 
     downgraded = 0
-    for workspace in candidates.select_related("plan").iterator():
+    for workspace in candidates.select_related("organization__plan").iterator():
         if Subscription.current_for(workspace) is not None:
             continue
         downgrade_to_free(workspace, reason="trial expired")

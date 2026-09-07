@@ -19,3 +19,7 @@ django-storages[s3]
 structlog
 sentry-sdk
 django-cors-headers
+# RFC 5545 recurrence expansion (P1-10). Present transitively via celery
+# and botocore, but an undeclared transitive dependency is one a version
+# bump elsewhere can remove without warning.
+python-dateutil

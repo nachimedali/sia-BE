@@ -9,15 +9,52 @@ from typing import Any
 
 from accounts.models import User
 from categories.models import Category
-from content.models import MediaAsset, Post, PostMediaAttachment, PostStatus
+from common.exceptions import OCCSError
+from content.models import (
+    MediaAsset,
+    Post,
+    PostMediaAttachment,
+    PostStatus,
+    PostTarget,
+)
+from content.services import options as option_rules
+from content.services import revisions
+from content.services.rules import OPTIONS_SCHEMA_VERSION
 from workspaces.models import Workspace
 from workspaces.services import approvals
+
+
+class MediaNotAttachedError(OCCSError):
+    """400, not a quietly created row: an asset that is not on the post has no
+    *use* to describe, and alt text describes a use (P1-06)."""
+
+    default_code = "media_not_attached"
+    default_detail = "That media asset is not attached to this post."
+
+
+class InvalidPlatformOptionsError(OCCSError):
+    """Carries the per-key errors, so a composer marks the field that is wrong
+    rather than showing one message for a form of eight inputs."""
+
+    default_code = "invalid_platform_options"
+    default_detail = "These platform options are not valid."
+
+
+class NoTargetForPlatformError(OCCSError):
+    default_code = "no_target_for_platform"
+    default_detail = "This post has no target on that platform."
 
 
 def _replace_media(post: Post, media_assets: Sequence[MediaAsset]) -> None:
     """Full replace, not a diff: a composer sends the whole ordered list on
     every save, so reconciling an add/remove/reorder delta would be solving a
-    problem nobody has yet."""
+    problem nobody has yet.
+
+    The unfiltered delete is deliberate — it takes the per-target alt-text
+    override rows with it. An override for an asset the post no longer carries
+    is a row pointing at nothing, and leaving it would resurrect stale text the
+    day that asset is re-added.
+    """
     PostMediaAttachment.objects.filter(post=post).delete()
     PostMediaAttachment.objects.bulk_create(
         PostMediaAttachment(post=post, media_asset=asset, order=index)
@@ -38,6 +75,10 @@ def create_post(
     )
     if media_assets:
         _replace_media(post, media_assets)
+    # After the media, not before: revision 1 is the anchor every later diff is
+    # measured against, and an anchor that omits the media the post was created
+    # with would make the next save look like the media had just been added.
+    revisions.record(post, author=author, reason="created", force=True)
     return post
 
 
@@ -48,7 +89,9 @@ def create_post(
 _CONTENT_FIELDS = frozenset({"master_body", "media_asset_ids"})
 
 
-def update_post(post: Post, **fields: Any) -> Post:
+def update_post(
+    post: Post, *, author: User | None = None, reason: str = "edited", **fields: Any
+) -> Post:
     """`fields` is exactly what the caller wants to change — a PATCH that
     omits `media_asset_ids` must not touch attachment order, so the view only
     passes keys that were actually present in the request body.
@@ -87,4 +130,92 @@ def update_post(post: Post, **fields: Any) -> Post:
             meta={"post": post.pk},
         )
 
+    # One revision for the whole edit, recorded after every table it touched —
+    # a body change and a media reorder submitted together are one version of
+    # the post, not two.
+    revisions.record(post, author=author, reason=reason)
     return post
+
+
+def set_alt_text(
+    post: Post,
+    *,
+    media_asset: MediaAsset,
+    alt_text: str,
+    target: PostTarget | None = None,
+    author: User | None = None,
+) -> PostMediaAttachment:
+    """Describe one image, either for the whole post or for one platform.
+
+    Separate from `update_post` on purpose. A composer sends its whole media
+    list on every save, which is the right shape for selection and order and
+    the wrong one for a description someone writes once in an image panel —
+    folding alt text into that payload would mean every save either carries
+    every description or silently drops the ones it omits.
+
+    Not a content change for approval purposes either: adding a description to
+    an already-approved image improves accessibility without altering what an
+    approver signed off on, and reverting the post to `PENDING_REVIEW` for it
+    would teach people not to bother.
+    """
+    base = PostMediaAttachment.objects.filter(
+        post=post, media_asset=media_asset, target_override__isnull=True
+    ).first()
+    if base is None:
+        raise MediaNotAttachedError(detail={"media_asset": media_asset.pk, "post": post.pk})
+
+    if target is None:
+        base.alt_text = alt_text
+        base.save(update_fields=["alt_text"])
+        revisions.record(post, author=author, reason="alt text")
+        return base
+
+    override, _created = PostMediaAttachment.objects.update_or_create(
+        post=post,
+        media_asset=media_asset,
+        target_override=target,
+        defaults={"alt_text": alt_text, "order": base.order},
+    )
+    revisions.record(post, author=author, reason="alt text")
+    return override
+
+
+def target_for_platform(post: Post, platform: str) -> PostTarget:
+    target = post.targets.filter(platform=platform).first()
+    if target is None:
+        raise NoTargetForPlatformError(detail={"platform": platform, "post": post.pk})
+    return target
+
+
+def set_platform_options(
+    post: Post,
+    *,
+    platform: str,
+    options: dict[str, Any],
+    author: User | None = None,
+) -> PostTarget:
+    """Writes one platform's composer settings onto its target (P1-11).
+
+    Creates the target if it does not exist yet: a composer configures a
+    platform long before the post is scheduled, and `build_targets` does not
+    run until it is. The row created here carries no `social_account` — which
+    account publishes is the schedule service's decision, and this is not it.
+
+    Validation is `options.validate`, the strict one, because this *is* the way
+    in. `render_post` uses the lenient `resolve` on the way out, for stored
+    rows that a later rule change made unusable.
+    """
+    try:
+        cleaned = option_rules.validate(platform, options, workspace=post.workspace)
+    except option_rules.OptionError as exc:
+        raise InvalidPlatformOptionsError(detail=exc.errors) from exc
+
+    target, _created = PostTarget.objects.get_or_create(
+        post=post, platform=platform, social_account=None
+    )
+    target.platform_options = cleaned
+    target.options_schema_version = OPTIONS_SCHEMA_VERSION
+    target.save(update_fields=["platform_options", "options_schema_version", "updated_at"])
+
+    revisions.record(post, author=author, reason=f"{platform} options")
+    return target

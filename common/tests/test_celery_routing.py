@@ -33,6 +33,11 @@ def test_all_six_queues_are_declared() -> None:
         ("reminders.tasks.send_reminder", "remind_q"),
         ("scheduling.tasks.remind_due", "remind_q"),
         ("content.tasks.media_ingest", "media_q"),
+        # Periodic content bookkeeping shares the pool the billing sweeps use;
+        # what matters is that it is *declared*, not that it is alone (P1-08,
+        # P1-10).
+        ("content.tasks.prune_post_revisions", "metrics_q"),
+        ("content.tasks.recurrence_materialise", "metrics_q"),
         ("ai.tasks.video_render", "media_q"),
         ("ai.tasks.generate_image", "ai_q"),
         ("analytics.tasks.poll_metrics", "metrics_q"),

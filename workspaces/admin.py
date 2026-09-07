@@ -12,9 +12,9 @@ class MembershipInline(admin.TabularInline):  # type: ignore[type-arg]
 
 @admin.register(Workspace)
 class WorkspaceAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
-    list_display = ("name", "slug", "owner", "plan", "onboarding_complete", "created_at")
-    list_filter = ("onboarding_complete", "plan", "business_type")
-    search_fields = ("name", "slug", "owner__email")
+    list_display = ("name", "slug", "organization", "onboarding_complete", "created_at")
+    list_filter = ("onboarding_complete", "organization__plan", "business_type")
+    search_fields = ("name", "slug", "organization__owner__email")
     readonly_fields = ("referral_code", "created_at", "updated_at")
     inlines = (MembershipInline,)
 

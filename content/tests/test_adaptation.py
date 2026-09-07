@@ -129,13 +129,16 @@ def test_as_dict_is_json_shaped() -> None:
     )
     as_dict = payload.as_dict()
 
-    assert as_dict["media"] == [{"id": 1, "kind": MediaKind.IMAGE, "url": "/m/1.png"}]
+    # `alt` is always present and always a string (P1-06) — an image with no
+    # description renders `""`, never a missing key.
+    assert as_dict["media"] == [{"id": 1, "kind": MediaKind.IMAGE, "url": "/m/1.png", "alt": ""}]
     assert set(as_dict) == {
         "platform",
         "body",
         "thread",
         "hashtags",
         "media",
+        "options",
         "truncated",
         "warnings",
     }

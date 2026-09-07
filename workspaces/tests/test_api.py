@@ -71,7 +71,11 @@ def test_any_member_can_list_the_roster(
 
     assert response.status_code == 200
     emails = {row["user_email"] for row in response.json()}
-    assert emails == {advanced_workspace.owner.email, viewer_user.email, admin_user.email}
+    assert emails == {
+        advanced_workspace.organization.owner.email,
+        viewer_user.email,
+        admin_user.email,
+    }
 
 
 def test_the_owners_row_is_flagged(
@@ -80,7 +84,7 @@ def test_the_owners_row_is_flagged(
     response = client_as(admin_user).get(MEMBERS_URL)
 
     rows = {row["user_email"]: row for row in response.json()}
-    assert rows[advanced_workspace.owner.email]["is_owner"] is True
+    assert rows[advanced_workspace.organization.owner.email]["is_owner"] is True
     assert rows[admin_user.email]["is_owner"] is False
 
 

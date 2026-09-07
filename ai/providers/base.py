@@ -52,6 +52,19 @@ class TextProvider(Protocol):
         self, *, system: str, prompt: str, n: int, model: str | None = None
     ) -> TextGenerationResult: ...
 
+    def caption(
+        self, *, system: str, prompt: str, image_bytes: bytes, n: int, model: str | None = None
+    ) -> TextGenerationResult:
+        """Write `n` captions for an image (P1-13).
+
+        A method on `TextProvider` rather than a fourth port: the vendor is the
+        same LLM gateway, the result is the same `TextGenerationResult`, and
+        `classify_constraints` below already established that this port sees
+        images. A separate `VisionProvider` would be one more thing to
+        configure for no substitutable behaviour behind it.
+        """
+        ...
+
     def classify_constraints(self, *, image_bytes: bytes, restrictions: list[str]) -> list[str]:
         """Which of `restrictions` this image violates — empty if none.
 

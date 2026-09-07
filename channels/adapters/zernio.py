@@ -42,6 +42,7 @@ from channels.adapters.base import (
     find_offered_target,
 )
 from content.models import MediaKind
+from content.services.rules import options_for
 
 #: Zernio's `type` vocabulary for a media item, keyed by ours.
 _MEDIA_TYPES = {MediaKind.IMAGE: "image", MediaKind.VIDEO: "video"}
@@ -263,9 +264,23 @@ class ZernioAdapter:
     ) -> PublishResult:
         body = {
             "content": payload.get("body", ""),
-            "platforms": [{"platform": platform, "accountId": provider_account_id}],
+            "platforms": [
+                {
+                    "platform": platform,
+                    "accountId": provider_account_id,
+                    **_provider_options(platform, payload.get("options") or {}),
+                }
+            ],
             "mediaItems": [
-                {"type": _MEDIA_TYPES.get(item["kind"], "image"), "url": _absolute(item["url"])}
+                {
+                    "type": _MEDIA_TYPES.get(item["kind"], "image"),
+                    "url": _absolute(item["url"]),
+                    # Alt text is per-use, resolved by `render_post` (P1-06).
+                    # Sent unconditionally: an empty string is a legitimate
+                    # "no description", and omitting the key on some items and
+                    # not others is how a provider mismaps a carousel.
+                    "altText": item.get("alt", ""),
+                }
                 for item in payload.get("media", [])
             ],
             "publishNow": True,
@@ -325,3 +340,79 @@ def get_platform_adapter() -> PlatformAdapter:
 
         return _fake_adapter
     return ZernioAdapter()
+
+
+#: Our option key → Zernio's field name, per platform (P1-11).
+#:
+#: **Data, and it lives here rather than in `rules.py`.** `rules.py` states
+#: what an option *is* — a platform fact, true whoever publishes it. What the
+#: vendor calls it is a vendor fact, and keeping the two in one table is what
+#: turns a provider swap into an excavation (D3).
+#:
+#: An option with no row is **dropped, not forwarded**. A key the vendor does
+#: not recognise is a rejected post, so forwarding an unmapped setting loses
+#: the whole publish where dropping it loses one setting.
+#:
+#: Like every other Zernio field name in this module, these are the documented
+#: contract at OpenAPI v1.0.4 and not observed behaviour (U-5) — which is
+#: exactly why a wrong guess here should be one row to change.
+PROVIDER_OPTION_FIELDS: dict[str, dict[str, str]] = {
+    "instagram": {
+        "first_comment": "firstComment",
+        "location_id": "locationId",
+        "collab_handles": "collaborators",
+        "tagged_handles": "taggedAccounts",
+    },
+    "facebook": {
+        "first_comment": "firstComment",
+        "location_id": "locationId",
+        "targeting_countries": "targetingCountries",
+        "targeting_min_age": "targetingMinAge",
+        "targeting_interests": "targetingInterests",
+        "targeting_locales": "targetingLocales",
+        "tagged_page_ids": "taggedPages",
+    },
+    "linkedin": {
+        "first_comment": "firstComment",
+        "visibility": "visibility",
+        "targeting_locales": "targetingLocales",
+        "tagged_organization_ids": "taggedOrganizations",
+    },
+    "tiktok": {
+        "allow_comments": "allowComments",
+        "allow_duet": "allowDuet",
+    },
+    "youtube": {
+        "title": "title",
+        "privacy": "privacyStatus",
+        # A URL by the time it gets here, not a `MediaAsset` id — `options.
+        # resolve` renders `media`-kind options the same way it renders the
+        # media list, because a provider cannot fetch a row from our database.
+        "thumbnail_media_id": "thumbnailUrl",
+    },
+}
+
+
+def _provider_options(platform: str, options: dict[str, Any]) -> dict[str, Any]:
+    """Renamed for the vendor, and absolutised where the *declaration* says a
+    value is a media reference.
+
+    **`kind == "media"`, not a naming convention.** Whether an option
+    references a `MediaAsset` is already a first-class fact `rules.py`
+    declares (`content.services.options` routes the tenancy check and the
+    URL-rendering off it) — this used to re-derive the same fact by checking
+    whether the key ended in `_media_id`, a guess a differently-named media
+    option would silently fail. Consulting the declaration is what
+    `test_every_media_option_declares_itself_as_one` already holds every
+    other reader of `kind` to.
+    """
+    mapping = PROVIDER_OPTION_FIELDS.get(platform, {})
+    declared = options_for(platform)
+    resolved: dict[str, Any] = {}
+    for key, value in options.items():
+        if key not in mapping:
+            continue
+        option = declared.get(key)
+        is_media = option is not None and option.kind == "media"
+        resolved[mapping[key]] = _absolute(value) if is_media else value
+    return resolved

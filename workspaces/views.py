@@ -34,11 +34,11 @@ from workspaces.models import (
     AuditLog,
     Membership,
     Organization,
-    Role,
+    Permission,
     Workspace,
     permissions_for,
 )
-from workspaces.permissions import HasRole
+from workspaces.permissions import HasPermission
 from workspaces.serializers import (
     ApiKeyCreateSerializer,
     ApiKeyIssuedSerializer,
@@ -74,12 +74,16 @@ class WorkspaceSettingsView(APIView):
     """`GET` is open to any member — knowing whether approval is required is
     not itself a paid fact, and a Free/Pro workspace's answer is always
     `False` by construction (nothing below Advanced can ever set it). `PATCH`
-    is the write, gated to ADMIN+ on a plan that still has the feature.
+    is the write, gated on `admin` on a plan that still has the feature.
     """
 
     def get_permissions(self) -> list[Any]:
         if self.request.method == "PATCH":
-            return [IsAuthenticated(), HasFeature(APPROVAL_FEATURE)(), HasRole(Role.ADMIN)()]
+            return [
+                IsAuthenticated(),
+                HasFeature(APPROVAL_FEATURE)(),
+                HasPermission(Permission.ADMIN)(),
+            ]
         return [IsAuthenticated()]
 
     @extend_schema(
@@ -135,7 +139,7 @@ class MembershipViewSet(WorkspaceScopedQuerySetMixin, viewsets.GenericViewSet[Me
 
     def get_permissions(self) -> list[Any]:
         if self.request.method in {"POST", "PATCH", "PUT", "DELETE"}:
-            return [IsAuthenticated(), HasRole(Role.ADMIN)()]
+            return [IsAuthenticated(), HasPermission(Permission.ADMIN)()]
         return [IsAuthenticated()]
 
     @extend_schema(responses={200: MembershipSerializer(many=True)}, summary="List the team")

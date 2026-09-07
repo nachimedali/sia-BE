@@ -39,8 +39,8 @@ def test_approve_is_also_gated_to_advanced(
 ) -> None:
     """Pro has `auto_publish` but not `approval_workflow` — the two paid tiers
     must not be conflated."""
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     post = create_post(workspace=workspace, author=user, master_body="Draft")
 
     assert auth_client.post(_url(post.pk, "approve")).status_code == 402

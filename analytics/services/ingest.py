@@ -444,7 +444,7 @@ def capture_due() -> int:
             published_at__gte=moment - dt.timedelta(days=MAX_HORIZON_DAYS),
         )
         .exclude(provider_post_id="")
-        .select_related("social_account", "post__workspace__plan")
+        .select_related("social_account", "post__workspace__organization__plan")
     )
     if not targets:
         return 0
@@ -561,7 +561,7 @@ def follow_delta() -> int:
         for target in PostTarget.objects.filter(
             state=PostTargetState.PUBLISHED,
             provider_post_id__in=[p.provider_post_id for p in payloads if p.provider_post_id],
-        ).select_related("social_account", "post__workspace__plan")
+        ).select_related("social_account", "post__workspace__organization__plan")
     }
 
     written = 0

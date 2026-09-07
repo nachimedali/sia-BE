@@ -42,14 +42,6 @@ class Role(models.TextChoices):
     VIEWER = "VIEWER", "Viewer"
 
 
-#: Lower is more senior — `Role`'s own declared order (its docstring: "index
-#: doubles as seniority"). The one place that reads the ordering as numbers,
-#: so `workspaces.permissions.HasRole` and the Celery-preflight recheck
-#: (`workspaces.services.approvals.ensure_approval_still_valid`) compare the
-#: same ranks rather than each re-deriving them from `Role.values.index(...)`.
-ROLE_RANK: dict[str, int] = {role: index for index, role in enumerate(Role.values)}
-
-
 class Permission(models.TextChoices):
     """The authority set (BUILD-PLAN Phase 0). `Role` stays as a display label
     and a seeded preset; **`Membership.permissions` is the authority**.
@@ -124,10 +116,13 @@ class Organization(models.Model):
     organization with many. **Entitlement accounting pools here**, not on the
     workspace: a 6-post package is 6 posts across the whole organization.
 
-    `plan`, `trial_ends_at`, `stripe_customer_id`, `provider_profile_id` and
-    `referral_code` are the columns moving up from `Workspace`. Both carry them
-    until the contract step drops the workspace copies — that is the expand/
-    dual-write discipline, not duplication anyone should read from twice.
+    `owner`, `plan`, `trial_ends_at` and `stripe_customer_id` moved up from
+    `Workspace` and were dropped there at the contract step (P0-56) — this row
+    is the only place they live.
+
+    `provider_profile_id` and `referral_code` exist on both and mean different
+    things: the workspace copy is the publishing provider's tenant for that
+    brand and that brand's own referral code, neither of which pools.
     """
 
     name = models.CharField(max_length=120)
@@ -264,20 +259,17 @@ class WorkspaceStatus(models.TextChoices):
 
 
 class Workspace(models.Model):
-    #: Nullable until `backfill_organizations` has run everywhere and the
-    #: contract step makes it required. Nothing reads it during expand.
+    #: Non-null since the contract step (P0-56). Every workspace sits inside
+    #: exactly one company, `provision_workspace` builds both in one
+    #: transaction, and the migration gave the pre-migration rows an
+    #: organization of their own before adding the constraint.
     organization = models.ForeignKey(
         Organization,
-        null=True,
-        blank=True,
         on_delete=models.CASCADE,
         related_name="workspaces",
     )
     name = models.CharField(max_length=120)
     slug = models.SlugField(max_length=140, unique=True)
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_workspaces"
-    )
     status = models.CharField(
         max_length=16, choices=WorkspaceStatus.choices, default=WorkspaceStatus.ACTIVE
     )
@@ -304,11 +296,11 @@ class Workspace(models.Model):
     platforms = models.JSONField(default=list, blank=True)
 
     # --- commercial ---
-    plan = models.ForeignKey(
-        "billing.Plan", null=True, blank=True, on_delete=models.PROTECT, related_name="workspaces"
-    )
-    trial_ends_at = models.DateTimeField(null=True, blank=True)
-    stripe_customer_id = models.CharField(max_length=64, blank=True)
+    # `plan`, `owner`, `trial_ends_at` and `stripe_customer_id` moved to
+    # `Organization` and were dropped here at the contract step (P0-56).
+    # Billing pools at the company (L-1), and a shadow copy of the
+    # authoritative column is precisely where drift comes from.
+    #
     # The publishing provider's tenant for this workspace (design.md §6.2,
     # Phase 9). Lives here rather than on `channels.SocialAccount` because it
     # is created before the first account exists and shared by all of them —

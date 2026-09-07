@@ -84,8 +84,8 @@ def test_grounding_respects_the_plans_history_horizon(
     """A Free workspace's 7-day window cannot see a post from last month, so
     the prompt is ungrounded rather than grounded in data the plan does not
     include."""
-    workspace.plan = plans["free"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
     for rate in (0.01, 0.02, 0.03, 0.04, 0.40):
         PostMetric.objects.create(
             post_target=make_target(workspace, user, social_account, age_days=30),

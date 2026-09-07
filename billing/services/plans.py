@@ -1,23 +1,23 @@
-"""Plan assignment during the org migration (P0-53, P0-54).
+"""The one writer of a plan assignment (P0-53 … P0-56).
 
-**One writer, both rows.** `Workspace.plan` is what the resolver reads today;
-`Organization.plan` is what it reads after P0-55. Between those two points every
-assignment has to land on both, and it has to land through one function — two
-call sites writing one column each is how drift starts, and drift here means a
-customer entitled to different things depending on which read won.
+**Billing pools at the organization** (L-1), so `Organization.plan` is the only
+place a plan lives and `Entitlements` is the only thing that reads it. The
+migration that moved it up from `Workspace` is contracted: there is no shadow
+copy left to disagree with, which is why `parity_drift` — the metric that
+watched the two columns during dual-write — is gone rather than kept as a
+permanently-empty check.
 
-`parity_drift` is the metric P0-54 asks for: dual-write is not "done" because
-the code writes twice, it is done when a full billing cycle of production data
-says the two agree.
+One function rather than direct assignment at each call site, because "assign a
+plan" is about to acquire company: the Stripe quantity update, the add-on sweep
+and the downgrade path all want the same before/after hook, and three call
+sites writing one column each is how drift starts.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from django.db import transaction
-from django.db.models import F, Q
 
 from billing.models import Plan
 from workspaces.models import Workspace
@@ -27,49 +27,23 @@ logger = logging.getLogger(__name__)
 
 @transaction.atomic
 def set_plan(workspace: Workspace, plan: Plan | None) -> None:
-    """Assigns `plan` to a workspace and to the organization above it.
+    """Assigns `plan` to the organization above `workspace`.
 
-    The organization is authoritative for *billing* (L-1: entitlement
-    accounting pools at the org), so a workspace whose org disagrees is a bug
-    even while the resolver still reads the workspace copy — which is why this
-    writes both rather than waiting for the cut-over to start caring.
+    Takes a workspace rather than an organization because every caller has one
+    — a checkout session, a webhook, a downgrade — and making each of them walk
+    up the tree is how one of them eventually forgets and writes the wrong row.
     """
-    workspace.plan = plan
-    workspace.save(update_fields=["plan", "updated_at"])
-
     organization = workspace.organization
-    if organization is None:
-        # Pre-backfill row. `backfill_organizations` will create the org and
-        # copy the plan; nothing is lost by not having one to write to yet.
-        logger.info("workspace has no organization yet", extra={"workspace_id": workspace.pk})
+    if organization.plan_id == (plan.pk if plan else None):
         return
-    if organization.plan_id != (plan.pk if plan else None):
-        organization.plan = plan
-        organization.save(update_fields=["plan", "updated_at"])
 
-
-def parity_drift() -> list[dict[str, Any]]:
-    """Workspaces whose plan disagrees with their organization's (P0-54).
-
-    **Reports, never repairs** (Part 7 rule 7). A repair here would hide the
-    bug that caused the divergence, and the divergence is the only evidence
-    that a write path bypassed `set_plan`.
-    """
-    rows = (
-        Workspace.objects.exclude(organization__isnull=True)
-        .exclude(plan_id=F("organization__plan_id"))
-        .exclude(Q(plan__isnull=True) & Q(organization__plan__isnull=True))
-        .values("pk", "plan_id", "organization_id", "organization__plan_id")
+    organization.plan = plan
+    organization.save(update_fields=["plan", "updated_at"])
+    logger.info(
+        "plan assigned",
+        extra={
+            "organization_id": organization.pk,
+            "workspace_id": workspace.pk,
+            "plan": plan.code if plan else None,
+        },
     )
-    drift = [
-        {
-            "workspace": row["pk"],
-            "workspace_plan": row["plan_id"],
-            "organization": row["organization_id"],
-            "organization_plan": row["organization__plan_id"],
-        }
-        for row in rows
-    ]
-    if drift:
-        logger.warning("plan parity drift", extra={"count": len(drift)})
-    return drift
