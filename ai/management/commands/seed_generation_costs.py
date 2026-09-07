@@ -42,6 +42,11 @@ def _row(
 GENERATION_COSTS: list[dict[str, Any]] = [
     _row(GenerationKind.TEXT, "", 1),
     _row(GenerationKind.TEXT, GenerationMode.REVISION, 1),
+    # P1-13. Priced explicitly rather than left to the blank-mode fallback:
+    # a vision call costs more than a text one at every vendor, and the row
+    # is where an operator retunes it without a deploy (I8).
+    _row(GenerationKind.TEXT, GenerationMode.CAPTION, 2),
+    _row(GenerationKind.TEXT, GenerationMode.SUGGEST, 1),
     _row(GenerationKind.IMAGE, GenerationMode.AUTOPILOT, 2),
     _row(GenerationKind.IMAGE, "", 3),
     _row(GenerationKind.IMAGE, GenerationMode.REVISION, 1),

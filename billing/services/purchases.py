@@ -65,8 +65,8 @@ def start_purchase(
     session = get_billing_gateway().create_checkout_session(
         mode="payment",
         workspace_id=workspace.pk,
-        customer_id=workspace.stripe_customer_id or None,
-        customer_email=workspace.owner.email,
+        customer_id=workspace.organization.stripe_customer_id or None,
+        customer_email=workspace.organization.owner.email,
         price_id=resolved.stripe_price_id,
         metadata={PACK_CODE_KEY: pack.code},
         success_url=success_url,

@@ -21,27 +21,56 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
+from rest_framework.views import APIView
 
-from billing.permissions import HasFeature
+from billing.permissions import HasFeature, HasFlag
+from billing.services.flags import CONTENT_MODEL_V2
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
-from content.models import MediaAsset, Platform, Post, PostMediaAttachment, PostStatus
+from content.editing.base import CropBox
+from content.models import (
+    MediaAsset,
+    Platform,
+    Post,
+    PostMediaAttachment,
+    PostStatus,
+    PostTemplate,
+    RecurrenceRule,
+)
 from content.serializers import (
+    AltTextRequestSerializer,
+    CropRequestSerializer,
     MediaAssetSerializer,
     MediaAssetUploadSerializer,
+    PlatformOptionsRequestSerializer,
+    PlatformRuleListSerializer,
     PostPreviewRequestSerializer,
     PostPreviewResponseSerializer,
+    PostRevisionSerializer,
     PostScheduleRequestSerializer,
     PostSerializer,
+    PostTemplateSerializer,
+    RecurrenceRuleSerializer,
+    TrimRequestSerializer,
 )
+from content.services import revisions as revisions_service
 from content.services.adaptation import render_payloads
+from content.services.editing import crop_image, trim_video
 from content.services.media import ingest_media
-from content.services.posts import create_post, update_post
+from content.services.posts import (
+    create_post,
+    set_alt_text,
+    set_platform_options,
+    target_for_platform,
+    update_post,
+)
+from content.services.rules import PLATFORM_RULES
+from content.services.templates import apply_template
 from scheduling.services import schedule_post
-from workspaces.models import PostComment, Role
-from workspaces.permissions import HasRole, caller_role, role_at_least
+from workspaces.models import Permission, PostComment
+from workspaces.permissions import HasPermission, caller_permissions
 from workspaces.serializers import (
     ApprovalActionSerializer,
     ApprovalNoteRequestSerializer,
@@ -54,13 +83,18 @@ from workspaces.services import approvals
 #: gated_to_advanced`).
 APPROVAL_FEATURE = "approval_workflow"
 
-# `Post.ordered_media()` reads `media_attachments`, not the `media_assets` M2M
-# manager directly (content/models.py) — the Prefetch has to target the same
-# accessor, or it fetches rows nothing ever reads and every post in a list
-# response re-queries its media anyway.
+# `Post.ordered_attachments()` reads `media_attachments`, not the
+# `media_assets` M2M manager directly (content/models.py) — the Prefetch has to
+# target the same accessor, or it fetches rows nothing ever reads and every
+# post in a list response re-queries its media anyway.
+#
+# Deliberately **unfiltered**: the per-target alt-text override rows (P1-06)
+# live in this table too, and `render_post` resolves them off this same
+# evaluated queryset. Filtering them out here would send `render_post` back to
+# the database once per post to find them again.
 _ORDERED_MEDIA_ATTACHMENTS = Prefetch(
     "media_attachments",
-    queryset=PostMediaAttachment.objects.select_related("media_asset").order_by("order"),
+    queryset=PostMediaAttachment.objects.select_related("media_asset").order_by("order", "id"),
 )
 
 
@@ -122,7 +156,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     def perform_update(self, serializer: BaseSerializer[Post]) -> None:
         assert isinstance(serializer, PostSerializer)  # always this view's own serializer_class
         assert serializer.instance is not None  # set by UpdateModelMixin.get_object() beforehand
-        serializer.instance = update_post(serializer.instance, **serializer.validated_data)
+        serializer.instance = update_post(
+            serializer.instance,
+            author=authenticated_user(self.request),
+            **serializer.validated_data,
+        )
 
     @extend_schema(
         request=PostPreviewRequestSerializer,
@@ -156,8 +194,128 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             master_body=data.get("master_body", ""),
             media_assets=list(data.get("media_asset_ids", [])),
             platforms=platforms,
+            alt_text={int(k): v for k, v in data.get("alt_text", {}).items()},
+            options=data.get("platform_options") or {},
+            workspace=workspace,
         )
         return Response({"payloads": {p: payload.as_dict() for p, payload in payloads.items()}})
+
+    @extend_schema(
+        request=AltTextRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Describe one of this post's images",
+        description=(
+            "Alt text is a property of *this use* of the file, not of the file "
+            "(P1-06) — `MediaAsset` is immutable and carries no descriptive "
+            "text. Omit `platform` to describe the image for the whole post; "
+            "pass one to describe it for that platform only, which is how "
+            "Instagram and LinkedIn end up describing the same image to "
+            "different audiences. Clearing a per-platform description falls "
+            "back to the post-level one."
+        ),
+    )
+    @action(detail=True, methods=["post"], url_path="alt-text")
+    def alt_text(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = AltTextRequestSerializer(data=request.data, context={"request": request})
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+
+        platform = data.get("platform")
+        set_alt_text(
+            post,
+            media_asset=data["media_asset"],
+            alt_text=data["alt_text"],
+            target=target_for_platform(post, platform) if platform else None,
+            author=authenticated_user(request),
+        )
+        post.refresh_from_db()
+        return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        request=PlatformOptionsRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Set one platform's composer settings",
+        description=(
+            "First comment, location, tagging, audience targeting, custom "
+            "thumbnail — whatever `content.services.rules` declares for that "
+            "platform (P1-11). Validated against the declaration, so an "
+            "undeclared key is a 400 naming the field rather than a setting "
+            "that silently does nothing. Creates the target if the post has "
+            "none yet; it never sets a schedule or an account."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="platform-options",
+        permission_classes=[
+            IsAuthenticated,
+            HasFlag(CONTENT_MODEL_V2),
+            HasPermission(Permission.EDIT),
+        ],
+    )
+    def platform_options(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PlatformOptionsRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        set_platform_options(
+            post,
+            platform=payload.validated_data["platform"],
+            options=payload.validated_data.get("options", {}),
+            author=authenticated_user(request),
+        )
+        post.refresh_from_db()
+        return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        responses={200: PostRevisionSerializer(many=True)},
+        summary="This post's version history, newest first",
+        description=(
+            "Append-only. Each entry carries the diff against the one before "
+            "it; every tenth is a full checkpoint, which is what bounds both "
+            "reconstruction and what retention is allowed to drop (P1-08)."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        permission_classes=[IsAuthenticated, HasFlag(CONTENT_MODEL_V2)],
+    )
+    def revisions(self, request: Request, pk: str | None = None) -> Response:
+        history = self.get_object().revisions.select_related("author").order_by("-sequence")
+        return Response(PostRevisionSerializer(history, many=True).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: PostSerializer},
+        summary="Put an earlier version back",
+        description=(
+            "Writes a **new** revision whose content matches the old one; it "
+            "never rewinds or removes history. 404 for a sequence this post "
+            "has no revision for, 409 for a post that is already publishing "
+            "or published."
+        ),
+        parameters=[OpenApiParameter("sequence", int, OpenApiParameter.PATH)],
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"revisions/(?P<sequence>[0-9]+)/restore",
+        permission_classes=[
+            IsAuthenticated,
+            HasFlag(CONTENT_MODEL_V2),
+            HasPermission(Permission.EDIT),
+        ],
+    )
+    def restore_revision(
+        self, request: Request, pk: str | None = None, sequence: str | None = None
+    ) -> Response:
+        post = revisions_service.restore(
+            self.get_object(), sequence=int(sequence or 0), author=authenticated_user(request)
+        )
+        return Response(PostSerializer(post, context={"request": request}).data)
 
     @extend_schema(
         request=PostScheduleRequestSerializer,
@@ -195,7 +353,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         permission_classes=[
             IsAuthenticated,
             HasFeature(APPROVAL_FEATURE),
-            HasRole(Role.CONTRIBUTOR),
+            HasPermission(Permission.EDIT),
         ],
     )
     def submit(self, request: Request, pk: str | None = None) -> Response:
@@ -211,7 +369,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE), HasRole(Role.ADMIN)],
+        permission_classes=[
+            IsAuthenticated,
+            HasFeature(APPROVAL_FEATURE),
+            HasPermission(Permission.APPROVE),
+        ],
     )
     def approve(self, request: Request, pk: str | None = None) -> Response:
         note = self._approval_note(request)
@@ -229,7 +391,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         detail=True,
         methods=["post"],
         url_path="request-changes",
-        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE), HasRole(Role.ADMIN)],
+        permission_classes=[
+            IsAuthenticated,
+            HasFeature(APPROVAL_FEATURE),
+            HasPermission(Permission.APPROVE),
+        ],
     )
     def request_changes(self, request: Request, pk: str | None = None) -> Response:
         note = self._approval_note(request)
@@ -249,7 +415,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE), HasRole(Role.ADMIN)],
+        permission_classes=[
+            IsAuthenticated,
+            HasFeature(APPROVAL_FEATURE),
+            HasPermission(Permission.APPROVE),
+        ],
     )
     def reject(self, request: Request, pk: str | None = None) -> Response:
         note = self._approval_note(request)
@@ -299,8 +469,8 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     def comments(self, request: Request, pk: str | None = None) -> Response:
         post = self.get_object()
         if request.method == "POST":
-            if not role_at_least(caller_role(request), Role.CONTRIBUTOR):
-                raise PermissionDenied("VIEWER cannot comment.")
+            if Permission.COMMENT not in caller_permissions(request):
+                raise PermissionDenied("You do not hold `comment` in this workspace.")
             payload = PostCommentSerializer(data=request.data, context={"post": post})
             payload.is_valid(raise_exception=True)
             comment = approvals.add_comment(
@@ -327,7 +497,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         permission_classes=[
             IsAuthenticated,
             HasFeature(APPROVAL_FEATURE),
-            HasRole(Role.CONTRIBUTOR),
+            HasPermission(Permission.COMMENT),
         ],
     )
     def resolve_comment(
@@ -365,3 +535,137 @@ class MediaAssetViewSet(
         asset = ingest_media(workspace=request_workspace(request), upload=upload)
         serializer = self.get_serializer(asset)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request=CropRequestSerializer,
+        responses={201: MediaAssetSerializer},
+        summary="Crop an image into a new asset",
+        description=(
+            "201, not 200: a crop **creates** a new `MediaAsset` carrying "
+            "`derived_from` and leaves the original exactly as it was (P1-12). "
+            "The editor is a new ingestion path, not a mutation path — which "
+            'is what keeps "which file did we publish" answerable later.'
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasFlag(CONTENT_MODEL_V2)],
+    )
+    def crop(self, request: Request, pk: str | None = None) -> Response:
+        payload = CropRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        derived = crop_image(self.get_object(), box=CropBox(**payload.validated_data))
+        return Response(MediaAssetSerializer(derived).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request=TrimRequestSerializer,
+        responses={201: MediaAssetSerializer},
+        summary="Trim a video into a new asset",
+        description=(
+            "Same shape as `crop`. 422 when no video editor is configured for "
+            "this deployment — trimming needs a codec, and a fresh checkout "
+            "runs without one (Part 7 rule 6)."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasFlag(CONTENT_MODEL_V2)],
+    )
+    def trim(self, request: Request, pk: str | None = None) -> Response:
+        payload = TrimRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        derived = trim_video(self.get_object(), **payload.validated_data)
+        return Response(MediaAssetSerializer(derived).data, status=status.HTTP_201_CREATED)
+
+
+class PostTemplateViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[PostTemplate]):
+    """Saved starting points (P1-09). Applying **copies** into a new post; a
+    template edit never reaches posts already made from it."""
+
+    serializer_class = PostTemplateSerializer
+    permission_classes: list[Any] = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]
+    pagination_class = DefaultPagination
+    queryset = PostTemplate.objects.select_related("created_by")
+
+    def perform_create(self, serializer: BaseSerializer[PostTemplate]) -> None:
+        serializer.save(
+            workspace=request_workspace(self.request),
+            created_by=authenticated_user(self.request),
+        )
+
+    @extend_schema(
+        request=None,
+        responses={201: PostSerializer},
+        summary="Create a post from this template",
+    )
+    @action(detail=True, methods=["post"])
+    def apply(self, request: Request, pk: str | None = None) -> Response:
+        post = apply_template(self.get_object(), author=authenticated_user(request))
+        return Response(
+            PostSerializer(post, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class RecurrenceRuleViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[RecurrenceRule]):
+    """ "Every Monday at 09:00" (P1-10). The scan materialises drafts; it never
+    schedules — `POST /posts/{id}/schedule/` stays the sole writer of
+    `delivery_mode` and `scheduled_at`."""
+
+    serializer_class = RecurrenceRuleSerializer
+    permission_classes: list[Any] = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]
+    pagination_class = DefaultPagination
+    queryset = RecurrenceRule.objects.select_related("source")
+    #: The rule hangs off a template, which is what carries the workspace.
+    workspace_field = "source__workspace"
+
+
+class PlatformRuleListView(APIView):
+    """The per-platform composer declarations, as data (P1-05, P1-11).
+
+    Served rather than mirrored in the frontend on purpose. A TypeScript copy
+    of `rules.py` is a second declaration, and two declarations of the same
+    facts drift — which is exactly the failure P4-06's hard stop is written to
+    catch, arriving through the back door. Adding X, Pinterest and Google
+    Business Profile should change one table and no client code.
+
+    Public reference data, like `GET /categories/`: a platform's caption limit
+    is a fact about that platform, not about the caller's tenant, so there is
+    nothing here for the tenancy sweep to walk.
+    """
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: PlatformRuleListSerializer},
+        summary="Per-platform limits and composer fields",
+    )
+    def get(self, request: Request) -> Response:
+        return Response(
+            {
+                "platforms": [
+                    {
+                        "platform": platform,
+                        "char_limit": rule.char_limit,
+                        "max_media": rule.max_media,
+                        "allowed_media_kinds": sorted(rule.allowed_media_kinds),
+                        "supports_thread": rule.supports_thread,
+                        "options": [
+                            {
+                                "key": option.key,
+                                "kind": option.kind,
+                                "label": option.label,
+                                "choices": list(option.choices),
+                                "max_length": option.max_length,
+                                "default": option.default,
+                                "required": option.required,
+                            }
+                            for option in rule.options
+                        ],
+                    }
+                    for platform, rule in PLATFORM_RULES.items()
+                ]
+            }
+        )

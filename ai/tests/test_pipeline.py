@@ -30,8 +30,8 @@ pytestmark = pytest.mark.django_db
 
 
 def _on_plan(workspace: Any, plans: Any, code: str) -> Any:
-    workspace.plan = plans[code]
-    workspace.save(update_fields=["plan", "updated_at"])
+    workspace.organization.plan = plans[code]
+    workspace.organization.save(update_fields=["plan", "updated_at"])
     return workspace
 
 

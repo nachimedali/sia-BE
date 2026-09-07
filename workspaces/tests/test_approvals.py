@@ -217,8 +217,8 @@ def test_a_downgraded_plan_makes_the_toggle_inert(
     plan without the feature must not still enforce it — the same "the
     resolver checks the clock/plan itself" shape `Entitlements` uses for a
     lapsed trial."""
-    advanced_workspace.plan = plans["pro"]
-    advanced_workspace.save(update_fields=["plan"])
+    advanced_workspace.organization.plan = plans["pro"]
+    advanced_workspace.organization.save(update_fields=["plan"])
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
 
     scheduled = schedule_post(

@@ -267,14 +267,17 @@ class PlanAdmin(ImmutableCodeAdmin):
     )
 
     def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
-        """Deleting a plan with subscribers would orphan live workspaces.
+        """Deleting a plan with subscribers would orphan live organizations.
 
         Deprecate by unsetting `is_public` instead: existing subscribers keep
         their entitlements and the plan disappears from the pricing page.
+
+        The plan hangs off `Organization` since P0-56, so that is the reverse
+        accessor to ask — `Plan.workspaces` no longer exists.
         """
         if obj is None:
             return True
-        return not obj.workspaces.exists() and not obj.subscriptions.exists()
+        return not obj.organizations.exists() and not obj.subscriptions.exists()
 
     def get_fieldsets(self, request: HttpRequest, obj: Any = None) -> Any:
         """`code` is read-only once the row exists, and Django refuses to render

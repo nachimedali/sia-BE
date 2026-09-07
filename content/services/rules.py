@@ -52,7 +52,11 @@ class Option:
     """
 
     key: str
-    kind: str  # "str" | "int" | "bool" | "url" | "choice" | "list[str]"
+    #: `media` is not a synonym for `int`. An option that references a
+    #: `MediaAsset` is a tenancy surface — an integer validator accepts another
+    #: workspace's asset id and nothing downstream would notice — so the kind
+    #: is what tells the validator to resolve it against the workspace.
+    kind: str  # "str" | "int" | "bool" | "url" | "choice" | "list[str]" | "media"
     label: str
     #: `choice` only. Ignored otherwise rather than raising, so a row is not
     #: forced to carry a field its kind has no use for.
@@ -88,6 +92,7 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
             Option(FIRST_COMMENT[0], "str", FIRST_COMMENT[1], max_length=2200),
             Option(LOCATION[0], "str", LOCATION[1], max_length=64),
             Option("collab_handles", "list[str]", "Invite as collaborators"),
+            Option("tagged_handles", "list[str]", "Tag accounts in this post"),
             Option("share_to_feed", "bool", "Also share a reel to the feed", default=True),
         ),
     ),
@@ -106,6 +111,10 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
                 choices=("PUBLIC", "CONNECTIONS"),
                 default="PUBLIC",
             ),
+            # Organization pages only — LinkedIn closes targeting on personal
+            # profiles, the same asymmetry L-3 records for reaction detail.
+            Option("targeting_locales", "list[str]", "Restrict to languages"),
+            Option("tagged_organization_ids", "list[str]", "Tag organisations"),
         ),
     ),
     Platform.TIKTOK: PlatformRule(
@@ -127,7 +136,7 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
         supports_thread=False,
         options=(
             Option("title", "str", "Video title", max_length=100, required=True),
-            Option("thumbnail_media_id", "int", "Custom thumbnail"),
+            Option("thumbnail_media_id", "media", "Custom thumbnail"),
             Option(
                 "privacy",
                 "choice",
@@ -155,6 +164,9 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
             Option(LOCATION[0], "str", LOCATION[1], max_length=64),
             Option("targeting_countries", "list[str]", "Restrict to countries"),
             Option("targeting_min_age", "int", "Minimum age"),
+            Option("targeting_interests", "list[str]", "Restrict to interests"),
+            Option("targeting_locales", "list[str]", "Restrict to languages"),
+            Option("tagged_page_ids", "list[str]", "Tag Pages in this post"),
         ),
     ),
 }

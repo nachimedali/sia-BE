@@ -48,7 +48,9 @@ def test_autopilot_stops_at_included_video_allowance(
 
     assert job.status == AutopilotJobStatus.BLOCKED_QUOTA
     assert job.detail["reason"] == "included_video_allowance"
-    assert job.detail["videos_deferred"] == autopilot_workspace.plan.included_videos == 4
+    assert (
+        job.detail["videos_deferred"] == autopilot_workspace.organization.plan.included_videos == 4
+    )
 
 
 def test_autopilot_never_debits_prepaid_video_packs(
@@ -86,8 +88,8 @@ def test_auto_approve_gated_to_advanced_plan(
     assert response.status_code == 402
     assert response.json()["error"]["upgrade"]["suggested_plan"] == "advanced"
 
-    autopilot_workspace.plan = plans["advanced"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["advanced"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
 
     assert auth_client.patch(url, {"auto_approve": True}, format="json").status_code == 200
 
@@ -185,8 +187,8 @@ def test_horizon_is_clamped_to_what_the_plan_can_schedule(
 ) -> None:
     """A Free horizon is 7 days; drafting 30 days out would produce drafts that
     `require_scheduling_horizon` could only ever refuse."""
-    autopilot_workspace.plan = plans["free"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["free"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
     autopilot_config.lookahead_days = 30
     autopilot_config.cadence_days = 1
     autopilot_config.save()
@@ -230,8 +232,8 @@ def test_a_run_without_the_autopilot_feature_fails_cleanly(
 ) -> None:
     """The plan can be downgraded after autopilot was configured; the engine
     must not act on a workspace that no longer has it."""
-    autopilot_workspace.plan = plans["free"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["free"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
 
     job = autopilot.run_config(autopilot_config)
 
@@ -349,8 +351,8 @@ def test_latitude_changes_the_brief(autopilot_config: Any) -> None:
 def test_auto_approve_lands_drafts_on_the_calendar(
     autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
-    autopilot_workspace.plan = plans["advanced"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["advanced"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
     autopilot_config.auto_approve = True
     autopilot_config.landing = AutopilotLanding.AUTO_CALENDAR
     autopilot_config.lookahead_days = 3
@@ -375,8 +377,8 @@ def test_auto_approve_without_a_connected_account_falls_back_to_the_queue(
     from channels.models import SocialAccount
 
     SocialAccount.objects.all().delete()
-    autopilot_workspace.plan = plans["advanced"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["advanced"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
     autopilot_config.auto_approve = True
     autopilot_config.landing = AutopilotLanding.AUTO_CALENDAR
     autopilot_config.lookahead_days = 3
@@ -487,8 +489,8 @@ def test_queue_returns_pending_drafts_for_this_workspace_only(
 def test_queue_is_gated_to_plans_with_autopilot(
     auth_client: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
-    autopilot_workspace.plan = plans["free"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["free"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
 
     response = auth_client.get("/api/v1/autopilot/queue/")
 
@@ -522,8 +524,8 @@ def test_another_workspaces_draft_is_a_404_not_a_403(
 
     other_owner = get_user_model().objects.create_user(email="other@example.com", password="x")
     other = provision_workspace(other_owner, name="Someone Else")
-    other.plan = plans["pro"]
-    other.save(update_fields=["plan"])
+    other.organization.plan = plans["pro"]
+    other.organization.save(update_fields=["plan", "updated_at"])
     autopilot_config.lookahead_days = 3
     autopilot_config.cadence_days = 3
     autopilot_config.save()
@@ -621,8 +623,8 @@ def test_unlimited_plans_report_unlimited_included_videos(
     plan = plans["advanced"]
     plan.included_videos = UNLIMITED
     plan.save(update_fields=["included_videos"])
-    workspace.plan = plan
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plan
+    workspace.organization.save(update_fields=["plan"])
 
     assert entitlements_for(workspace).included_video_units_remaining() == UNLIMITED
 
@@ -635,8 +637,8 @@ def test_unlimited_video_allowance_never_blocks_the_run(
     plan = plans["advanced"]
     plan.included_videos = UNLIMITED
     plan.save(update_fields=["included_videos"])
-    autopilot_workspace.plan = plan
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plan
+    autopilot_workspace.organization.save(update_fields=["plan"])
     autopilot_config.format_mix = {"VIDEO": 1}
     autopilot_config.cadence_days = 1
     autopilot_config.lookahead_days = 5

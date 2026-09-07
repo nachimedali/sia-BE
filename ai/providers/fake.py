@@ -101,6 +101,7 @@ class FakeTextProvider:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.captions: list[dict[str, Any]] = []
 
     def generate(
         self, *, system: str, prompt: str, n: int, model: str | None = None
@@ -123,11 +124,40 @@ class FakeTextProvider:
             latency_ms=5,
         )
 
+    def caption(
+        self, *, system: str, prompt: str, image_bytes: bytes, n: int, model: str | None = None
+    ) -> TextGenerationResult:
+        """Deterministic, and it **derives from the bytes** (P1-13).
+
+        A fake that ignored `image_bytes` would let a "vision" pipeline that
+        never opened the file pass every test while captioning nothing. Hashing
+        the content means a different image produces a different caption, which
+        is the cheapest possible proof that the image was actually read.
+        """
+        self.captions.append({"prompt": prompt, "image_bytes": image_bytes, "n": n})
+        fingerprint = hashlib.sha256(image_bytes).hexdigest()[:8]
+        variants = [
+            TextVariant(
+                body=f"{prompt.strip()} — caption {i + 1} of image {fingerprint}",
+                rationale=f"fake caption rationale {i + 1}",
+            )
+            for i in range(n)
+        ]
+        return TextGenerationResult(
+            variants=variants,
+            provider="fake",
+            model=model or "fake-vision-1",
+            tokens_in=len(prompt.split()),
+            tokens_out=sum(len(v.body.split()) for v in variants),
+            latency_ms=6,
+        )
+
     def classify_constraints(self, *, image_bytes: bytes, restrictions: list[str]) -> list[str]:
         return [r for r in restrictions if FORCE_VIOLATION_SENTINEL in r.upper()]
 
     def clear(self) -> None:
         self.calls.clear()
+        self.captions.clear()
 
 
 class FakeImageProvider:

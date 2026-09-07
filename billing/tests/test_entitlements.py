@@ -21,8 +21,8 @@ pytestmark = pytest.mark.django_db
 
 
 def _on_plan(workspace, plans, code):
-    workspace.plan = plans[code]
-    workspace.save(update_fields=["plan", "updated_at"])
+    workspace.organization.plan = plans[code]
+    workspace.organization.save(update_fields=["plan", "updated_at"])
     return workspace
 
 
@@ -188,8 +188,8 @@ def test_require_credits_reports_what_is_missing(workspace, plans) -> None:
 # -----------------------------------------------------------------------------
 def test_a_live_trial_gets_the_full_paid_plan(workspace, plans) -> None:
     _on_plan(workspace, plans, "pro")
-    workspace.trial_ends_at = timezone.now() + dt.timedelta(days=3)
-    workspace.save(update_fields=["trial_ends_at"])
+    workspace.organization.trial_ends_at = timezone.now() + dt.timedelta(days=3)
+    workspace.organization.save(update_fields=["trial_ends_at"])
 
     entitlements = entitlements_for(workspace)
 
@@ -202,8 +202,8 @@ def test_a_lapsed_unpaid_trial_resolves_free_without_waiting_for_the_task(worksp
     """§8.1. Entitlements must not depend on a periodic task having run — the
     window between the trial lapsing and Beat firing is otherwise a free ride."""
     _on_plan(workspace, plans, "pro")
-    workspace.trial_ends_at = timezone.now() - dt.timedelta(minutes=1)
-    workspace.save(update_fields=["trial_ends_at"])
+    workspace.organization.trial_ends_at = timezone.now() - dt.timedelta(minutes=1)
+    workspace.organization.save(update_fields=["trial_ends_at"])
 
     entitlements = entitlements_for(workspace)
 
@@ -211,13 +211,13 @@ def test_a_lapsed_unpaid_trial_resolves_free_without_waiting_for_the_task(worksp
     assert entitlements.feature("auto_publish") is False
     # The stored plan is untouched: the downgrade task owns that write.
     workspace.refresh_from_db()
-    assert workspace.plan.code == "pro"
+    assert workspace.organization.plan.code == "pro"
 
 
 def test_a_lapsed_trial_that_converted_keeps_the_paid_plan(workspace, plans) -> None:
     _on_plan(workspace, plans, "pro")
-    workspace.trial_ends_at = timezone.now() - dt.timedelta(days=1)
-    workspace.save(update_fields=["trial_ends_at"])
+    workspace.organization.trial_ends_at = timezone.now() - dt.timedelta(days=1)
+    workspace.organization.save(update_fields=["trial_ends_at"])
     Subscription.objects.create(
         workspace=workspace,
         plan=plans["pro"],

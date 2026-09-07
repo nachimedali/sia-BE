@@ -122,7 +122,7 @@ class MembershipSerializer(serializers.ModelSerializer[Membership]):
         # in sync at the schema level, so the FE renders from the field that
         # actually gates the "cannot change this row" behaviour
         # (`workspaces.services.membership`'s owner guard).
-        return obj.user_id == obj.workspace.owner_id
+        return obj.user_id == obj.workspace.organization.owner_id
 
 
 class MemberAddSerializer(serializers.Serializer[object]):

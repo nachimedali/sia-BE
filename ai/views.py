@@ -28,9 +28,11 @@ from ai.permissions import HasSufficientCredits
 from ai.serializers import (
     GenerateRequestSerializer,
     GenerationSerializer,
+    HashtagSuggestionSerializer,
     ReviseRequestSerializer,
     VoiceProfileSerializer,
 )
+from ai.services import hashtags
 from ai.services.pipeline import create_generation
 from ai.services.revisions import create_revision
 from ai.tasks import run_generation_task
@@ -75,6 +77,7 @@ class GenerateView(APIView):
             render_style=data["render_style"],
             scene=data["scene"],
             is_batch=data["is_batch"],
+            source_media=data.get("source_media"),
         )
         run_generation_task.delay(generation_id=generation.id, n=data["n"])
         # A no-op in production (the task runs on a worker, asynchronously,
@@ -132,3 +135,24 @@ class VoiceProfileViewSet(
 
     def perform_create(self, serializer: Any) -> None:
         serializer.save(workspace=request_workspace(self.request))
+
+
+class HashtagSuggestionView(APIView):
+    """Hashtags that are actually working in this workspace's category (P1-13).
+
+    A **read**, not a generation: no provider call, no credits, no quality
+    gate. The corpus is shared per category (D11), so the answer is drawn from
+    what the whole vertical is observably doing rather than from a model's
+    guess — and each row carries the count it was ranked on, because a ranked
+    list with no evidence is an opinion the caller cannot check.
+    """
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: HashtagSuggestionSerializer},
+        summary="Hashtags ranked by use in this category",
+    )
+    def get(self, request: Request) -> Response:
+        ranked = hashtags.rank_for_workspace(request_workspace(request))
+        return Response({"hashtags": [{"tag": row.tag, "count": row.count} for row in ranked]})

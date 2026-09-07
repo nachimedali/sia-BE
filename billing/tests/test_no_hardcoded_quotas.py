@@ -9,7 +9,7 @@ Two checks, because the two ways this gets violated look different:
 
 1. a **price or allowance literal** appearing anywhere in application code;
 2. a **quota field name next to a number**, which is what `if
-   workspace.plan.max_products >= 10` looks like.
+   workspace.organization.plan.max_products >= 10` looks like.
 
 Small values (1, 5, 7) are deliberately not scanned on their own: they collide
 with every loop bound and HTTP status in the codebase, and a check that cries
@@ -111,7 +111,7 @@ def test_the_check_would_actually_catch_a_violation(tmp_path) -> None:
     Without this, deleting the literal list or breaking the regex would leave a
     permanently green test asserting nothing.
     """
-    violation = "if workspace.plan.max_products >= 10:\n"
+    violation = "if workspace.organization.plan.max_products >= 10:\n"
     assert QUOTA_NEAR_NUMBER.search(violation)
 
     assert re.search(r"\b3700\b", "price_monthly_cents = 3700")

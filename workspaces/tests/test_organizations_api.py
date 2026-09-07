@@ -34,7 +34,7 @@ def _subscribe(workspace: Any, organization: Any, *, plan: Any = None) -> Subscr
     return Subscription.objects.create(
         workspace=workspace,
         organization=organization,
-        plan=plan or workspace.plan,
+        plan=plan or workspace.organization.plan,
         status=SubscriptionStatus.ACTIVE,
         stripe_subscription_id="sub_test_1",
         stripe_subscription_item_id="si_test_1",
@@ -151,8 +151,6 @@ def test_only_the_excess_is_billed(
             organization=organization,
             name=name,
             slug=Workspace.unique_slug(name),
-            owner=user,
-            plan=workspace.plan,
         )
 
     # Five workspaces, three included.
@@ -170,8 +168,6 @@ def test_an_unlimited_plan_never_bills_an_overage(
             organization=organization,
             name=name,
             slug=Workspace.unique_slug(name),
-            owner=user,
-            plan=workspace.plan,
         )
 
     assert subscriptions.billable_overage(organization) == 0
@@ -187,8 +183,6 @@ def test_a_parked_workspace_stops_being_billed(
         organization=organization,
         name="Second",
         slug=Workspace.unique_slug("Second"),
-        owner=user,
-        plan=workspace.plan,
         status=WorkspaceStatus.OVER_LIMIT,
     )
 
@@ -252,8 +246,6 @@ def test_downgrade_parks_the_newest_workspaces(
             organization=organization,
             name=name,
             slug=Workspace.unique_slug(name),
-            owner=user,
-            plan=workspace.plan,
         )
     organization.plan = plans["pro"]
     organization.plan.max_workspaces = 1
@@ -277,8 +269,6 @@ def test_nothing_is_deleted_by_a_downgrade(
         organization=organization,
         name="Second",
         slug=Workspace.unique_slug("Second"),
-        owner=user,
-        plan=workspace.plan,
     )
     organization.plan = plans["pro"]
     organization.plan.max_workspaces = 1
@@ -297,8 +287,6 @@ def test_re_upgrading_releases_what_a_downgrade_parked(
         organization=organization,
         name="Second",
         slug=Workspace.unique_slug("Second"),
-        owner=user,
-        plan=workspace.plan,
         status=WorkspaceStatus.OVER_LIMIT,
     )
     organization.plan = plans["advanced"]
@@ -440,8 +428,6 @@ def test_the_organization_row_carries_its_workspace_count(
         organization=organization,
         name="Second",
         slug=Workspace.unique_slug("Second"),
-        owner=user,
-        plan=workspace.plan,
     )
 
     assert auth_client.get(reverse("organizations")).json()[0]["workspace_count"] == 2

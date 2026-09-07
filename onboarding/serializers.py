@@ -86,7 +86,8 @@ class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
         return wizard.is_shortened(workspace)
 
     def get_plan_code(self, obj: Workspace) -> str | None:
-        return obj.plan.code if obj.plan is not None else None
+        plan = obj.organization.plan
+        return plan.code if plan is not None else None
 
     def get_completed_steps(self, obj: Workspace) -> list[int]:
         return wizard.completed_steps(obj, self._user())

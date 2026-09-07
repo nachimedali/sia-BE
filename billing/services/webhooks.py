@@ -125,9 +125,10 @@ def _on_checkout_completed(session: dict[str, Any]) -> None:
         return
 
     customer_id = _id_of(session.get("customer"))
-    if customer_id and workspace.stripe_customer_id != customer_id:
-        workspace.stripe_customer_id = customer_id
-        workspace.save(update_fields=["stripe_customer_id", "updated_at"])
+    organization = workspace.organization
+    if customer_id and organization.stripe_customer_id != customer_id:
+        organization.stripe_customer_id = customer_id
+        organization.save(update_fields=["stripe_customer_id", "updated_at"])
 
     if session.get("mode") != "payment":
         return
@@ -259,9 +260,20 @@ def _workspace_for_subscription(subscription: dict[str, Any]) -> Workspace | Non
         return workspace
 
     customer_id = _id_of(subscription.get("customer"))
-    if customer_id:
-        return Workspace.objects.filter(stripe_customer_id=customer_id).first()
-    return None
+    if not customer_id:
+        return None
+
+    # The Stripe customer is the **organization** since P0-56, and one company
+    # can hold several brands. Attribute to its oldest workspace: the same
+    # "oldest survive" rule the downgrade and account-cap paths use, so the
+    # answer is stable across replays of the same event rather than depending
+    # on row order. Metadata above is the precise path; this is the fallback
+    # for subscriptions created in the Stripe dashboard, which carry none.
+    return (
+        Workspace.objects.filter(organization__stripe_customer_id=customer_id)
+        .order_by("created_at")
+        .first()
+    )
 
 
 def _plan_from(subscription: dict[str, Any]) -> Plan | None:

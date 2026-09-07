@@ -12,9 +12,10 @@ path already own those transitions; this module's only interest in them is
 `ensure_approval_still_valid`, the recheck `scheduling.publishing.preflight`
 calls before a scheduled post is actually sent (see its docstring for why).
 
-**Role authorization is a view-layer concern, not a service one.**
-`workspaces.permissions.HasRole` gates who may call `approve`/`request_changes`
-/`reject` (ADMIN+) and `submit_for_review`/comments (anyone but VIEWER); this
+**Authorization is a view-layer concern, not a service one.**
+`workspaces.permissions.HasPermission` gates who may call `approve`/
+`request_changes`/`reject` (`approve`) and `submit_for_review`/comments
+(`edit`/`comment`); this
 module only enforces the state machine itself — that a transition is legal
 from the post's *current* status, regardless of who is asking. The one place
 staleness between "was authorized" and "still is" actually matters is days
@@ -36,14 +37,13 @@ from django.utils import timezone
 from common.exceptions import StateConflict
 from content.models import Post, PostStatus
 from workspaces.models import (
-    ROLE_RANK,
     ApprovalAction,
     ApprovalActionType,
     AuditLog,
-    Membership,
+    Permission,
     PostComment,
-    Role,
 )
+from workspaces.permissions import member_permissions
 
 #: `from_statuses` per action, keyed the same way `ApprovalActionType` names
 #: the transition rather than the state it lands on.
@@ -170,10 +170,9 @@ def ensure_approval_still_valid(post: Post) -> None:
         # revoke, so nothing to block.
         return
 
-    role = (
-        Membership.objects.filter(user=latest_approval.actor, workspace=post.workspace)
-        .values_list("role", flat=True)
-        .first()
-    )
-    if role is None or ROLE_RANK[role] > ROLE_RANK[Role.ADMIN]:
+    # The same question the view gate asked, asked again days later: does this
+    # approver still hold `approve` in this workspace? Routed through
+    # `member_permissions` rather than re-deriving it, so the gate and the
+    # recheck cannot drift apart about one person.
+    if Permission.APPROVE not in member_permissions(latest_approval.actor, post.workspace):
         raise ApprovalRevokedError(detail={"post": post.pk, "approver": latest_approval.actor_id})

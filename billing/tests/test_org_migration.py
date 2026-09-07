@@ -1,138 +1,30 @@
-"""The organization migration sequence (P0-52, P0-53, P0-61, P0-62).
+"""The ledger re-scope half of the organization migration (P0-53, P0-61, P0-62).
 
-The sequence is expand → backfill → ledger re-scope → dual-write → cut reads →
-contract, and the order is not decorative. Two steps here are what the rest
-depends on:
+The sequence was expand → backfill → ledger re-scope → dual-write → cut reads →
+contract, and the order was not decorative: **reconciliation is extended before
+the backfill runs**, because a backfill that moves rows into a dimension
+nothing checks is a backfill whose mistakes are invisible until someone is
+billed wrongly.
 
-* **reconciliation is extended before the backfill runs.** A backfill that
-  moves rows into a dimension nothing checks is a backfill whose mistakes are
-  invisible until someone is billed wrongly;
-* **the backfill is idempotent, batched and resumable.** A migration that must
-  complete in one shot is a migration that cannot be interrupted, and this one
-  runs over every workspace in the deployment.
+The workspace→organization backfill itself lives in `workspaces.0010` now that
+the contract step has dropped the columns it read, and is exercised against the
+real migration in `tests/test_phase0_gates.py` (P0-G1). What stays here is the
+ledger re-scope — the sanctioned append-only exception — which the contract did
+not touch.
 """
 
 from __future__ import annotations
 
-from io import StringIO
 from typing import Any
 
 import pytest
-from django.core.management import call_command
 from django.db import connection, transaction
 
 from billing.models import CreditLedger
-from billing.services import ledger, plans, reconciliation
+from billing.services import ledger, reconciliation
 from common.models import MigrationNote
-from workspaces.models import Membership, Organization, Role, Workspace
 
 pytestmark = pytest.mark.django_db
-
-
-def _orphan(user: Any, plan: Any, name: str = "Legacy Brand") -> Workspace:
-    """A workspace as it looked before this phase: no organization, and a
-    membership with no permission set. Constructed directly rather than through
-    `provision_workspace`, which now makes an organization — the whole point is
-    to have one that does not."""
-    workspace = Workspace.objects.create(
-        name=name, slug=Workspace.unique_slug(name), owner=user, plan=plan
-    )
-    Membership.objects.create(user=user, workspace=workspace, role=Role.OWNER, permissions=[])
-    return workspace
-
-
-def _run(**kwargs: Any) -> str:
-    out = StringIO()
-    call_command("backfill_organizations", stdout=out, **kwargs)
-    return out.getvalue()
-
-
-# -----------------------------------------------------------------------------
-# The backfill — P0-52
-# -----------------------------------------------------------------------------
-def test_an_orphan_workspace_gets_an_organization(user: Any, plans_by_code: Any) -> None:
-    """One org per existing workspace, named after it. That mapping is the only
-    one that can be right without asking anybody: before this migration a
-    workspace *was* the paying entity."""
-    orphan = _orphan(user, plans_by_code["pro"])
-
-    _run()
-
-    orphan.refresh_from_db()
-    assert orphan.organization is not None
-    assert orphan.organization.owner == user
-    assert orphan.organization.plan == plans_by_code["pro"]
-
-
-def test_the_backfill_is_idempotent(user: Any, plans_by_code: Any) -> None:
-    """A half-finished run can simply be started again."""
-    _orphan(user, plans_by_code["pro"])
-
-    _run()
-    before = Organization.objects.count()
-    _run()
-
-    assert Organization.objects.count() == before
-
-
-def test_a_workspace_that_already_has_one_is_left_alone(workspace: Any, organization: Any) -> None:
-    _run()
-
-    workspace.refresh_from_db()
-    assert workspace.organization == organization
-
-
-def test_it_is_resumable_from_a_cursor(user: Any, plans_by_code: Any) -> None:
-    """The cursor is the last workspace id processed, so an operator who has to
-    stop picks up where it stopped rather than re-reading what is done."""
-    first = _orphan(user, plans_by_code["pro"], name="First")
-    second = _orphan(user, plans_by_code["pro"], name="Second")
-
-    _run(after=first.pk)
-
-    first.refresh_from_db()
-    second.refresh_from_db()
-    assert first.organization is None
-    assert second.organization is not None
-
-
-def test_a_dry_run_writes_nothing(user: Any, plans_by_code: Any) -> None:
-    _orphan(user, plans_by_code["pro"])
-
-    output = _run(dry_run=True)
-
-    assert Organization.objects.filter(name="Legacy Brand").count() == 0
-    assert "would create" in output
-
-
-def test_existing_members_join_the_company_too(
-    user: Any, other_user: Any, plans_by_code: Any
-) -> None:
-    """Omitting them would leave collaborators visible in a brand and absent
-    from the roster and quota of the company above it."""
-    orphan = _orphan(user, plans_by_code["pro"])
-    Membership.objects.create(user=other_user, workspace=orphan, role=Role.EDITOR)
-
-    _run()
-
-    orphan.refresh_from_db()
-    company = orphan.organization
-    assert company is not None
-    assert company.memberships.count() == 2
-    # OWNER is not assignable on a membership (P0-12), so the owner joins as
-    # ADMIN — the same permission set, recorded in the one place that can hold it.
-    assert company.memberships.get(user=user).role == Role.ADMIN
-
-
-def test_permissions_are_derived_for_pre_expand_rows(user: Any, plans_by_code: Any) -> None:
-    """Derivation is a pure function with an exhaustive 5x7 test behind it,
-    which is the only reason this is safe to run unattended."""
-    orphan = _orphan(user, plans_by_code["pro"])
-
-    _run()
-
-    membership = Membership.objects.get(user=user, workspace=orphan)
-    assert "admin" in membership.permissions
 
 
 # -----------------------------------------------------------------------------
@@ -231,17 +123,28 @@ def _misattribute(row_id: int, organization_id: int) -> None:
         )
 
 
-def test_the_org_sweep_reports_and_never_repairs(
-    workspace: Any, organization: Any, plans_by_code: Any
-) -> None:
-    """Part 7 rule 7. The drift is the only evidence that a write path bypassed
-    `set_plan`, so repairing it would destroy the evidence."""
-    workspace.plan = plans_by_code["advanced"]
-    workspace.save(update_fields=["plan"])
+def test_the_org_sweep_reports_and_never_repairs(workspace: Any, organization: Any) -> None:
+    """Part 7 rule 7, on the dimension the sweep still watches.
+
+    Plan parity left the sweep with the contract step — one column cannot
+    disagree with itself — so what it reports on is a ledger row filed under
+    the wrong company, and it must leave that row exactly where it found it.
+    The misfiling is the only evidence of the write path that caused it.
+    """
+    from django.contrib.auth import get_user_model
+
+    from workspaces.services.provisioning import provision_workspace
+
+    entry = ledger.grant_credits(workspace, 10, note="grant")[0]
+    stranger = provision_workspace(
+        get_user_model().objects.create_user(email="stranger@example.com", password="x"),
+        name="Another Company",
+    )
+    _misattribute(entry.pk, stranger.organization.pk)
 
     assert reconciliation.reconcile_organizations() >= 1
 
-    workspace.refresh_from_db()
-    organization.refresh_from_db()
-    assert workspace.plan != organization.plan
-    assert plans.parity_drift() != []
+    entry.refresh_from_db()
+    assert entry.organization_id == stranger.organization.pk, (
+        "the sweep repaired a row it should only have reported"
+    )

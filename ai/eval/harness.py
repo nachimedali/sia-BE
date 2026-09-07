@@ -34,6 +34,7 @@ from ai.models import GenerationKind, GenerationMode, GenerationStatus
 from ai.services.pipeline import create_generation, run_generation
 from billing.models import Plan
 from billing.services.ledger import grant_credits
+from billing.services.plans import set_plan
 from products.models import Product
 from products.services.products import attach_reference_images, create_product
 from workspaces.models import Workspace
@@ -152,7 +153,7 @@ def _benchmark_workspace() -> tuple[User, Workspace]:
     user, _ = get_user_model().objects.get_or_create(
         email="eval-harness@occs.internal", defaults={"is_active": True}
     )
-    workspace = Workspace.objects.filter(owner=user).order_by("created_at").first()
+    workspace = Workspace.objects.filter(organization__owner=user).order_by("created_at").first()
     if workspace is None:
         workspace = provision_workspace(user, name=BENCHMARK_WORKSPACE_NAME)
 
@@ -160,9 +161,8 @@ def _benchmark_workspace() -> tuple[User, Workspace]:
     # quota (§4.1), and this is internal tooling, not a real customer this
     # quota is meant to constrain.
     advanced = Plan.objects.filter(code="advanced").first()
-    if advanced is not None and workspace.plan_id != advanced.id:
-        workspace.plan = advanced
-        workspace.save(update_fields=["plan", "updated_at"])
+    if advanced is not None and workspace.organization.plan_id != advanced.id:
+        set_plan(workspace, advanced)
 
     grant_credits(workspace, 100, note="eval harness")
     return user, workspace

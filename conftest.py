@@ -56,6 +56,25 @@ def _isolate_platform_adapter() -> Iterator[None]:
     _fake_adapter.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_media_editor() -> Iterator[None]:
+    """Same reasoning as the publish adapter above: the fake editor is
+    module-level so a test can inspect its calls after a view has run, which
+    makes its record process-wide state (P1-12)."""
+    from content.editing.fake import _fake_editor
+
+    _fake_editor.clear()
+    yield
+    _fake_editor.clear()
+
+
+@pytest.fixture
+def media_editor() -> Any:
+    from content.editing.fake import _fake_editor
+
+    return _fake_editor
+
+
 @pytest.fixture
 def platform_adapter() -> Any:
     from channels.adapters.fake import _fake_adapter
@@ -109,9 +128,12 @@ def paid_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     """Auto-publish is a paid feature (D4), so every connect and publish test
     needs a plan that has it. Pro rather than Advanced: five social accounts
     is the smaller cap of the two, which is what makes the I6 account-cap test
-    meaningful without seeding ten accounts first."""
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    meaningful without seeding ten accounts first.
+
+    The plan is set on the **organization** — since P0-56 that is the only
+    place it lives (L-1: billing pools at the company)."""
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     return workspace
 
 
@@ -241,9 +263,10 @@ def _clear_fake_providers() -> Iterator[None]:
 def advanced_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     """Advanced, with the collaboration workflow switched on. §4.1: only
     Advanced has `approval_workflow`."""
-    workspace.plan = plans["advanced"]
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
     workspace.requires_approval = True
-    workspace.save(update_fields=["plan", "requires_approval"])
+    workspace.save(update_fields=["requires_approval"])
     return workspace
 
 
@@ -285,7 +308,7 @@ def viewer_user(advanced_workspace: Any) -> Any:
 @pytest.fixture
 def advanced_social_account(advanced_workspace: Any) -> Any:
     """The `social_account` fixture above pulls in `paid_workspace`, which
-    would set `workspace.plan` back to Pro — a real conflict with
+    would set the organization's plan back to Pro — a real conflict with
     `advanced_workspace`, since both mutate the same cached `workspace`
     fixture instance. This is `social_account`'s shape, built directly on
     `advanced_workspace` instead."""
@@ -313,3 +336,56 @@ def client_as() -> Any:
         return api
 
     return _make
+
+
+@pytest.fixture
+def media_asset(workspace: Any, make_png_upload: Any) -> Any:
+    """Moved here from content/tests/conftest.py once ai/ needed it too."""
+    from content.services.media import ingest_media
+
+    return ingest_media(workspace=workspace, upload=make_png_upload())
+
+
+@pytest.fixture
+def text_provider() -> Any:
+    """The module-level fake text provider, for asserting on what a generation
+    actually asked the vendor for — a vision call that never opened the file
+    would otherwise pass every test above it."""
+    from ai.providers.fake import _fake_text_provider
+
+    return _fake_text_provider
+
+
+@pytest.fixture
+def trend_corpus(category: Any, db: None) -> Any:
+    """A small category corpus with hashtags in it (P1-13).
+
+    Dates are **relative to now**, never absolute: P0-63 was a whole day lost
+    to a fixture whose dates fell out of the 14-day window in August, and the
+    fix was to make that class of bug impossible rather than to move the dates.
+    """
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from trends.models import TrendItem, TrendSource
+
+    source = TrendSource.objects.create(
+        category=category, platform="instagram", kind="REDDIT", vendor="fake"
+    )
+    bodies = [
+        "New glaze day #ceramics #handmade #studio",
+        "Throwing mugs all morning #ceramics #handmade",
+        "Kiln unloading #ceramics",
+        # Says it four times: counted once, because a ranking that counted
+        # mentions would let one spammy caption dominate a whole vertical.
+        "#studio #studio #studio #studio",
+    ]
+    for index, body in enumerate(bodies):
+        TrendItem.objects.create(
+            source=source,
+            external_id=f"item-{index}",
+            body=body,
+            posted_at=timezone.now() - dt.timedelta(days=index + 1),
+        )
+    return source

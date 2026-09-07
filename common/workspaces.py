@@ -64,12 +64,14 @@ def request_workspace(request: Request) -> Workspace:
 
     user = authenticated_user(request)
     mine = Workspace.objects.filter(memberships__user=user).select_related(
-        # `owner` joins because both checkout flows read `owner.email` to hand
-        # Stripe a billing identity, and it is one row either way.
-        "plan",
+        # The organization's plan and owner join because the entitlement
+        # resolver reads the plan on every request and both checkout flows
+        # read `owner.email` to hand Stripe a billing identity — one row
+        # either way, and both live on the organization since P0-56.
         "category",
-        "owner",
         "organization",
+        "organization__plan",
+        "organization__owner",
     )
 
     requested = str(request.META.get(WORKSPACE_HEADER, "") or "").strip()

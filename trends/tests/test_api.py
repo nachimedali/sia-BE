@@ -46,8 +46,8 @@ def test_free_tier_sees_teaser_only(
     auth_client.get(TRENDS_URL)
     assert TrendCluster.objects.exists()
 
-    trend_workspace.plan = plans["free"]
-    trend_workspace.save(update_fields=["plan"])
+    trend_workspace.organization.plan = plans["free"]
+    trend_workspace.organization.save(update_fields=["plan"])
 
     response = auth_client.get(TRENDS_URL)
 
@@ -65,8 +65,8 @@ def test_free_tier_cannot_force_a_refresh(
 ) -> None:
     """Reading a corpus someone else extracted is free; spending vendor quota
     is not — so this one is a real 402 with an upgrade payload (A2)."""
-    trend_workspace.plan = plans["free"]
-    trend_workspace.save(update_fields=["plan"])
+    trend_workspace.organization.plan = plans["free"]
+    trend_workspace.organization.save(update_fields=["plan"])
 
     response = auth_client.post(REFRESH_URL, {"platform": Platform.TIKTOK}, format="json")
 

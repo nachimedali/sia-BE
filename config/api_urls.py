@@ -23,7 +23,12 @@ from accounts.views import (
     ThrottledTokenObtainPairView,
     VerifyEmailView,
 )
-from ai.views import GenerateView, GenerationViewSet, VoiceProfileViewSet
+from ai.views import (
+    GenerateView,
+    GenerationViewSet,
+    HashtagSuggestionView,
+    VoiceProfileViewSet,
+)
 from analytics.views import (
     AnalyticsBestTimesView,
     AnalyticsCommentsView,
@@ -50,7 +55,13 @@ from billing.views import (
 from categories.views import CategoryListView
 from channels.views import ChannelConnectView, SocialAccountViewSet
 from common.health import HealthView
-from content.views import MediaAssetViewSet, PostViewSet
+from content.views import (
+    MediaAssetViewSet,
+    PlatformRuleListView,
+    PostTemplateViewSet,
+    PostViewSet,
+    RecurrenceRuleViewSet,
+)
 from onboarding.views import OnboardingCompleteView, OnboardingView
 from products.views import (
     AutopilotApproveView,
@@ -82,6 +93,8 @@ from workspaces.views import (
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
 router.register("media", MediaAssetViewSet, basename="media-asset")
+router.register("post-templates", PostTemplateViewSet, basename="post-template")
+router.register("recurrence-rules", RecurrenceRuleViewSet, basename="recurrence-rule")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
@@ -211,8 +224,15 @@ urlpatterns = [
     path("workspaces/audit-log/", AuditLogView.as_view(), name="workspace-audit-log"),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
+    # Platform facts, not tenant data — a caption limit is true whoever
+    # asks. Served rather than mirrored in the frontend so `rules.py`
+    # stays the one declaration (P1-05).
+    path("platform-rules/", PlatformRuleListView.as_view(), name="platform-rules"),
     # --- ai ---
     path("ai/generate/", GenerateView.as_view(), name="ai-generate"),
+    # A read, not a generation (P1-13): the corpus is category-shared, so
+    # there is no workspace-scoped object here for the tenancy sweep to walk.
+    path("ai/hashtags/", HashtagSuggestionView.as_view(), name="ai-hashtags"),
     # --- reminders: public, token-scoped, no login (design.md §8.5) ---
     # Not on `router` — a token is not a workspace-scoped pk, so the
     # cross-workspace tenancy sweep (A52) has nothing to walk here;

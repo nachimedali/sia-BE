@@ -46,8 +46,8 @@ def test_the_permission_blocks_a_plan_without_the_feature(workspace, user) -> No
 
 
 def test_the_permission_allows_a_plan_with_the_feature(workspace, user, plans) -> None:
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
 
     response = _call(user)
 

@@ -1,13 +1,19 @@
-"""Role permission classes (design.md §8.8).
+"""Permission classes (design.md §8.8, BUILD-PLAN Phase 0).
 
-The role table's structural counterpart to `billing.permissions.HasFeature`: a
-factory returning a class, for the same reason — DRF instantiates whatever is
-in `permission_classes`, and anything else has to fake being a class.
+The authority-set counterpart to `billing.permissions.HasFeature`: a factory
+returning a class, for the same reason — DRF instantiates whatever is in
+`permission_classes`, and anything else has to fake being a class.
+
+**`Membership.permissions` is the authority; `role` is a display preset.**
+`HasRole` and `ROLE_RANK` were the pre-migration gate and are gone (P0-56).
+Ranked roles cannot express "may approve but not publish", which approval
+chains need by Phase 2, and every attempt to bolt that onto a rank ends in a
+second, contradictory ordering.
 
 **403, not 402.** `HasFeature` deliberately raises `FeatureNotAvailable` for a
 402-with-upgrade payload, because a plan gate is an entitlement failure (design
-A2). A role gate is not: no upgrade fixes "you are a CONTRIBUTOR, not an
-ADMIN", so `HasRole` returns a plain `False` and lets DRF's ordinary 403 stand.
+A2). A permission gate is not: no upgrade fixes "you do not hold `approve`", so
+these return a plain `False` and let DRF's ordinary 403 stand.
 """
 
 from __future__ import annotations
@@ -18,30 +24,7 @@ from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
 from common.workspaces import request_workspace
-from workspaces.models import ROLE_RANK, Membership, permissions_for
-
-
-def caller_role(request: Request) -> str | None:
-    """The caller's role in their active workspace, or `None` if they are
-    somehow authenticated without a membership — unreachable through normal
-    signup (`provision_workspace` creates the OWNER membership in the same
-    transaction) but not a case a permission check may assume away."""
-    if not request.user or not request.user.is_authenticated:
-        return None
-    membership = (
-        Membership.objects.filter(user=request.user, workspace=request_workspace(request))
-        .values_list("role", flat=True)
-        .first()
-    )
-    return membership
-
-
-def role_at_least(role: str | None, minimum: str) -> bool:
-    """`True` when `role` is at least as senior as `minimum` — lower
-    `ROLE_RANK` is more senior, so this is a `<=`, not a `>=`."""
-    if role is None:
-        return False
-    return ROLE_RANK[role] <= ROLE_RANK[minimum]
+from workspaces.models import Membership, permissions_for
 
 
 def caller_permissions(request: Request) -> set[str]:
@@ -60,8 +43,19 @@ def caller_permissions(request: Request) -> set[str]:
     """
     if not request.user or not request.user.is_authenticated:
         return set()
+    return member_permissions(request.user, request_workspace(request))
+
+
+def member_permissions(user: Any, workspace: Any) -> set[str]:
+    """`caller_permissions` without a request, for the Celery-preflight recheck
+    (`workspaces.services.approvals.ensure_approval_still_valid`), which has an
+    actor and a workspace but no HTTP request to read them from.
+
+    Same dual-read, deliberately: two implementations of "what may this member
+    do" is how the gate and the recheck end up disagreeing about one person.
+    """
     membership = (
-        Membership.objects.filter(user=request.user, workspace=request_workspace(request))
+        Membership.objects.filter(user=user, workspace=workspace)
         .values_list("role", "permissions")
         .first()
     )
@@ -90,19 +84,3 @@ def HasPermission(permission: str) -> type[BasePermission]:  # noqa: N802 — re
 
     _HasPermission.__name__ = f"HasPermission({permission!r})"
     return _HasPermission
-
-
-def HasRole(minimum: str) -> type[BasePermission]:  # noqa: N802 — reads as a class
-    """`permission_classes = [IsAuthenticated, HasRole(Role.ADMIN)]`.
-
-    **Shim, kept only through dual-read** (P0-11). Every gate should move to
-    `HasPermission`; this stays so the move can be one view at a time rather
-    than one deploy, and P0-56 deletes it along with `ROLE_RANK`.
-    """
-
-    class _HasRole(BasePermission):
-        def has_permission(self, request: Request, view: Any) -> bool:
-            return role_at_least(caller_role(request), minimum)
-
-    _HasRole.__name__ = f"HasRole({minimum!r})"
-    return _HasRole

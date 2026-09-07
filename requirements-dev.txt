@@ -20,3 +20,4 @@ mypy
 django-stubs
 djangorestframework-stubs
 pyyaml
+types-python-dateutil

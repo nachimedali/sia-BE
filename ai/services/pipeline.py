@@ -63,7 +63,7 @@ from ai.services.costing import resolve_cost
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
 from common.exceptions import InsufficientCredits, OCCSError
-from content.models import MediaAsset, MediaSource
+from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
 from products.models import Product
 from products.services.guards import ensure_generation_ready
@@ -83,6 +83,11 @@ ALLOWED_MODES = frozenset(
         GenerationMode.REWRITE,
         GenerationMode.REVISION,
         GenerationMode.AUTOPILOT,
+        # P1-13. Both are text-only and provider-backed, so they need nothing
+        # the pipeline does not already do — which is the point: two new modes
+        # cost two rows here and one prompt assembler each.
+        GenerationMode.CAPTION,
+        GenerationMode.SUGGEST,
     }
 )
 DIRECTLY_CREATABLE_MODES = ALLOWED_MODES - {GenerationMode.REVISION, GenerationMode.AUTOPILOT}
@@ -111,6 +116,7 @@ def create_generation(
     render_style: str = "",
     scene: str = "",
     is_batch: bool = False,
+    source_media: MediaAsset | None = None,
 ) -> Generation:
     """Validates and persists the `PENDING` row. No provider call — that is
     `run_generation`'s job (design.md §11)."""
@@ -118,6 +124,9 @@ def create_generation(
 
     if mode not in DIRECTLY_CREATABLE_MODES:
         raise GenerationModeNotAvailableError(detail={"mode": mode})
+
+    if mode == GenerationMode.CAPTION:
+        _ensure_captionable(workspace, source_media)
 
     if kind == GenerationKind.VIDEO:
         # Entitlement first, availability second, and the order matters: a Free
@@ -157,7 +166,30 @@ def create_generation(
         render_style=render_style,
         scene=scene,
         is_batch=is_batch,
+        source_media=source_media,
     )
+
+
+def _ensure_captionable(workspace: Workspace, asset: MediaAsset | None) -> None:
+    """A caption needs an image, and it needs to be *this workspace's* image.
+
+    The tenancy check is here rather than only in the serializer because this
+    function is also the entry point autopilot and any later service uses —
+    a check that lives only at the edge is a check the next caller skips.
+    """
+    if asset is None:
+        raise GenerationModeNotAvailableError(
+            "A caption needs a media asset to read.", detail={"mode": GenerationMode.CAPTION}
+        )
+    if asset.workspace_id != workspace.pk:
+        raise GenerationModeNotAvailableError(
+            "That media asset belongs to another workspace.",
+            detail={"source_media": asset.pk},
+        )
+    if asset.kind != MediaKind.IMAGE:
+        raise GenerationModeNotAvailableError(
+            "Only images can be captioned.", detail={"source_media": asset.pk}
+        )
 
 
 def _reference_image_bytes(product: Product | None) -> list[bytes]:
@@ -179,8 +211,21 @@ def _attempt_text(
         workspace=generation.workspace,
         product=generation.product,
         voice_profile=generation.voice_profile,
+        mode=generation.mode,
     )
-    result = provider.generate(system=grounded.system, prompt=grounded.user, n=n)
+    source_media = generation.source_media
+    if generation.mode == GenerationMode.CAPTION and source_media is not None:
+        # The one branch, and it is on *capability* rather than on mode name:
+        # this is the only mode whose input is a picture, so it is the only one
+        # that needs the vision method. Everything after it — the quality gate,
+        # the debit, the variant rows — is identical.
+        with source_media.file.open("rb") as handle:
+            image_bytes = handle.read()
+        result = provider.caption(
+            system=grounded.system, prompt=grounded.user, image_bytes=image_bytes, n=n
+        )
+    else:
+        result = provider.generate(system=grounded.system, prompt=grounded.user, n=n)
 
     banned = generation.voice_profile.banned_phrases if generation.voice_profile else []
     checked = [

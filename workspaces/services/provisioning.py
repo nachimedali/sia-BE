@@ -44,10 +44,9 @@ def provision_workspace(user: User, name: str | None = None) -> Workspace:
     is a separate, resumable command precisely because it cannot borrow this
     transaction.
 
-    The plan sits on **both** rows during expand. Entitlement accounting pools
-    at the organization (L-1), but the resolver still reads the workspace copy
-    until P0-55 cuts reads over — writing both is what makes that switch a
-    one-line change rather than a migration.
+    The plan sits on the **organization** and nowhere else (L-1, P0-56):
+    entitlement accounting pools at the company, and the workspace copy that
+    existed during the migration is dropped.
     """
     workspace_name = name or default_workspace_name(user.email)
 
@@ -75,8 +74,6 @@ def provision_workspace(user: User, name: str | None = None) -> Workspace:
         organization=organization,
         name=workspace_name,
         slug=Workspace.unique_slug(workspace_name),
-        owner=user,
-        plan=free_plan,
     )
     Membership.objects.create(
         user=user,
@@ -113,8 +110,6 @@ def provision_extra_workspace(*, user: User, name: str) -> Workspace:
         organization=organization,
         name=name,
         slug=Workspace.unique_slug(name),
-        owner=user,
-        plan=organization.plan,
         status=WorkspaceStatus.PENDING_BILLING,
     )
     Membership.objects.create(

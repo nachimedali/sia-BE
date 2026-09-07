@@ -71,7 +71,7 @@ def completed_steps(workspace: Workspace, user: User) -> list[int]:
     done.extend(
         step for step, field in STEP_COMPLETION_FIELD.items() if is_filled(workspace, field)
     )
-    if workspace.plan_id:
+    if workspace.organization.plan_id:
         done.append(5)
     # A later brand inherits the org's answers rather than being asked again
     # (P0-58). Marking them done rather than hiding them keeps the rail honest:
@@ -96,11 +96,10 @@ def is_shortened(workspace: Workspace) -> bool:
     cannot drift out of step with reality: delete the first brand and the next
     one legitimately becomes the first again.
     """
-    organization_id = workspace.organization_id
-    if organization_id is None:
-        return False
     return (
-        Workspace.objects.filter(organization_id=organization_id, onboarding_complete=True)
+        Workspace.objects.filter(
+            organization_id=workspace.organization_id, onboarding_complete=True
+        )
         .exclude(pk=workspace.pk)
         .exists()
     )

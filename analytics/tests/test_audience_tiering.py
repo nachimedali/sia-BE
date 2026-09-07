@@ -46,16 +46,16 @@ def test_the_cadence_comes_from_the_plan_not_a_constant(
 ) -> None:
     """Part 7 rule 10: no commercial number is hardcoded. Daily on the trial,
     six-hourly on Pro, webhook-driven on Advanced."""
-    workspace.plan = plans["free"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
     assert entitlements_for(workspace).comment_capture_interval() == dt.timedelta(days=1)
 
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     assert entitlements_for(workspace).comment_capture_interval() == dt.timedelta(hours=6)
 
-    workspace.plan = plans["advanced"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
     # `None` means "subscribed", not "poll constantly": the provider caches
     # both read endpoints for ten minutes and says not to poll them.
     assert entitlements_for(workspace).comment_capture_interval() is None
@@ -111,8 +111,8 @@ def test_the_advanced_tier_does_not_poll_at_all(
 ) -> None:
     from channels.models import SocialAccount
 
-    workspace.plan = plans["advanced"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
     account = SocialAccount.objects.create(
         workspace=workspace,
         platform="instagram",
@@ -214,8 +214,8 @@ def test_advanced_can_reply_and_the_spend_is_recorded(
 ) -> None:
     from channels.models import SocialAccount
 
-    workspace.plan = plans["advanced"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
     account = SocialAccount.objects.create(
         workspace=workspace, platform="instagram", handle="@a", provider_account_id="acct-r-1"
     )
@@ -235,8 +235,8 @@ def test_the_allowance_is_pooled_across_the_organization(
     cannot, because there is one pool and one counter (L-4a)."""
     from common.exceptions import InsufficientCredits
 
-    workspace.plan = plans["advanced"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
 
     ledger.debit_reply(workspace, actor=user, allowance=2)
     ledger.debit_reply(workspace, actor=user, allowance=2)

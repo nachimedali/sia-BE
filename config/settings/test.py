@@ -40,6 +40,7 @@ USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True
 USE_FAKE_TREND_VENDORS = True
+USE_FAKE_MEDIA_EDITOR = True
 MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="occs-test-media-"))
 STORAGES = {
     **STORAGES,  # noqa: F405

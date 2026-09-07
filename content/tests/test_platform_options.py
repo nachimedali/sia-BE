@@ -131,3 +131,37 @@ def test_defaults_are_not_invented_for_options_with_none() -> None:
     cleaned = options.validate(Platform.YOUTUBE, {"title": "A video"})
 
     assert "thumbnail_media_id" not in cleaned
+
+
+# -----------------------------------------------------------------------------
+# The declaration is served, not mirrored (P1-11)
+# -----------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_the_declarations_are_served_to_the_frontend(
+    auth_client: object, workspace: object
+) -> None:
+    """A TypeScript copy of `rules.py` is a second declaration of the same
+    facts, and two declarations drift. Serving them is what keeps adding a
+    platform a one-table change."""
+    body = auth_client.get("/api/v1/platform-rules/").json()  # type: ignore[attr-defined]
+
+    served = {row["platform"]: row for row in body["platforms"]}
+    assert set(served) == set(PLATFORM_RULES)
+
+    for platform, rule in PLATFORM_RULES.items():
+        row = served[platform]
+        assert row["char_limit"] == rule.char_limit
+        assert row["max_media"] == rule.max_media
+        assert [option["key"] for option in row["options"]] == [o.key for o in rule.options]
+
+
+@pytest.mark.django_db
+def test_a_served_choice_option_carries_its_choices(auth_client: object, workspace: object) -> None:
+    """Without them the composer cannot render the select, and would fall back
+    to a free-text field that 400s on anything but the right word."""
+    body = auth_client.get("/api/v1/platform-rules/").json()  # type: ignore[attr-defined]
+    linkedin = next(row for row in body["platforms"] if row["platform"] == Platform.LINKEDIN)
+    visibility = next(o for o in linkedin["options"] if o["key"] == "visibility")
+
+    assert visibility["choices"] == ["PUBLIC", "CONNECTIONS"]
+    assert visibility["default"] == "PUBLIC"

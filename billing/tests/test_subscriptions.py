@@ -77,8 +77,8 @@ def test_checkout_offers_the_trial_only_once(workspace, priced_plans) -> None:
     )
     assert _fake_gateway.checkout_calls[-1]["trial_days"] == 7
 
-    workspace.trial_ends_at = timezone.now() - dt.timedelta(days=1)
-    workspace.save(update_fields=["trial_ends_at"])
+    workspace.organization.trial_ends_at = timezone.now() - dt.timedelta(days=1)
+    workspace.organization.save(update_fields=["trial_ends_at"])
 
     subscriptions.start_checkout(
         workspace, plan_code="pro", cycle="monthly", success_url="s", cancel_url="c"
@@ -150,7 +150,7 @@ def test_subscription_created_moves_the_workspace_onto_the_plan(workspace, price
     webhooks.process_event(_subscription_event(workspace, priced_plans["pro"]))
 
     workspace.refresh_from_db()
-    assert workspace.plan.code == "pro"
+    assert workspace.organization.plan.code == "pro"
     assert ledger.credit_balance(workspace) == 150
     assert ledger.video_balance(workspace) == 4
 
@@ -163,7 +163,7 @@ def test_a_trialing_subscription_grants_under_the_trial_reason(workspace, priced
     webhooks.process_event(_subscription_event(workspace, priced_plans["pro"], status="trialing"))
 
     workspace.refresh_from_db()
-    assert workspace.trial_ends_at is not None
+    assert workspace.organization.trial_ends_at is not None
     assert CreditLedger.objects.filter(
         workspace=workspace, reason=CreditReason.TRIAL_GRANT
     ).exists()
@@ -186,7 +186,7 @@ def test_subscription_deleted_downgrades_without_destroying_anything(
     )
 
     workspace.refresh_from_db()
-    assert workspace.plan.code == "free"
+    assert workspace.organization.plan.code == "free"
     # I10: the ledger only grew. Nothing was rewritten and nothing removed.
     assert CreditLedger.objects.filter(workspace=workspace).count() > history
 
@@ -240,7 +240,7 @@ def test_payment_failure_marks_past_due_without_cutting_access(workspace, priced
     assert Subscription.objects.get(stripe_subscription_id="sub_1").status == (
         SubscriptionStatus.PAST_DUE
     )
-    assert workspace.plan.code == "pro"
+    assert workspace.organization.plan.code == "pro"
 
 
 def test_checkout_completed_records_the_customer(workspace, priced_plans) -> None:
@@ -253,7 +253,7 @@ def test_checkout_completed_records_the_customer(workspace, priced_plans) -> Non
     )
 
     workspace.refresh_from_db()
-    assert workspace.stripe_customer_id == "cus_42"
+    assert workspace.organization.stripe_customer_id == "cus_42"
 
 
 def test_an_unhandled_event_is_recorded_and_acknowledged(workspace) -> None:
@@ -315,7 +315,7 @@ def test_downgrade_marks_over_limit_and_paused_without_deleting(workspace, price
     subscriptions.downgrade_to_free(workspace, reason="test")
 
     workspace.refresh_from_db()
-    assert workspace.plan.code == "free"
+    assert workspace.organization.plan.code == "free"
 
     surviving_credits = set(
         CreditLedger.objects.filter(workspace=workspace).values_list("pk", flat=True)
@@ -343,16 +343,16 @@ def test_expire_lapsed_trials_downgrades_only_the_unconverted(
     from accounts.models import User
     from workspaces.services.provisioning import provision_workspace
 
-    workspace.plan = priced_plans["pro"]
-    workspace.trial_ends_at = timezone.now() - dt.timedelta(days=1)
-    workspace.save(update_fields=["plan", "trial_ends_at"])
+    workspace.organization.plan = priced_plans["pro"]
+    workspace.organization.trial_ends_at = timezone.now() - dt.timedelta(days=1)
+    workspace.organization.save(update_fields=["plan", "trial_ends_at"])
 
     converted = provision_workspace(
         User.objects.create_user(email="paid@example.com", password="x"), name="Paid"
     )
-    converted.plan = priced_plans["pro"]
-    converted.trial_ends_at = timezone.now() - dt.timedelta(days=1)
-    converted.save(update_fields=["plan", "trial_ends_at"])
+    converted.organization.plan = priced_plans["pro"]
+    converted.organization.trial_ends_at = timezone.now() - dt.timedelta(days=1)
+    converted.organization.save(update_fields=["plan", "trial_ends_at", "updated_at"])
     Subscription.objects.create(
         workspace=converted,
         plan=priced_plans["pro"],
@@ -364,8 +364,8 @@ def test_expire_lapsed_trials_downgrades_only_the_unconverted(
 
     workspace.refresh_from_db()
     converted.refresh_from_db()
-    assert workspace.plan.code == "free"
-    assert converted.plan.code == "pro"
+    assert workspace.organization.plan.code == "free"
+    assert converted.organization.plan.code == "pro"
 
 
 # -----------------------------------------------------------------------------

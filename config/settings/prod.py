@@ -40,5 +40,6 @@ SENTRY_DSN = env("SENTRY_DSN", default="")
 # fallback so a missing one stops the boot instead.
 USE_FAKE_PLATFORM_ADAPTER = False
 USE_FAKE_AI_PROVIDERS = False
+USE_FAKE_MEDIA_EDITOR = False
 USE_FAKE_TREND_VENDORS = False
 ZERNIO_API_KEY = env("ZERNIO_API_KEY")

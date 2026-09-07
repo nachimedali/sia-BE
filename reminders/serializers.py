@@ -15,7 +15,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from content.models import Platform
-from content.serializers import AdaptedPayloadSerializer, PostMediaAssetSerializer
+from content.serializers import AdaptedPayloadSerializer, PostMediaSerializer
 from content.services.adaptation import render_post
 from reminders.models import Reminder
 
@@ -37,7 +37,7 @@ class ReminderPacketSerializer(serializers.Serializer[Reminder]):
     state = serializers.CharField()
     scheduled_at = serializers.DateTimeField(source="post.scheduled_at")
     confirmed_at = serializers.DateTimeField(allow_null=True)
-    media = PostMediaAssetSerializer(source="post.ordered_media", many=True)
+    media = PostMediaSerializer(source="post.ordered_attachments", many=True)
     payloads = serializers.SerializerMethodField()
     composer_links = serializers.SerializerMethodField()
     # Stubbed until Phase 10's trend engine exists to supply one — the same

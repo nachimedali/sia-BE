@@ -36,8 +36,8 @@ def autopilot_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     from billing.services.ledger import grant_credits, grant_video_units
     from channels.models import SocialAccount
 
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     grant_credits(workspace, 100, note="test funding")
     grant_video_units(workspace, plans["pro"].included_videos, note="test allowance")
     # Autopilot exists to fill a calendar that publishes itself, so the default
