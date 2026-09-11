@@ -54,6 +54,14 @@ from billing.views import (
 )
 from categories.views import CategoryListView
 from channels.views import ChannelConnectView, SocialAccountViewSet
+from collaboration.views import (
+    ReviewApproveView,
+    ReviewCommentView,
+    ReviewLinkRevokeView,
+    ReviewLinkView,
+    ReviewPacketView,
+    ThreadViewSet,
+)
 from common.health import HealthView
 from content.views import (
     MediaAssetViewSet,
@@ -62,6 +70,7 @@ from content.views import (
     PostViewSet,
     RecurrenceRuleViewSet,
 )
+from notifications.views import NotificationListView, NotificationPreferenceView
 from onboarding.views import OnboardingCompleteView, OnboardingView
 from products.views import (
     AutopilotApproveView,
@@ -80,6 +89,7 @@ from tools.views import ToolListView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
 from workspaces.views import (
     ApiKeyView,
+    ApprovalChainStageView,
     AuditLogView,
     InvitationAcceptView,
     MembershipViewSet,
@@ -95,6 +105,7 @@ router.register("posts", PostViewSet, basename="post")
 router.register("media", MediaAssetViewSet, basename="media-asset")
 router.register("post-templates", PostTemplateViewSet, basename="post-template")
 router.register("recurrence-rules", RecurrenceRuleViewSet, basename="recurrence-rule")
+router.register("threads", ThreadViewSet, basename="thread")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
@@ -221,7 +232,27 @@ urlpatterns = [
     # walk. `MembershipViewSet`, which does return objects by pk, is
     # registered on `router` above instead.
     path("workspaces/settings/", WorkspaceSettingsView.as_view(), name="workspace-settings"),
+    # The default chain and its stages. A plain path for the same reason as
+    # the settings toggle above: it answers for the caller's own workspace
+    # rather than an id in the URL, so the tenancy sweep (A52) has nothing
+    # here to walk. Depth is what Advanced buys (P2-13).
+    path(
+        "workspaces/approval-chain/",
+        ApprovalChainStageView.as_view(),
+        name="workspace-approval-chain",
+    ),
     path("workspaces/audit-log/", AuditLogView.as_view(), name="workspace-audit-log"),
+    # --- notifications (P2-12) ---
+    # Plain paths: both answer for the caller in their current workspace rather
+    # than for an id in the URL, so the tenancy sweep (A52) has nothing to walk.
+    # Scoped by user *and* workspace — a colleague reading your notifications
+    # would be a leak inside a tenant rather than across one.
+    path("notifications/", NotificationListView.as_view(), name="notifications"),
+    path(
+        "notifications/preferences/",
+        NotificationPreferenceView.as_view(),
+        name="notification-preferences",
+    ),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
     # Platform facts, not tenant data — a caption limit is true whoever
@@ -233,6 +264,23 @@ urlpatterns = [
     # A read, not a generation (P1-13): the corpus is category-shared, so
     # there is no workspace-scoped object here for the tenancy sweep to walk.
     path("ai/hashtags/", HashtagSuggestionView.as_view(), name="ai-hashtags"),
+    # --- guest review: sharing a post with someone who has no account ---
+    # `{pk}` is resolved through a workspace-filtered queryset inside the view,
+    # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the
+    # same guarantee the sweep (A52) checks, applied where it does not reach.
+    path("posts/<int:pk>/share/", ReviewLinkView.as_view(), name="post-share"),
+    path(
+        "posts/<int:pk>/share/<int:link_id>/revoke/",
+        ReviewLinkRevokeView.as_view(),
+        name="post-share-revoke",
+    ),
+    # Public and token-scoped, exactly like the reminder packet below: a token
+    # is not a workspace-scoped pk, so the tenancy sweep has nothing to walk
+    # and `collaboration.review.resolve` is the access control instead. The
+    # audience narrowing on top of it is what P2-G1 checks.
+    path("review/<str:token>/", ReviewPacketView.as_view(), name="review-packet"),
+    path("review/<str:token>/approve/", ReviewApproveView.as_view(), name="review-approve"),
+    path("review/<str:token>/comment/", ReviewCommentView.as_view(), name="review-comment"),
     # --- reminders: public, token-scoped, no login (design.md §8.5) ---
     # Not on `router` — a token is not a workspace-scoped pk, so the
     # cross-workspace tenancy sweep (A52) has nothing to walk here;

@@ -15,8 +15,9 @@ import time_machine
 from django.utils import timezone
 
 from ai.models import Generation, GenerationMode
-from billing.models import CreditLedger, VideoLedger, VideoReason
+from billing.models import CreditLedger, FeatureFlag, VideoLedger, VideoReason
 from billing.services import ledger
+from billing.services.flags import COLLABORATION_V2
 from content.models import Post, PostSource, PostStatus
 from products.models import (
     AutopilotDraft,
@@ -348,16 +349,50 @@ def test_latitude_changes_the_brief(autopilot_config: Any) -> None:
 # -----------------------------------------------------------------------------
 # Routing and the review queue
 # -----------------------------------------------------------------------------
-def test_auto_approve_lands_drafts_on_the_calendar(
+def _auto_calendar(config: Any, workspace: Any, plans: dict[str, Any]) -> None:
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
+    config.auto_approve = True
+    config.landing = AutopilotLanding.AUTO_CALENDAR
+    config.lookahead_days = 3
+    config.cadence_days = 3
+    config.save()
+
+
+def test_auto_approve_no_longer_reaches_the_calendar_on_its_own(
     autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
-    autopilot_workspace.organization.plan = plans["advanced"]
-    autopilot_workspace.organization.save(update_fields=["plan"])
-    autopilot_config.auto_approve = True
-    autopilot_config.landing = AutopilotLanding.AUTO_CALENDAR
-    autopilot_config.lookahead_days = 3
-    autopilot_config.cadence_days = 3
-    autopilot_config.save()
+    """**L-2, and the opposite of what this asserted before Phase 2.**
+
+    Auto-approve used to put generated content straight into the schedule at
+    03:00 with nobody having read it — a configuration that publishes
+    unreviewed content, which Part 7 rule 13 says cannot exist. The drafts are
+    not lost: they wait in the review queue, which is where the user acts on
+    them anyway. Phase 5's C-01 retires the path entirely.
+    """
+    _auto_calendar(autopilot_config, autopilot_workspace, plans)
+
+    job = autopilot.run_config(autopilot_config)
+
+    assert job.status == AutopilotJobStatus.QUEUED
+    # Said out loud on the job, not silently queued: someone switched this on.
+    assert job.detail["reason"] == "human_approval_required"
+    assert job.detail["drafts_scheduled"] == 0
+    draft = AutopilotDraft.objects.get()
+    assert draft.status == AutopilotDraftStatus.PENDING
+    assert draft.post is None
+
+
+def test_the_pre_phase_auto_calendar_path_returns_with_the_flag_off(
+    autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
+) -> None:
+    """Part 3: **flag off is pre-phase behaviour, not an error.** This is what
+    makes the change above revertible on production-shaped data rather than
+    merely arguable."""
+    FeatureFlag.objects.create(
+        organization=autopilot_workspace.organization, key=COLLABORATION_V2, enabled=False
+    )
+    _auto_calendar(autopilot_config, autopilot_workspace, plans)
 
     job = autopilot.run_config(autopilot_config)
 
@@ -373,17 +408,19 @@ def test_auto_approve_without_a_connected_account_falls_back_to_the_queue(
     autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
     """The drafts are generated and paid for either way, so they land in the
-    queue rather than being lost to a Phase 9 precondition."""
+    queue rather than being lost to a Phase 9 precondition.
+
+    Run with the flag off, because that is the only configuration in which the
+    auto-schedule is attempted at all — and the fallback it exercises is the
+    one that has to keep working while the flag is a live rollback target.
+    """
     from channels.models import SocialAccount
 
+    FeatureFlag.objects.create(
+        organization=autopilot_workspace.organization, key=COLLABORATION_V2, enabled=False
+    )
     SocialAccount.objects.all().delete()
-    autopilot_workspace.organization.plan = plans["advanced"]
-    autopilot_workspace.organization.save(update_fields=["plan"])
-    autopilot_config.auto_approve = True
-    autopilot_config.landing = AutopilotLanding.AUTO_CALENDAR
-    autopilot_config.lookahead_days = 3
-    autopilot_config.cadence_days = 3
-    autopilot_config.save()
+    _auto_calendar(autopilot_config, autopilot_workspace, plans)
 
     job = autopilot.run_config(autopilot_config)
 
@@ -410,14 +447,14 @@ def test_auto_approve_is_ignored_when_the_plan_no_longer_allows_it(
     assert AutopilotDraft.objects.get().status == AutopilotDraftStatus.PENDING
 
 
-def test_approving_a_draft_creates_and_schedules_its_post(autopilot_config: Any) -> None:
+def test_approving_a_draft_creates_and_schedules_its_post(autopilot_config: Any, user: Any) -> None:
     autopilot_config.lookahead_days = 3
     autopilot_config.cadence_days = 3
     autopilot_config.save()
     autopilot.run_config(autopilot_config)
     draft = AutopilotDraft.objects.get()
 
-    autopilot.approve_draft(draft)
+    autopilot.approve_draft(draft, actor=user)
 
     post = Post.objects.get()
     assert post.master_body == draft.caption
@@ -429,7 +466,7 @@ def test_approving_a_draft_creates_and_schedules_its_post(autopilot_config: Any)
     assert draft.status == AutopilotDraftStatus.SCHEDULED
 
 
-def test_a_draft_cannot_be_acted_on_twice(autopilot_config: Any) -> None:
+def test_a_draft_cannot_be_acted_on_twice(autopilot_config: Any, user: Any) -> None:
     autopilot_config.lookahead_days = 3
     autopilot_config.cadence_days = 3
     autopilot_config.save()
@@ -439,7 +476,7 @@ def test_a_draft_cannot_be_acted_on_twice(autopilot_config: Any) -> None:
     with pytest.raises(autopilot.AutopilotNotConfigurableError):
         autopilot.reject_draft(draft)
     with pytest.raises(autopilot.AutopilotNotConfigurableError):
-        autopilot.approve_draft(draft)
+        autopilot.approve_draft(draft, actor=user)
 
 
 def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any) -> None:

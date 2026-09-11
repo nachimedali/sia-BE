@@ -9,6 +9,7 @@ from typing import Any
 
 from accounts.models import User
 from categories.models import Category
+from collaboration import services as collaboration
 from common.exceptions import OCCSError
 from content.models import (
     MediaAsset,
@@ -96,14 +97,21 @@ def update_post(
     omits `media_asset_ids` must not touch attachment order, so the view only
     passes keys that were actually present in the request body.
 
-    **Editing an `APPROVED` post reverts it to `PENDING_REVIEW`** (design.md
-    §8.8) — approval attaches to content, not to the record, so a change to
-    what would actually publish voids it regardless of whether the workspace's
-    approval workflow is switched on right now. Only a content change does
-    this: `product`/`generation`/`source`/`category` are metadata other
-    phases' services write through this same function, and none of them is
-    the thing an approver signed off on.
+    **A locked post refuses every edit with a 409** (P2-11). Checked here
+    rather than in the view so a task, a command or a later endpoint inherits
+    it; an `admin` unlocks, and that is audited.
+
+    **Editing an unlocked `APPROVED` post reverts it to `PENDING_REVIEW`**
+    (design.md §8.8) — approval attaches to content, not to the record, so a
+    change to what would actually publish voids it. The two rules meet exactly
+    once, and coherently: approval locks, an admin unlocks, and the first edit
+    after that sends the post back for review. Only a content change does this;
+    `product`/`generation`/`source`/`category` are metadata other phases'
+    services write through this same function, and none of them is the thing an
+    approver signed off on.
     """
+    approvals.ensure_unlocked(post)
+
     touches_content = bool(_CONTENT_FIELDS & fields.keys())
     media_assets = fields.pop("media_asset_ids", None)
 
@@ -129,6 +137,12 @@ def update_post(
             target_repr=str(post),
             meta={"post": post.pk},
         )
+
+    if touches_content:
+        # An explicit call, not a signal (Part 7 rule 8), and not a lazy check
+        # at read time — a reader must not be the one who discovers that their
+        # annotation no longer describes the text under it (P2-02).
+        collaboration.reanchor(post)
 
     # One revision for the whole edit, recorded after every table it touched —
     # a body change and a media reorder submitted together are one version of
@@ -158,6 +172,8 @@ def set_alt_text(
     approver signed off on, and reverting the post to `PENDING_REVIEW` for it
     would teach people not to bother.
     """
+    approvals.ensure_unlocked(post)
+
     base = PostMediaAttachment.objects.filter(
         post=post, media_asset=media_asset, target_override__isnull=True
     ).first()
@@ -205,6 +221,8 @@ def set_platform_options(
     in. `render_post` uses the lenient `resolve` on the way out, for stored
     rows that a later rule change made unusable.
     """
+    approvals.ensure_unlocked(post)
+
     try:
         cleaned = option_rules.validate(platform, options, workspace=post.workspace)
     except option_rules.OptionError as exc:

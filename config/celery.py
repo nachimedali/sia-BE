@@ -13,6 +13,7 @@ its own worker deployment (implementation.md Phase 16.5).
 | ai_q       | high              | fail fast, refund, surface to user         |
 | metrics_q  | low               | silent retry, tolerate gaps                |
 | trends_q   | lowest            | silent retry, last corpus stays valid      |
+| notify_q   | high              | retry; someone is waiting to be told       |
 """
 
 from __future__ import annotations
@@ -35,6 +36,10 @@ QUEUE_NAMES = (
     "ai_q",
     "metrics_q",
     "trends_q",
+    # P2-12. Its own pool rather than sharing `remind_q`: a busy thread can fan
+    # out to a whole team at once, and a burst of notifications must not be
+    # able to delay the reminder that tells someone to publish at 09:00.
+    "notify_q",
 )
 
 app.conf.task_queues = tuple(Queue(name) for name in QUEUE_NAMES)
@@ -69,6 +74,7 @@ app.conf.task_routes = {
     # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody
     # is waiting on them, and they must never delay a scheduled publish.
     "billing.tasks.*": {"queue": "metrics_q"},
+    "notifications.tasks.*": {"queue": "notify_q"},
 }
 
 app.autodiscover_tasks()

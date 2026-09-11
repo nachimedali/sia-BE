@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from common.admin import ReadOnlyAdmin, all_fields_except_id
-from workspaces.models import ApprovalAction, AuditLog, Membership, PostComment, Workspace
+from workspaces.models import ApprovalAction, AuditLog, Membership, Workspace
 
 
 class MembershipInline(admin.TabularInline):  # type: ignore[type-arg]
@@ -24,14 +24,6 @@ class MembershipAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     list_display = ("user", "workspace", "role", "created_at")
     list_filter = ("role",)
     search_fields = ("user__email", "workspace__name")
-
-
-@admin.register(PostComment)
-class PostCommentAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
-    list_display = ("id", "post", "author", "resolved_at", "created_at")
-    list_filter = ("resolved_at",)
-    search_fields = ("post__master_body", "author__email", "body")
-    autocomplete_fields = ("post", "author", "parent")
 
 
 @admin.register(ApprovalAction)

@@ -50,9 +50,9 @@ from workspaces.models import Membership, Organization, Role, Workspace
 
 pytestmark = pytest.mark.django_db
 
-#: The last migration before the contract step, and the contract step itself.
+#: The last migration before the contract step. Rolling forward again goes to
+#: head rather than to a named target — see `_migrate_fully_forward`.
 BEFORE_CONTRACT = ("workspaces", "0009_multi_currency_pricing")
-AFTER_CONTRACT = ("workspaces", "0011_contract_workspace_commercial")
 
 
 def _migrate(target: tuple[str, str]) -> Any:
@@ -62,6 +62,25 @@ def _migrate(target: tuple[str, str]) -> Any:
     executor.migrate([target])
     executor.loader.build_graph()
     return executor.loader.project_state([target]).apps
+
+
+def _migrate_fully_forward() -> None:
+    """Puts the schema back to head — **every app, not just this one**.
+
+    Rewinding `workspaces` drags anything that depends on it backwards too, and
+    since Phase 2 that includes a whole app (`collaboration`) and the migration
+    that drops `PostComment`. Rolling forward to a named `workspaces` target
+    would leave those unapplied, so `workspaces_postcomment` would still exist
+    in the database while being absent from the model registry — and the next
+    transactional teardown fails with `cannot truncate a table referenced in a
+    foreign key constraint`, thousands of lines from the cause.
+
+    Leaf nodes rather than a named target, so a migration added by a future
+    phase is covered without anyone remembering to edit this.
+    """
+    executor = MigrationExecutor(connection)
+    executor.loader.build_graph()
+    executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 @pytest.fixture
@@ -76,7 +95,7 @@ def pre_contract_schema() -> Any:
     try:
         yield old_apps
     finally:
-        _migrate(AFTER_CONTRACT)
+        _migrate_fully_forward()
 
 
 def _legacy_workspace(old_apps: Any, *, email: str, plan: Plan) -> tuple[Any, Any]:
@@ -132,7 +151,7 @@ def test_a_pre_migration_user_sees_no_change_in_entitlements(pre_contract_schema
     # is exactly the state the migration has to preserve the meaning of.
     before = {"plan_code": "pro", "features": plans["pro"].features}
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     workspace = Workspace.objects.get(pk=legacy.pk)
     after = entitlements_for(workspace).as_dict()
@@ -157,7 +176,7 @@ def test_a_pre_migration_user_keeps_their_balances(pre_contract_schema: Any) -> 
     )
     ledger.grant_credits(Workspace.objects.get(pk=legacy.pk), 42, note="before the migration")
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     assert ledger.credit_balance(Workspace.objects.get(pk=legacy.pk)) == 42
 
@@ -169,7 +188,7 @@ def test_a_pre_migration_user_still_reaches_every_endpoint(pre_contract_schema: 
     plans = _seed_plans()
     user, _ = _legacy_workspace(pre_contract_schema, email="legacy@example.com", plan=plans["pro"])
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     client = APIClient()
     client.force_authenticate(_live(user))
@@ -188,7 +207,7 @@ def test_a_pre_migration_membership_keeps_its_authority(pre_contract_schema: Any
         pre_contract_schema, email="legacy@example.com", plan=plans["pro"]
     )
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     membership = Membership.objects.get(user_id=user.pk, workspace_id=legacy.pk)
     assert set(membership.permissions) == {
@@ -216,7 +235,7 @@ def test_a_viewer_is_not_widened_by_the_migration(pre_contract_schema: Any) -> N
         user_id=viewer_user.pk, workspace_id=legacy.pk, role=Role.VIEWER, permissions=[]
     )
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     viewer = Membership.objects.get(user_id=viewer_user.pk, workspace_id=legacy.pk)
     assert set(viewer.permissions) == {"view", "analyze"}
@@ -232,7 +251,7 @@ def test_every_migrated_workspace_lands_in_its_own_company(pre_contract_schema: 
     _, first = _legacy_workspace(pre_contract_schema, email="one@example.com", plan=plans["pro"])
     _, second = _legacy_workspace(pre_contract_schema, email="two@example.com", plan=plans["free"])
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     one = Workspace.objects.get(pk=first.pk)
     two = Workspace.objects.get(pk=second.pk)
@@ -259,7 +278,7 @@ def test_re_running_the_backfill_changes_nothing(pre_contract_schema: Any) -> No
         pre_contract_schema, email="legacy@example.com", plan=plans["pro"]
     )
 
-    _migrate(AFTER_CONTRACT)
+    _migrate_fully_forward()
 
     workspace = Workspace.objects.get(pk=legacy.pk)
     organization_id = workspace.organization_id
@@ -355,6 +374,7 @@ def test_publishing_still_succeeds_while_capture_is_starved(
         post=post,
         delivery_mode=DeliveryMode.AUTO_PUBLISH,
         scheduled_at=timezone.now() + dt.timedelta(minutes=1),
+        actor=user,
     )
 
     with time_machine.travel(timezone.now() + dt.timedelta(minutes=2), tick=False):

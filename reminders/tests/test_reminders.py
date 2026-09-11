@@ -23,7 +23,7 @@ pytestmark = pytest.mark.django_db
 def _armed_reminder(workspace: Any, user: Any, *, in_minutes: int = 2) -> Reminder:
     post = create_post(workspace=workspace, author=user, master_body="Check out our new drop")
     scheduled_at = timezone.now() + dt.timedelta(minutes=in_minutes)
-    schedule_post(post=post, delivery_mode="REMINDER", scheduled_at=scheduled_at)
+    schedule_post(post=post, delivery_mode="REMINDER", scheduled_at=scheduled_at, actor=user)
     return Reminder.objects.get(post=post)
 
 

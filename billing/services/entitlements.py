@@ -63,7 +63,9 @@ FREE_PLAN_CODE = "free"
 
 # What to suggest when a gate closes. Free → Pro covers everything except the
 # Advanced-only features, which name themselves.
-ADVANCED_ONLY = frozenset({"approval_workflow", "api_access", "autopilot_auto_approve"})
+ADVANCED_ONLY = frozenset(
+    {"approval_workflow", "approval_chain_depth", "api_access", "autopilot_auto_approve"}
+)
 
 
 def _addon_version(organization: Any) -> str:
@@ -251,6 +253,32 @@ class Entitlements:
         history", which every reader treats as an empty window.
         """
         return int(self.feature("analytics_history_days") or 0)
+
+    def max_approval_stages(self) -> int:
+        """How deep this plan lets an approval chain go (P2-13).
+
+        **Floored at 1, never 0.** Since C-02 approval is universal, so a plan
+        offering zero stages would be a plan that cannot review at all — which
+        L-2 does not allow to exist. A misconfigured or unset value therefore
+        reads as one stage rather than as none.
+        """
+        return max(1, int(self.feature("approval_chain_depth") or 1))
+
+    def require_chain_depth(self, current: int) -> None:
+        """402 when appending a stage would pass the plan's ceiling.
+
+        A feature check rather than `check_quota`: chain depth lives in
+        `Plan.features`, not `Plan.quotas`, because it is what Advanced is sold
+        on rather than something metered per month.
+        """
+        limit = self.max_approval_stages()
+        if current >= limit:
+            raise FeatureNotAvailable(
+                f"Your plan allows {limit} approval "
+                f"{'stage' if limit == 1 else 'stages'}; you have {current}.",
+                detail={"feature": "approval_chain_depth", "limit": limit, "current": current},
+                suggested_plan="advanced",
+            )
 
     # --- audience engagement (L-4a, P0-34) -------------------------------
     def comment_capture_interval(self) -> dt.timedelta | None:

@@ -1,5 +1,9 @@
-"""`POST /posts/{id}/submit|approve|request-changes|reject/`, comments, and
-the resolve action (design.md §7, §8.8; implementation.md Phase 13).
+"""`POST /posts/{id}/submit|approve|request-changes|reject/` and the review
+queue's own reads (design.md §7, §8.8; implementation.md Phase 13).
+
+The comment endpoints that used to live here moved to `collaboration/` in
+P2-01: internal discussion is no longer a limb of the approval feature, so
+testing it as one would pin an arrangement that C-03 exists to end.
 """
 
 from __future__ import annotations
@@ -20,30 +24,48 @@ def _url(post_id: int, action: str) -> str:
 
 
 # -----------------------------------------------------------------------------
-# test_approval_workflow_gated_to_advanced
+# C-02 — approval is required on every plan, so no plan gate stands in front
+# of it. These three tests asserted the opposite until Phase 2: `submit`,
+# `approve` and the trail were 402 below Advanced. A required step that the
+# cheap plans cannot reach is a required step nobody can satisfy.
 # -----------------------------------------------------------------------------
-def test_approval_workflow_gated_to_advanced(auth_client: Any, workspace: Any, user: Any) -> None:
-    """`workspace` (the root fixture) is on Free — no `approval_workflow`."""
+def test_submit_is_available_on_the_cheapest_plan(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    """`workspace` (the root fixture) is on Free."""
     post = create_post(workspace=workspace, author=user, master_body="Draft")
 
     response = auth_client.post(_url(post.pk, "submit"))
 
-    assert response.status_code == 402
-    error = response.json()["error"]
-    assert error["code"] == "feature_not_available"
-    assert error["upgrade"]["suggested_plan"] == "advanced"
+    assert response.status_code == 200
+    assert response.json()["status"] == PostStatus.PENDING_REVIEW
 
 
-def test_approve_is_also_gated_to_advanced(
-    auth_client: Any, workspace: Any, user: Any, plans: Any
+def test_approve_is_available_on_the_cheapest_plan(
+    auth_client: Any, workspace: Any, user: Any
 ) -> None:
-    """Pro has `auto_publish` but not `approval_workflow` — the two paid tiers
-    must not be conflated."""
-    workspace.organization.plan = plans["pro"]
-    workspace.organization.save(update_fields=["plan"])
     post = create_post(workspace=workspace, author=user, master_body="Draft")
+    auth_client.post(_url(post.pk, "submit"))
 
-    assert auth_client.post(_url(post.pk, "approve")).status_code == 402
+    # The workspace's chain has no stages, so `allow_self_approve` never
+    # applies and the author — who holds every permission as OWNER — is the
+    # approver. That is the solo user's whole flow.
+    response = auth_client.post(_url(post.pk, "approve"), {}, format="json")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == PostStatus.APPROVED
+
+
+def test_the_approval_trail_is_readable_on_the_cheapest_plan(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="Draft")
+    auth_client.post(_url(post.pk, "submit"))
+
+    response = auth_client.get(_url(post.pk, "approvals"))
+
+    assert response.status_code == 200
+    assert [row["action"] for row in response.json()] == ["SUBMIT"]
 
 
 # -----------------------------------------------------------------------------
@@ -142,90 +164,6 @@ def test_illegal_state_transition_returns_409(
     assert response.json()["error"]["code"] == "state_conflict"
     post.refresh_from_db()
     assert post.status == PostStatus.DRAFT
-
-
-# -----------------------------------------------------------------------------
-# Comments
-# -----------------------------------------------------------------------------
-def test_reading_comments_is_open_to_a_viewer(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any, viewer_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-    approvals.add_comment(post, author=contributor_user, body="A note")
-
-    response = client_as(viewer_user).get(_url(post.pk, "comments"))
-
-    assert response.status_code == 200
-    assert len(response.json()) == 1
-
-
-def test_a_contributor_can_post_a_comment(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-
-    response = client_as(contributor_user).post(
-        _url(post.pk, "comments"), {"body": "Consider a shorter hook"}
-    )
-
-    assert response.status_code == 201
-    assert response.json()["author_email"] == contributor_user.email
-
-
-def test_a_viewer_cannot_post_a_comment(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any, viewer_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-
-    response = client_as(viewer_user).post(_url(post.pk, "comments"), {"body": "Hi"})
-
-    assert response.status_code == 403
-
-
-def test_a_reply_must_belong_to_the_same_post(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-    other_post = create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="Other"
-    )
-    foreign_comment = approvals.add_comment(other_post, author=contributor_user, body="Elsewhere")
-
-    response = client_as(contributor_user).post(
-        _url(post.pk, "comments"), {"body": "Reply", "parent": foreign_comment.pk}
-    )
-
-    assert response.status_code == 400
-
-
-def test_resolving_a_comment(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-    comment = approvals.add_comment(post, author=contributor_user, body="A note")
-
-    response = client_as(contributor_user).post(
-        f"/api/v1/posts/{post.pk}/comments/{comment.pk}/resolve/"
-    )
-
-    assert response.status_code == 200
-    assert response.json()["resolved_at"] is not None
-
-
-def test_resolving_a_comment_from_a_different_post_404s(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-    other_post = create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="Other"
-    )
-    foreign_comment = approvals.add_comment(other_post, author=contributor_user, body="Elsewhere")
-
-    response = client_as(contributor_user).post(
-        f"/api/v1/posts/{post.pk}/comments/{foreign_comment.pk}/resolve/"
-    )
-
-    assert response.status_code == 404
 
 
 # -----------------------------------------------------------------------------
@@ -336,9 +274,3 @@ def test_approval_history_is_this_posts_trail_oldest_first(
     assert trail[1]["note"] == "Soften the claim"
     # The other post's own SUBMIT is not in this post's trail.
     assert {row["post"] for row in trail} == {post.pk}
-
-
-def test_approval_history_is_gated_to_advanced(auth_client: Any, workspace: Any, user: Any) -> None:
-    post = create_post(workspace=workspace, author=user, master_body="Draft")
-
-    assert auth_client.get(f"/api/v1/posts/{post.pk}/approvals/").status_code == 402

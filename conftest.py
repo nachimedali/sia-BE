@@ -17,6 +17,7 @@ from PIL import Image
 
 from common.mail import _fake_sender
 from common.redis import get_redis
+from workspaces.services import approvals as approvals_service
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -92,6 +93,25 @@ def _reset_gateway() -> Iterator[None]:
     _fake_gateway.clear()
     yield
     _fake_gateway.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_push_transport() -> Iterator[None]:
+    """The fake push transport is module-level so a test can inspect what a
+    view sent after it has run — which makes its record process-wide state, the
+    same as the mail outbox and the publish adapter (P2-12)."""
+    from notifications.transports import _fake_push
+
+    _fake_push.clear()
+    yield
+    _fake_push.clear()
+
+
+@pytest.fixture
+def push_transport() -> Any:
+    from notifications.transports import _fake_push
+
+    return _fake_push
 
 
 @pytest.fixture(autouse=True)
@@ -261,12 +281,19 @@ def _clear_fake_providers() -> Iterator[None]:
 # tests needed them too.
 @pytest.fixture
 def advanced_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
-    """Advanced, with the collaboration workflow switched on. §4.1: only
-    Advanced has `approval_workflow`."""
+    """Advanced, with a **blocking** approval chain.
+
+    `requires_approval` was a column until P2-04; it is now
+    `ApprovalChain.blocks_publish` on the workspace's default chain, which is
+    the only thing that can also say how many stages and who. Advanced is what
+    the plan buys — chain *depth* (P2-13) — not approval itself, which C-02
+    makes universal.
+    """
     workspace.organization.plan = plans["advanced"]
     workspace.organization.save(update_fields=["plan"])
-    workspace.requires_approval = True
-    workspace.save(update_fields=["requires_approval"])
+    chain = approvals_service.default_chain(workspace)
+    chain.blocks_publish = True
+    chain.save(update_fields=["blocks_publish"])
     return workspace
 
 

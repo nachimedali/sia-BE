@@ -1,39 +1,80 @@
-"""Post scheduling (design.md §6.3, §8.5, §8.8, implementation.md Phase 8, 13).
+"""Post scheduling (design.md §6.3, §8.5, §8.8; BUILD-PLAN C-02, P2-04, P2-05).
 
-`schedule_post` is the only writer of `Post.delivery_mode`/`Post.
-scheduled_at` outside creation (`content/serializers.py` A49 marks both
-read-only on `PostSerializer` for exactly this reason) — the horizon check
-has to run before either is set, so both writes live behind it rather than
-in the view.
+`schedule_post` is the only writer of `Post.delivery_mode`/`Post.scheduled_at`
+outside creation (`content/serializers.py` A49 marks both read-only on
+`PostSerializer` for exactly this reason) — the horizon check has to run before
+either is set, so both writes live behind it rather than in the view.
+
+**Since Phase 2 this is also where L-2 is enforced.** Nothing reaches
+`SCHEDULED` without an `APPROVE` action naming a person, on any plan, under any
+configuration:
+
+* the workspace's default chain **blocks** → the post must already be
+  `APPROVED`, or this is a 409;
+* the chain **does not block** → scheduling *is* the approval, and an `APPROVE`
+  row is written naming whoever scheduled it.
+
+The second branch is what keeps a solo user from having to review their own
+draft while still leaving `no SCHEDULED post without an APPROVE row` true as a
+single, testable statement.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from typing import TYPE_CHECKING
 
 from billing.services import trial
 from billing.services.entitlements import entitlements_for
+from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import StateConflict
 from content.models import DeliveryMode, Post, PostStatus
 from reminders.services import arm_reminder
 from scheduling.publishing import build_targets
+from workspaces.services import approvals
+
+if TYPE_CHECKING:
+    from accounts.models import User
 
 
-def schedule_post(*, post: Post, delivery_mode: str, scheduled_at: dt.datetime) -> Post:
-    entitlements = entitlements_for(post.workspace)
-    entitlements.require_scheduling_horizon(scheduled_at)
+def _gate_approval(post: Post, *, actor: User) -> Post:
+    """Apply the workspace's chain, and return the post ready to schedule.
 
-    # design.md §8.8: active when the workspace has switched it on *and* the
-    # plan still includes it — re-checked here rather than trusted from the
-    # toggle alone, the same reasoning `Entitlements` applies to a lapsed
-    # trial: a downgrade must make the requirement inert, not enforce a
-    # feature the workspace no longer pays for.
-    approval_active = post.workspace.requires_approval and entitlements.feature("approval_workflow")
-    if approval_active and post.status != PostStatus.APPROVED:
+    **Flag off is pre-phase behaviour, not an error** (Part 3): before Phase 2
+    a workspace that had not switched approval on scheduled straight from
+    `DRAFT` with no record, and with `COLLABORATION_V2` off it still does. A
+    blocking chain is honoured either way, because that is the behaviour the
+    old `requires_approval=True` already had.
+    """
+    if post.status == PostStatus.APPROVED:
+        return post
+
+    if approvals.default_chain(post.workspace).blocks_publish:
         raise StateConflict(
             "This workspace requires approval before a post can be scheduled.",
             detail={"post": post.pk, "status": post.status},
         )
+
+    if not flag_enabled(post.workspace.organization, COLLABORATION_V2):
+        return post
+
+    return approvals.approve_implicitly(post, actor=actor)
+
+
+def schedule_post(
+    *, post: Post, delivery_mode: str, scheduled_at: dt.datetime, actor: User
+) -> Post:
+    """`actor` is **required**, with no default (L-2).
+
+    Someone always did this, and a default of `None` would be a quiet way for a
+    future caller to schedule a post with nobody's name on the approval. A
+    keyword with no default makes the omission a `TypeError` at the call site
+    rather than a null in the audit trail.
+    """
+    entitlements = entitlements_for(post.workspace)
+    entitlements.require_scheduling_horizon(scheduled_at)
+
+    post = _gate_approval(post, actor=actor)
 
     # L-4/P0-20: the quota trial is metered here, at the moment a post is
     # committed to going out, rather than at creation. A draft nobody schedules

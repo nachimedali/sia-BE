@@ -1,0 +1,8 @@
+{% if needs_approval %}A post is waiting for your approval{% else %}A post has been shared with you{% endif %}
+
+{{ workspace.name }} has {% if needs_approval %}asked you to approve{% else %}shared{% endif %} a post with you.
+Open it to see exactly what would be published, leave a comment{% if needs_approval %}, and approve it when you're happy{% endif %}:
+
+{{ review_url }}
+
+You don't need an account. This link is yours alone — don't forward it{% if needs_approval %}, and it stops working once you've approved{% endif %}.

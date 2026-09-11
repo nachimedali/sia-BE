@@ -115,12 +115,14 @@ def test_schedule_rejects_a_past_scheduled_at(auth_client: Any, workspace: Any, 
 # The approval gate (design.md §8.8, implementation.md Phase 13)
 # -----------------------------------------------------------------------------
 def test_schedule_refuses_an_unapproved_post_when_approval_is_required(
-    client_as: Any, advanced_workspace: Any, contributor_user: Any
+    client_as: Any, advanced_workspace: Any, contributor_user: Any, admin_user: Any
 ) -> None:
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
     soon = timezone.now() + dt.timedelta(days=1)
 
-    response = client_as(contributor_user).post(
+    # Scheduled by someone who *does* hold `publish`, so the 409 below is the
+    # approval gate answering and not the permission gate in front of it.
+    response = client_as(admin_user).post(
         _schedule_url(post.id),
         {"delivery_mode": "REMINDER", "scheduled_at": soon.isoformat()},
         format="json",
@@ -147,7 +149,7 @@ def test_schedule_accepts_an_approved_post_when_approval_is_required(
     approvals.approve(post, actor=admin_user)
     soon = timezone.now() + dt.timedelta(days=1)
 
-    response = client_as(contributor_user).post(
+    response = client_as(admin_user).post(
         _schedule_url(post.id),
         {"delivery_mode": "AUTO_PUBLISH", "scheduled_at": soon.isoformat()},
         format="json",
@@ -155,3 +157,29 @@ def test_schedule_accepts_an_approved_post_when_approval_is_required(
 
     assert response.status_code == 200
     assert response.json()["status"] == PostStatus.SCHEDULED
+
+
+def test_scheduling_needs_the_publish_permission(
+    client_as: Any, advanced_workspace: Any, contributor_user: Any
+) -> None:
+    """The narrowing recorded in `workspaces.models._PRESETS` finally lands.
+
+    `POST /posts/{id}/schedule/` carried no role gate before Phase 2 — only
+    `IsAuthenticated` — so a VIEWER could schedule a post for publication. The
+    preset has granted `publish` at EDITOR+ since P0-11 with nothing reading it;
+    this is the gate that reads it. 403 rather than 402: no upgrade fixes not
+    holding `publish`.
+    """
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+
+    response = client_as(contributor_user).post(
+        _schedule_url(post.id),
+        {
+            "delivery_mode": "REMINDER",
+            "scheduled_at": (timezone.now() + dt.timedelta(days=1)).isoformat(),
+        },
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "permission_denied"

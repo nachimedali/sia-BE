@@ -9,6 +9,7 @@ from django.db import transaction
 from accounts.models import User
 from billing.models import Plan
 from workspaces.models import (
+    ApprovalChain,
     Membership,
     Organization,
     OrganizationMembership,
@@ -17,6 +18,7 @@ from workspaces.models import (
     WorkspaceStatus,
     permissions_for,
 )
+from workspaces.services.approvals import DEFAULT_CHAIN_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,26 @@ def provision_workspace(user: User, name: str | None = None) -> Workspace:
         role=Role.OWNER,
         permissions=sorted(permissions_for(Role.OWNER)),
     )
+    _seed_approval_chain(workspace)
     return workspace
+
+
+def _seed_approval_chain(workspace: Workspace) -> ApprovalChain:
+    """Every workspace gets a default chain at birth (P2-04).
+
+    Non-blocking, which is the solo user's flow: whoever schedules a post is
+    the one approving it, recorded as an `APPROVE` action either way (L-2).
+    Turning on a separate reviewer is one PATCH away.
+
+    Created here rather than lazily so that "what is this workspace's review
+    flow" always has an answer written down. `approvals.default_chain` heals a
+    missing one anyway — a workspace with no chain would otherwise be a state
+    every caller had to invent a response to — but relying on the heal would
+    mean the chain's `created_at` recorded whenever someone first asked.
+    """
+    return ApprovalChain.objects.create(
+        workspace=workspace, name=DEFAULT_CHAIN_NAME, is_default=True, blocks_publish=False
+    )
 
 
 @transaction.atomic
@@ -118,6 +139,7 @@ def provision_extra_workspace(*, user: User, name: str) -> Workspace:
         role=Role.OWNER,
         permissions=sorted(permissions_for(Role.OWNER)),
     )
+    _seed_approval_chain(workspace)
     return workspace
 
 

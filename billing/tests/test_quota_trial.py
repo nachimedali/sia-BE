@@ -77,6 +77,7 @@ def test_scheduling_spends_a_trial_post(trial_workspace: Any, user: Any, organiz
         post=_post(trial_workspace, user),
         delivery_mode=DeliveryMode.REMINDER,
         scheduled_at=timezone.now() + dt.timedelta(days=1),
+        actor=user,
     )
 
     organization.refresh_from_db()
@@ -106,6 +107,7 @@ def test_exhaustion_is_402_with_an_upgrade(
             post=_post(trial_workspace, user),
             delivery_mode=DeliveryMode.REMINDER,
             scheduled_at=timezone.now() + dt.timedelta(days=1),
+            actor=user,
         )
 
     assert caught.value.status_code == 402
@@ -204,6 +206,7 @@ def test_reminder_is_available_on_every_plan(
         post=_post(workspace, user),
         delivery_mode=DeliveryMode.REMINDER,
         scheduled_at=timezone.now() + dt.timedelta(days=1),
+        actor=user,
     )
 
     assert post.status == PostStatus.REMINDER_ARMED

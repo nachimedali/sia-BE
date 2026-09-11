@@ -38,6 +38,7 @@ def _scheduled_post(workspace: Any, user: Any, *, body: str = "New drop is live"
         post=post,
         delivery_mode="AUTO_PUBLISH",
         scheduled_at=timezone.now() + dt.timedelta(minutes=2),
+        actor=user,
     )
     return post
 
@@ -74,6 +75,7 @@ def test_scheduling_auto_publish_without_a_connected_account_is_refused(
             post=post,
             delivery_mode="AUTO_PUBLISH",
             scheduled_at=timezone.now() + dt.timedelta(minutes=2),
+            actor=user,
         )
 
 
@@ -137,7 +139,10 @@ def test_the_scan_ignores_reminder_mode_posts(
     provider — that is the whole of D4's cost argument."""
     post = create_post(workspace=workspace, author=user, master_body="Remind me")
     schedule_post(
-        post=post, delivery_mode="REMINDER", scheduled_at=timezone.now() - dt.timedelta(minutes=1)
+        post=post,
+        delivery_mode="REMINDER",
+        scheduled_at=timezone.now() - dt.timedelta(minutes=1),
+        actor=user,
     )
 
     assert tasks.publish_due_posts() == 0
@@ -465,6 +470,7 @@ def test_role_revoked_after_scheduling_blocks_publish(
             post=post,
             delivery_mode="AUTO_PUBLISH",
             scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+            actor=admin_user,
         )
     )
 
@@ -475,8 +481,12 @@ def test_role_revoked_after_scheduling_blocks_publish(
     assert result.status == PostStatus.FAILED
     assert platform_adapter.published == []
     assert PostTarget.objects.filter(post=post, state=PostTargetState.PUBLISHED).count() == 0
-    assert len(outbox) == 1
-    assert outbox[0].to == contributor_user.email
+    # By template, not by count: the author is also emailed when their post is
+    # approved (P2-12), so a bare `len(outbox) == 1` would now be asserting that
+    # notifications do not exist rather than that the block was reported.
+    blocked = [email for email in outbox if email.template == "publish_blocked"]
+    assert len(blocked) == 1
+    assert blocked[0].to == contributor_user.email
 
 
 def test_role_revoked_recheck_is_not_retried(
@@ -499,6 +509,7 @@ def test_role_revoked_recheck_is_not_retried(
             post=post,
             delivery_mode="AUTO_PUBLISH",
             scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+            actor=admin_user,
         )
     )
     Membership.objects.filter(user=admin_user, workspace=advanced_workspace).delete()
@@ -533,6 +544,7 @@ def test_a_demoted_but_still_admin_approver_still_counts(
             post=post,
             delivery_mode="AUTO_PUBLISH",
             scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+            actor=admin_user,
         )
     )
 

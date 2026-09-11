@@ -12,7 +12,7 @@ import pytest
 from config.celery import QUEUE_NAMES, app
 
 
-def test_all_six_queues_are_declared() -> None:
+def test_every_queue_is_declared() -> None:
     declared = {queue.name for queue in app.conf.task_queues}
     assert declared == {
         "publish_q",
@@ -21,8 +21,10 @@ def test_all_six_queues_are_declared() -> None:
         "ai_q",
         "metrics_q",
         "trends_q",
+        # P2-12.
+        "notify_q",
     }
-    assert len(QUEUE_NAMES) == 6
+    assert len(QUEUE_NAMES) == 7
 
 
 @pytest.mark.parametrize(
@@ -42,11 +44,22 @@ def test_all_six_queues_are_declared() -> None:
         ("ai.tasks.generate_image", "ai_q"),
         ("analytics.tasks.poll_metrics", "metrics_q"),
         ("trends.tasks.extract_recipes", "trends_q"),
+        ("notifications.tasks.deliver_notification", "notify_q"),
     ],
 )
 def test_tasks_route_to_their_queue(task_name: str, expected_queue: str) -> None:
     route = app.amqp.router.route({}, task_name)
     assert route["queue"].name == expected_queue
+
+
+def test_notifications_do_not_share_the_reminder_pool() -> None:
+    """A busy thread can fan out to a whole team at once. Sharing `remind_q`
+    would let that burst sit in front of the reminder telling somebody to
+    publish at 09:00 (P2-12)."""
+    notify = app.amqp.router.route({}, "notifications.tasks.deliver_notification")["queue"].name
+    remind = app.amqp.router.route({}, "reminders.tasks.send_reminder")["queue"].name
+    assert notify == "notify_q"
+    assert notify != remind
 
 
 def test_video_rendering_is_isolated_from_the_ai_pool() -> None:

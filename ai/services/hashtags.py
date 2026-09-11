@@ -71,9 +71,15 @@ def rank_for_workspace(
     for body in bodies:
         counter.update({tag.lower() for tag in HASHTAG_RE.findall(body or "")})
 
+    # Sorted explicitly, **including the tie-break**. `Counter.most_common()`
+    # leaves equal counts in insertion order, which here is Postgres's row
+    # order for an unordered queryset — so two tags used by the same number of
+    # posts would swap places between requests, and the 25th place would drop
+    # in and out of the list for no reason the user could see. Alphabetical is
+    # arbitrary; being stable is not.
     ranked = [
         RankedHashtag(tag=tag, count=count)
-        for tag, count in counter.most_common()
+        for tag, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
         if count >= MIN_OCCURRENCES
     ]
     return ranked[:limit]
