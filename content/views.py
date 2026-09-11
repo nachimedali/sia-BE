@@ -12,18 +12,16 @@ from __future__ import annotations
 from typing import Any
 
 from django.db.models import Prefetch
-from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
-from billing.permissions import HasFeature, HasFlag
+from billing.permissions import HasFlag
 from billing.services.flags import CONTENT_MODEL_V2
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
@@ -51,6 +49,7 @@ from content.serializers import (
     PostRevisionSerializer,
     PostScheduleRequestSerializer,
     PostSerializer,
+    PostSubmitRequestSerializer,
     PostTemplateSerializer,
     RecurrenceRuleSerializer,
     TrimRequestSerializer,
@@ -69,19 +68,19 @@ from content.services.posts import (
 from content.services.rules import PLATFORM_RULES
 from content.services.templates import apply_template
 from scheduling.services import schedule_post
-from workspaces.models import Permission, PostComment
-from workspaces.permissions import HasPermission, caller_permissions
+from workspaces.models import Permission
+from workspaces.permissions import HasPermission
 from workspaces.serializers import (
     ApprovalActionSerializer,
     ApprovalNoteRequestSerializer,
-    PostCommentSerializer,
 )
 from workspaces.services import approvals
 
-#: design.md §8.8: submit/approve/request-changes/reject/comments are all
-#: part of "the approval workflow" — Advanced only (`test_approval_workflow_
-#: gated_to_advanced`).
-APPROVAL_FEATURE = "approval_workflow"
+#: **No plan gate on the approval endpoints any more** (C-02, P2-04). Approval
+#: is required on every plan, so a `HasFeature` in front of `submit`/`approve`
+#: would make the required step unreachable on the plans that need it most.
+#: What Advanced still buys is chain *depth* (P2-13), enforced where stages are
+#: configured — `workspaces.views.ApprovalChainStageView`.
 
 # `Post.ordered_attachments()` reads `media_attachments`, not the
 # `media_assets` M2M manager directly (content/models.py) — the Prefetch has to
@@ -325,10 +324,18 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             "Validates `scheduled_at` against the workspace's "
             "`Plan.scheduling_horizon_days` (402 past the horizon, D13/I8) "
             "and, for `delivery_mode=REMINDER`, arms the Reminder that Beat "
-            "sends on time (implementation.md Phase 8)."
+            "sends on time (implementation.md Phase 8).\n\n"
+            "On a workspace whose approval chain does not block, **scheduling "
+            "is the approval** (L-2): an `APPROVE` action is recorded naming "
+            "the caller. Where the chain does block, a post that is not yet "
+            "`APPROVED` is a 409."
         ),
     )
-    @action(detail=True, methods=["post"])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.PUBLISH)],
+    )
     def schedule(self, request: Request, pk: str | None = None) -> Response:
         post = self.get_object()
         payload = PostScheduleRequestSerializer(data=request.data)
@@ -336,48 +343,74 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         data = payload.validated_data
 
         post = schedule_post(
-            post=post, delivery_mode=data["delivery_mode"], scheduled_at=data["scheduled_at"]
+            post=post,
+            delivery_mode=data["delivery_mode"],
+            scheduled_at=data["scheduled_at"],
+            actor=authenticated_user(request),
         )
         return Response(PostSerializer(post, context={"request": request}).data)
 
     @extend_schema(
-        request=None,
+        request=PostSubmitRequestSerializer,
         responses={200: PostSerializer},
         summary="Submit a draft for review",
-        description="DRAFT or CHANGES_REQUESTED → PENDING_REVIEW. Any role but VIEWER "
-        "(design.md §8.8); an illegal transition is 409, not a silent no-op.",
+        description=(
+            "DRAFT or CHANGES_REQUESTED → PENDING_REVIEW, parked at the first "
+            "stage of the workspace's chain. Needs `edit`; an illegal "
+            "transition is 409, not a silent no-op.\n\n"
+            "`delivery_mode` and `scheduled_at` are the author's **proposal** "
+            "(P2-10): when the last stage clears, the post is scheduled at that "
+            "time through the ordinary schedule service, so nobody has to come "
+            "back and press a second button. Omit them and approval simply "
+            "leaves the post `APPROVED`."
+        ),
     )
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[
-            IsAuthenticated,
-            HasFeature(APPROVAL_FEATURE),
-            HasPermission(Permission.EDIT),
-        ],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
     )
     def submit(self, request: Request, pk: str | None = None) -> Response:
-        post = approvals.submit_for_review(self.get_object(), actor=authenticated_user(request))
+        payload = PostSubmitRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        post = approvals.submit_for_review(
+            self.get_object(),
+            actor=authenticated_user(request),
+            note=data.get("note", ""),
+            delivery_mode=data.get("delivery_mode", ""),
+            scheduled_at=data.get("scheduled_at"),
+        )
         return Response(PostSerializer(post, context={"request": request}).data)
 
     @extend_schema(
         request=ApprovalNoteRequestSerializer,
         responses={200: PostSerializer},
-        summary="Approve a post under review",
-        description="PENDING_REVIEW → APPROVED. ADMIN+ only.",
+        summary="Clear this post's current approval stage",
+        description=(
+            "Needs `approve`. Clearing the **last** stage reaches `APPROVED`, "
+            "locks the post and, if the author proposed a time at submit, "
+            "schedules it. Clearing an earlier one advances to the next stage "
+            "and the post stays `PENDING_REVIEW` — the chain's shape lives in "
+            "the stage rows, never in the status enum.\n\n"
+            "Pass `stage` to say which stage you believe the post is at: a "
+            "stale value is a **409**, not an approval of whatever stage it has "
+            "since moved to."
+        ),
     )
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[
-            IsAuthenticated,
-            HasFeature(APPROVAL_FEATURE),
-            HasPermission(Permission.APPROVE),
-        ],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.APPROVE)],
     )
     def approve(self, request: Request, pk: str | None = None) -> Response:
-        note = self._approval_note(request)
-        post = approvals.approve(self.get_object(), actor=authenticated_user(request), note=note)
+        payload = self._approval_payload(request)
+        post = approvals.approve(
+            self.get_object(),
+            actor=authenticated_user(request),
+            note=payload["note"],
+            stage=payload.get("stage"),
+        )
         return Response(PostSerializer(post, context={"request": request}).data)
 
     @extend_schema(
@@ -393,12 +426,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         url_path="request-changes",
         permission_classes=[
             IsAuthenticated,
-            HasFeature(APPROVAL_FEATURE),
             HasPermission(Permission.APPROVE),
         ],
     )
     def request_changes(self, request: Request, pk: str | None = None) -> Response:
-        note = self._approval_note(request)
+        note = self._approval_payload(request)["note"]
         if not note:
             raise OCCSError("A note is required when requesting changes.", code="note_required")
         post = approvals.request_changes(
@@ -417,21 +449,39 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         methods=["post"],
         permission_classes=[
             IsAuthenticated,
-            HasFeature(APPROVAL_FEATURE),
             HasPermission(Permission.APPROVE),
         ],
     )
     def reject(self, request: Request, pk: str | None = None) -> Response:
-        note = self._approval_note(request)
+        note = self._approval_payload(request)["note"]
         post = approvals.reject(self.get_object(), actor=authenticated_user(request), note=note)
         return Response(PostSerializer(post, context={"request": request}).data)
 
+    @extend_schema(
+        request=None,
+        responses={200: PostSerializer},
+        summary="Reopen an approved post for editing",
+        description=(
+            'An approved post is locked, so that "approved" always describes '
+            "the content that was approved (P2-11). Unlocking needs `admin` and "
+            "writes an audit entry; the post keeps its `APPROVED` status until "
+            "the next content edit voids it."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.ADMIN)],
+    )
+    def unlock(self, request: Request, pk: str | None = None) -> Response:
+        post = approvals.unlock(self.get_object(), actor=authenticated_user(request))
+        return Response(PostSerializer(post, context={"request": request}).data)
+
     @staticmethod
-    def _approval_note(request: Request) -> str:
+    def _approval_payload(request: Request) -> dict[str, Any]:
         payload = ApprovalNoteRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        note: str = payload.validated_data["note"]
-        return note
+        return dict(payload.validated_data)
 
     @extend_schema(
         responses={200: ApprovalActionSerializer(many=True)},
@@ -448,65 +498,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         # Not named `approvals`: this module imports the `approvals` *service*,
         # and a method of that name reads as a shadow of it to anyone skimming
         # the class, even though Python resolves the two in different scopes.
-        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE)],
+        permission_classes=[IsAuthenticated],
     )
     def approval_history(self, request: Request, pk: str | None = None) -> Response:
         trail = self.get_object().approval_actions.select_related("actor").order_by("created_at")
         return Response(ApprovalActionSerializer(trail, many=True).data)
-
-    @extend_schema(
-        request=PostCommentSerializer,
-        responses={200: PostCommentSerializer(many=True), 201: PostCommentSerializer},
-        summary="Read or add comments on this post",
-        description="GET is open to any workspace member; POST needs any role but VIEWER, "
-        "the same gate `submit` uses (design.md §8.8's collaboration surface).",
-    )
-    @action(
-        detail=True,
-        methods=["get", "post"],
-        permission_classes=[IsAuthenticated, HasFeature(APPROVAL_FEATURE)],
-    )
-    def comments(self, request: Request, pk: str | None = None) -> Response:
-        post = self.get_object()
-        if request.method == "POST":
-            if Permission.COMMENT not in caller_permissions(request):
-                raise PermissionDenied("You do not hold `comment` in this workspace.")
-            payload = PostCommentSerializer(data=request.data, context={"post": post})
-            payload.is_valid(raise_exception=True)
-            comment = approvals.add_comment(
-                post,
-                author=authenticated_user(request),
-                body=payload.validated_data["body"],
-                parent=payload.validated_data.get("parent"),
-            )
-            return Response(PostCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
-
-        thread = post.comments.select_related("author").order_by("created_at")
-        return Response(PostCommentSerializer(thread, many=True).data)
-
-    @extend_schema(
-        request=None,
-        responses={200: PostCommentSerializer},
-        summary="Mark a comment resolved",
-        parameters=[OpenApiParameter("comment_pk", int, OpenApiParameter.PATH)],
-    )
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"comments/(?P<comment_pk>[^/.]+)/resolve",
-        permission_classes=[
-            IsAuthenticated,
-            HasFeature(APPROVAL_FEATURE),
-            HasPermission(Permission.COMMENT),
-        ],
-    )
-    def resolve_comment(
-        self, request: Request, pk: str | None = None, comment_pk: str | None = None
-    ) -> Response:
-        post = self.get_object()
-        comment = get_object_or_404(PostComment, pk=comment_pk, post=post)
-        comment = approvals.resolve_comment(comment)
-        return Response(PostCommentSerializer(comment).data)
 
 
 class MediaAssetViewSet(

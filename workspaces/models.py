@@ -65,9 +65,12 @@ PERMISSIONS: frozenset[str] = frozenset(Permission.values)
 #: The five seeded presets, derived from the role gates that existed *before*
 #: the permission set did, so the migration cannot widen access:
 #:
-#:   comment, edit   CONTRIBUTOR+  `content/views.py` gates `submit` and
-#:                                 `resolve_comment` on CONTRIBUTOR and raises
-#:                                 "VIEWER cannot comment" explicitly.
+#:   comment, edit   CONTRIBUTOR+  `content/views.py` gated `submit` and the
+#:                                 post-comment endpoints on CONTRIBUTOR and
+#:                                 raised "VIEWER cannot comment" explicitly.
+#:                                 Those comments are `collaboration.Thread`
+#:                                 since P2-01; the gate they implied is now
+#:                                 `HasPermission(COMMENT)` on `ThreadViewSet`.
 #:   approve, admin  ADMIN+        `content/views.py` approve/request-changes/
 #:                                 reject, `workspaces/views.py` team writes.
 #:   view, analyze   every member  Reads and `analytics/views.py` carry no role
@@ -319,7 +322,10 @@ class Workspace(models.Model):
     storage_bytes_used = models.BigIntegerField(default=0)
 
     onboarding_complete = models.BooleanField(default=False)
-    requires_approval = models.BooleanField(default=False)
+    # `requires_approval` moved to `ApprovalChain.blocks_publish` (P2-04).
+    # A boolean could say *whether* a workspace reviews; C-02 makes approval
+    # universal and leaves only *which flow*, which a boolean cannot say —
+    # and keeping both would be two sources of truth for one question.
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -567,34 +573,102 @@ class Invitation(models.Model):
         return invitation if invitation is not None and invitation.is_usable else None
 
 
-class PostComment(models.Model):
-    """design.md §6.9. Internal team discussion on a draft — not the platform
-    comments `analytics.Comment` captures once a post is live; different
-    domain, different app, same English word.
+class ApprovalChain(models.Model):
+    """*How* this workspace reviews, replacing the old `requires_approval`
+    boolean (P2-04, C-02).
 
-    Mutable, unlike `ApprovalAction`/`AuditLog` below: `resolved_at` is set by
-    a later action on the same row, which append-only would forbid.
+    **Approval is now required on every plan** (L-2). What a chain configures is
+    not *whether* a human says yes but *which* flow says it:
+
+    | chain                          | what it means                          |
+    |--------------------------------|----------------------------------------|
+    | `blocks_publish=False`         | whoever schedules the post approves it |
+    | `blocks_publish=True`, 1 stage | one named reviewer, before scheduling  |
+    | `blocks_publish=True`, N stages| a sequence — client sign-off, legal    |
+
+    A non-blocking chain is **not** "no approval". `scheduling.services
+    .schedule_post` records an `APPROVE` action naming whoever scheduled it, so
+    the invariant *no `SCHEDULED` post without an `APPROVE` row* holds at every
+    tier without asking a solo user to review their own draft. There is no
+    "None" mode any more; L-2 removed it.
+
+    **Modes are configurations, not code paths** — one state machine reads this
+    table. The moment a mode becomes an `if` in the service, the third one costs
+    as much as the first two together.
+
+    Advanced is re-pitched on **chain depth** (P2-13): multi-stage, sequential,
+    client-facing. Not on approval existing.
     """
 
-    post = models.ForeignKey("content.Post", on_delete=models.CASCADE, related_name="comments")
-    author = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="post_comments"
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="approval_chains"
     )
-    body = models.TextField()
-    parent = models.ForeignKey(
-        "self", null=True, blank=True, on_delete=models.CASCADE, related_name="replies"
-    )
-    resolved_at = models.DateTimeField(null=True, blank=True)
+    name = models.CharField(max_length=120)
+    #: Exactly one per workspace, enforced below. `provision_workspace` creates
+    #: it; a workspace without one has no defined review flow, which every
+    #: caller would then have to invent an answer for.
+    is_default = models.BooleanField(default=False)
+    blocks_publish = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering: ClassVar[list[str]] = ["created_at"]
-        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["post", "created_at"])]
+        ordering: ClassVar[list[str]] = ["-is_default", "name"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["workspace"],
+                condition=models.Q(is_default=True),
+                name="one_default_approval_chain_per_workspace",
+            ),
+            models.UniqueConstraint(
+                fields=["workspace", "name"], name="unique_approval_chain_name_per_workspace"
+            ),
+        ]
 
     def __str__(self) -> str:
-        return f"comment {self.pk} on post {self.post_id}"
+        return f"{self.name} ({'blocking' if self.blocks_publish else 'open'})"
+
+
+class ApprovalStage(models.Model):
+    """One step in a chain.
+
+    `required_approvers` is a list of people, not a permission: "the brand lead
+    signs off" is a statement about a person, and expressing it as a permission
+    would grant that authority on every post in the workspace rather than on
+    this stage. **Empty means anyone holding `approve`** — the common single-
+    stage case, which should not require naming names.
+    """
+
+    chain = models.ForeignKey(ApprovalChain, on_delete=models.CASCADE, related_name="stages")
+    #: 1-based and dense. It is what a reviewer sees ("stage 2 of 3"), so it
+    #: cannot be the primary key, which is global and gapped.
+    order = models.PositiveSmallIntegerField()
+    name = models.CharField(max_length=120)
+    required_approvers = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, blank=True, related_name="approval_stages"
+    )
+    min_approvals = models.PositiveSmallIntegerField(default=1)
+    #: Off by default. The author approving their own work is the failure a
+    #: review stage exists to prevent, so allowing it has to be typed.
+    allow_self_approve = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["order"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["chain", "order"], name="unique_approval_stage_order"),
+            # A stage needing zero approvals would clear itself the moment a
+            # post arrived, which is a stage that is not there.
+            models.CheckConstraint(
+                condition=models.Q(min_approvals__gte=1), name="approval_stage_needs_an_approval"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.chain_id} #{self.order} {self.name}"
 
 
 class ApprovalActionType(models.TextChoices):
@@ -626,10 +700,44 @@ class ApprovalAction(AppendOnly):
     post = models.ForeignKey(
         "content.Post", on_delete=models.CASCADE, related_name="approval_actions"
     )
+    #: Null in exactly two cases, and `guest_link` is what tells them apart:
+    #:
+    #: * **grandfathered** (P2-06) — both null. A post that reached `SCHEDULED`
+    #:   before approval became universal; there is no person behind it.
+    #: * **a guest reviewer** (P2-09) — `guest_link` set. A client signed off
+    #:   from an emailed link and holds no account.
+    #:
+    #: Nullable rather than pointing at a synthetic "system" user, because a
+    #: fake row in the user table is a fake row that can be invited, assigned
+    #: and emailed. And two nullable columns rather than one, because "the
+    #: migration did this" and "the client did this" are different answers to
+    #: *who approved it*, and an audit trail that cannot tell them apart is not
+    #: much of one.
     actor = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="approval_actions"
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="approval_actions",
+    )
+    guest_link = models.ForeignKey(
+        "collaboration.ReviewLink",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approval_actions",
     )
     action = models.CharField(max_length=16, choices=ApprovalActionType.choices)
+    #: Which stage this action was taken at; null on a single-stage or
+    #: non-blocking chain, and on the grandfathered rows. `SET_NULL` so editing
+    #: a chain cannot rewrite the history of decisions taken under the old one.
+    stage = models.ForeignKey(
+        ApprovalStage,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approval_actions",
+    )
     note = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -639,7 +747,17 @@ class ApprovalAction(AppendOnly):
         indexes: ClassVar[list[models.Index]] = [models.Index(fields=["post", "-created_at"])]
 
     def __str__(self) -> str:
-        return f"{self.action} on post {self.post_id} by {self.actor_id}"
+        return f"{self.action} on post {self.post_id} by {self.actor_id or self.guest_link_id}"
+
+    @property
+    def actor_label(self) -> str:
+        """Who to show in the trail. Never blank: a decision with no visible
+        author is the one a reader has to go and ask about."""
+        if self.actor is not None:
+            return self.actor.email
+        if self.guest_link is not None:
+            return str(self.guest_link.reviewer_name)
+        return "system"
 
 
 class AuditLog(AppendOnly):

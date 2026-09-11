@@ -22,6 +22,7 @@ from django.conf import settings
 from django.db import models
 
 from common.records import AppendOnly
+from common.visibility import Visibility
 
 
 class Platform(models.TextChoices):
@@ -86,12 +87,48 @@ class Post(models.Model):
     )
 
     status = models.CharField(max_length=20, choices=PostStatus.choices, default=PostStatus.DRAFT)
+    #: Whether a guest reviewer may load this post at all (P2-03). Defaulting
+    #: to `INTERNAL` is the whole point: a draft becoming client-visible
+    #: because a field was forgotten is the one failure here that cannot be
+    #: walked back, since by then the client has read it. Enforced by
+    #: `common.visibility.VisibilityScopedQuerySetMixin` in the queryset, never
+    #: by a serializer omitting a field — a serializer that hides a row still
+    #: loaded it, still counted it in a page total, and still answered 200.
+    visibility = models.CharField(
+        max_length=8, choices=Visibility.choices, default=Visibility.INTERNAL
+    )
     # Server-controlled: `POST /posts/{id}/schedule/` (Phase 8) is the only
     # writer. Exposing these on the generic Post serializer now would let a
     # client set a delivery mode or a schedule the horizon/quota checks that
     # endpoint owns have no chance to run against yet (design.md A49).
     delivery_mode = models.CharField(max_length=16, choices=DeliveryMode.choices, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
+
+    # --- approval (BUILD-PLAN P2-07, P2-10, P2-11) -------------------------
+    #: Where the post sits in its workspace's approval chain. Null unless it is
+    #: `PENDING_REVIEW` on a blocking chain. **No new statuses**: `PENDING_REVIEW`
+    #: means "at stage N" and this column says which — putting the chain's shape
+    #: into `PostStatus` would make every new chain shape a migration.
+    current_stage = models.ForeignKey(
+        "workspaces.ApprovalStage",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="posts_in_review",
+    )
+    #: The author's *proposal*, captured at submit time and consumed by the
+    #: final approval (P2-10). Deliberately not `scheduled_at`: that column has
+    #: exactly one writer, and a proposal written straight into it would skip
+    #: the horizon, quota and entitlement checks living behind it.
+    proposed_delivery_mode = models.CharField(
+        max_length=16, choices=DeliveryMode.choices, blank=True
+    )
+    proposed_scheduled_at = models.DateTimeField(null=True, blank=True)
+    #: Set when the last approval stage clears (P2-11). While it is set, every
+    #: content mutation is a 409 at the **service** layer — otherwise "approved"
+    #: describes content that nobody approved. Revisions stay readable; an
+    #: `admin` unlocks, and that writes an audit entry.
+    locked_at = models.DateTimeField(null=True, blank=True)
 
     source = models.CharField(max_length=16, choices=PostSource.choices, default=PostSource.MANUAL)
     category = models.ForeignKey(

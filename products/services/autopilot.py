@@ -43,11 +43,13 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from accounts.models import User
 from ai.models import Generation, GenerationKind, GenerationMode, GenerationStatus
 from ai.services import pipeline
 from ai.services.costing import resolve_cost
 from billing.models import UNLIMITED
 from billing.services.entitlements import Entitlements, entitlements_for
+from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import InsufficientCredits, OCCSError
 from content.models import DeliveryMode, Platform, PostSource
 from content.services.posts import create_post, update_post
@@ -385,17 +387,43 @@ def _finish(
     # `auto_approve` was already gated when it was written; re-checked here
     # because a plan can be downgraded between configuring autopilot and the
     # run that acts on it (I5's shape).
-    to_calendar = (
+    wants_calendar = (
         config.auto_approve
         and config.landing == AutopilotLanding.AUTO_CALENDAR
         and bool(entitlements.feature("autopilot_auto_approve"))
     )
+    to_calendar = (
+        wants_calendar
+        # **L-2, via P2-04.** Nothing reaches a calendar without a person, and
+        # this path had none: a run at 03:00 put generated content straight
+        # into the schedule. The drafts are not lost — they land in the review
+        # queue, which is where the user acts on them anyway, so what the user
+        # loses is the 03:00 part and not the work.
+        #
+        # Phase 5's C-01 retires this branch entirely, replacing `AutopilotDraft`
+        # with `ContentCandidate`. The flag is what makes the change revertible
+        # in the meantime (Part 3): off, the pre-phase behaviour returns.
+        and not flag_enabled(config.product.workspace.organization, COLLABORATION_V2)
+    )
     reason = blocked
+    if wants_calendar and not to_calendar and reason is None:
+        # Say so on the job rather than quietly queueing. A user who switched
+        # auto-approve on and finds their drafts waiting deserves the reason in
+        # the run record, not a support ticket.
+        reason = "human_approval_required"
     landed = 0
     if to_calendar:
         for draft in drafts:
             try:
-                approve_draft(draft, entitlements=entitlements)
+                # Reachable only with `COLLABORATION_V2` off — see `to_calendar`
+                # above. In that pre-phase world no `APPROVE` row is written at
+                # all, so this names the person who switched `auto_approve` on
+                # rather than inventing a reviewer for content nobody read.
+                approve_draft(
+                    draft,
+                    actor=config.product.workspace.organization.owner,
+                    entitlements=entitlements,
+                )
             except OCCSError as exc:
                 # Most likely no connected account yet (Phase 9's
                 # `NoConnectedAccountsError`). The drafts are generated and paid
@@ -455,7 +483,7 @@ def run_due(*, now: dt.datetime | None = None) -> int:
 # -----------------------------------------------------------------------------
 @transaction.atomic
 def approve_draft(
-    draft: AutopilotDraft, *, entitlements: Entitlements | None = None
+    draft: AutopilotDraft, *, actor: User, entitlements: Entitlements | None = None
 ) -> AutopilotDraft:
     """Turns a draft into a real, scheduled `Post`.
 
@@ -463,6 +491,11 @@ def approve_draft(
     needs Pro or better and every such plan has auto-publish today, but D4's
     reminders-only fallback is one plan edit away and this is not the place to
     hardcode which tier is which (I8).
+
+    `actor` is the person who pressed approve, and it is what the `APPROVE`
+    action records (L-2). Required, with no default: an approval with nobody's
+    name on it is the thing L-2 exists to prevent, and a default would be the
+    quiet way to write one.
 
     `entitlements` is an optional override: `_finish` auto-approving a whole
     run's worth of drafts for one workspace already has one resolved, and
@@ -501,7 +534,11 @@ def approve_draft(
     mode = (
         DeliveryMode.AUTO_PUBLISH if entitlements.feature("auto_publish") else DeliveryMode.REMINDER
     )
-    schedule_post(post=post, delivery_mode=mode, scheduled_at=draft.scheduled_for)
+    # The human who pressed approve is the approver of record (L-2): on an
+    # open chain `schedule_post` writes their `APPROVE` action, and on a
+    # blocking one it refuses, because a draft nobody reviewed must not
+    # reach the calendar just because a slot came round.
+    schedule_post(post=post, delivery_mode=mode, scheduled_at=draft.scheduled_for, actor=actor)
 
     draft.post = post
     draft.status = AutopilotDraftStatus.SCHEDULED

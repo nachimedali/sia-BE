@@ -121,3 +121,27 @@ def scope_related_field_to_workspace(
             queryset = model._default_manager.filter(workspace=request_workspace(request))
     target = getattr(field, "child_relation", field)
     target.queryset = queryset
+
+
+def scope_related_field_to_members(field: Any, request: Request | None) -> None:
+    """Restricts a user-valued field's choices to the request workspace's own
+    members — the sibling of `scope_related_field_to_workspace`, for the one
+    relation it cannot serve.
+
+    A `User` has no workspace column, so scoping goes through `memberships`.
+    Without it, naming an assignee or an approver by id would accept any
+    account in the system, which is a tenancy leak that reads as a working
+    autocomplete.
+
+    Same empty-rather-than-raise contract as its sibling, and for the same
+    reason: schema generation instantiates every serializer with an
+    unauthenticated request and has to produce a schema, not a 401.
+    """
+    from accounts.models import User
+
+    queryset = User.objects.none()
+    if request is not None:
+        with contextlib.suppress(OCCSError):
+            queryset = User.objects.filter(memberships__workspace=request_workspace(request))
+    target = getattr(field, "child_relation", field)
+    target.queryset = queryset

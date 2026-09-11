@@ -2,27 +2,32 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from rest_framework import serializers
 
 from billing.models import OrganizationAddon
+from common.workspaces import scope_related_field_to_members
 from workspaces.models import (
     PERMISSIONS,
     ApiKey,
     ApprovalAction,
+    ApprovalChain,
+    ApprovalStage,
     AuditLog,
     Invitation,
     Membership,
     Organization,
-    PostComment,
     Role,
     Workspace,
 )
 
 
 class ApprovalActionSerializer(serializers.ModelSerializer[ApprovalAction]):
-    actor_email = serializers.EmailField(source="actor.email", read_only=True)
+    #: Null on the P2-06 grandfathered rows, which have no person behind
+    #: them. `default=None` rather than a placeholder string: "system" in an
+    #: email column is a value a client could try to mail.
+    actor_email = serializers.EmailField(source="actor.email", read_only=True, default=None)
 
     class Meta:
         model = ApprovalAction
@@ -32,6 +37,7 @@ class ApprovalActionSerializer(serializers.ModelSerializer[ApprovalAction]):
             "actor",
             "actor_email",
             "action",
+            "stage",
             "note",
             "created_at",
         )
@@ -42,43 +48,17 @@ class ApprovalNoteRequestSerializer(serializers.Serializer[object]):
     """Body for `approve`/`request-changes`/`reject`. `note` is optional for
     approve/reject — a rubber stamp needs no explanation — but the view
     requires it for `request_changes`, where an empty note would leave the
-    author with nothing to act on."""
+    author with nothing to act on.
+
+    `stage` is the caller's belief about where the post is (P2-08). Optional,
+    and a stale value is a **409** rather than an approval of whatever stage the
+    post has since moved to — the ordinary lost-update guard, which matters here
+    because the thing being lost is a sign-off.
+    """
+
+    stage = serializers.IntegerField(required=False)
 
     note = serializers.CharField(required=False, allow_blank=True, default="")
-
-
-class PostCommentSerializer(serializers.ModelSerializer[PostComment]):
-    author_email = serializers.EmailField(source="author.email", read_only=True)
-
-    class Meta:
-        model = PostComment
-        fields: ClassVar[tuple[str, ...]] = (
-            "id",
-            "post",
-            "author",
-            "author_email",
-            "body",
-            "parent",
-            "resolved_at",
-            "created_at",
-        )
-        read_only_fields: ClassVar[tuple[str, ...]] = (
-            "id",
-            "post",
-            "author",
-            "author_email",
-            "resolved_at",
-            "created_at",
-        )
-
-    def validate_parent(self, value: PostComment | None) -> PostComment | None:
-        # A reply's parent has to be a comment on the *same* post — otherwise
-        # a client could thread a new comment onto another post's thread by
-        # guessing an id, which is a workspace-tenancy leak in miniature.
-        post = self.context.get("post")
-        if value is not None and post is not None and value.post_id != post.pk:
-            raise serializers.ValidationError("A reply must be on a comment from this post.")
-        return value
 
 
 class AuditLogSerializer(serializers.ModelSerializer[AuditLog]):
@@ -147,10 +127,72 @@ class MembershipRoleUpdateSerializer(serializers.Serializer[object]):
     role = serializers.ChoiceField(choices=Role.choices)
 
 
-class WorkspaceSettingsSerializer(serializers.ModelSerializer[Workspace]):
+class WorkspaceSettingsSerializer(serializers.Serializer[Any]):
+    """The workspace's review posture, in the one word a settings screen uses.
+
+    **Backed by `ApprovalChain.blocks_publish`, not by a column** (P2-04). The
+    field name survives because it still reads correctly — "does this workspace
+    require a separate approval before scheduling" — while the storage moved to
+    the chain, which is the only thing that can also express *how many* stages
+    and *who*. Keeping a boolean beside it would be two sources of truth for
+    one question, and the boolean would be the one that drifted.
+
+    `False` does **not** mean unreviewed (L-2): it means whoever schedules the
+    post is the one approving it, recorded as an `APPROVE` action either way.
+    """
+
+    requires_approval = serializers.BooleanField()
+    stage_count = serializers.IntegerField(read_only=True)
+    max_stages = serializers.IntegerField(read_only=True)
+
+
+class ApprovalStageSerializer(serializers.ModelSerializer[ApprovalStage]):
+    required_approver_emails = serializers.SerializerMethodField()
+
     class Meta:
-        model = Workspace
-        fields: ClassVar[tuple[str, ...]] = ("requires_approval",)
+        model = ApprovalStage
+        fields: ClassVar[tuple[str, ...]] = (
+            "id",
+            "order",
+            "name",
+            "required_approvers",
+            "required_approver_emails",
+            "min_approvals",
+            "allow_self_approve",
+        )
+        read_only_fields: ClassVar[tuple[str, ...]] = ("id", "order", "required_approver_emails")
+
+    def get_required_approver_emails(self, stage: ApprovalStage) -> list[str]:
+        return sorted(user.email for user in stage.required_approvers.all())
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        scope_related_field_to_members(
+            self.fields["required_approvers"], self.context.get("request")
+        )
+
+
+class ApprovalChainSerializer(serializers.ModelSerializer[ApprovalChain]):
+    stages = ApprovalStageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ApprovalChain
+        fields: ClassVar[tuple[str, ...]] = (
+            "id",
+            "name",
+            "is_default",
+            "blocks_publish",
+            "stages",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields: ClassVar[tuple[str, ...]] = (
+            "id",
+            "is_default",
+            "stages",
+            "created_at",
+            "updated_at",
+        )
 
 
 class OrganizationSerializer(serializers.ModelSerializer[Organization]):

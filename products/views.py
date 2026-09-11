@@ -29,7 +29,7 @@ from billing.permissions import HasFeature
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import request_workspace
+from common.workspaces import authenticated_user, request_workspace
 from products.models import AutopilotConfig, AutopilotDraft, AutopilotDraftStatus, Product
 from products.serializers import (
     AutopilotConfigSerializer,
@@ -155,7 +155,9 @@ class AutopilotApproveView(_AutopilotView):
         summary="Approve a draft: creates the post and schedules its slot",
     )
     def post(self, request: Request, pk: int) -> Response:
-        draft = autopilot_service.approve_draft(self.draft(request, pk))
+        draft = autopilot_service.approve_draft(
+            self.draft(request, pk), actor=authenticated_user(request)
+        )
         return Response(AutopilotDraftSerializer(draft).data)
 
 

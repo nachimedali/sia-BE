@@ -1,0 +1,9 @@
+{{ subject }}
+
+{% if actor %}{{ actor }} — {% endif %}in {{ workspace.name }}.
+
+Open ComposeVision to see it:
+
+{{ site_url }}/app/approvals
+
+You can change which of these reach you by email in your notification settings.

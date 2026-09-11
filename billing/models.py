@@ -35,7 +35,15 @@ FEATURE_KEYS = frozenset(
         "trend_engine",
         "repurposing",
         "playbook",
+        # C-02 made approval itself universal, so this no longer gates it.
+        # What it still gates is the workspace-wide **audit log**, which is a
+        # governance read rather than part of getting a post out.
         "approval_workflow",
+        # P2-13: Advanced is re-pitched on chain *depth* — multi-level,
+        # sequential, client-facing — not on approval existing. An integer
+        # rather than a boolean so the ceiling is an admin edit (Part 7
+        # rule 10), and 1 means "one stage", never "no approval".
+        "approval_chain_depth",
         "api_access",
         "video_generation",
         "autopilot",

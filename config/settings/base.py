@@ -57,6 +57,8 @@ LOCAL_APPS = [
     "billing",
     "onboarding",
     "content",
+    "collaboration",
+    "notifications",
     "products",
     "ai",
     "reminders",
@@ -231,6 +233,18 @@ SPECTACULAR_SETTINGS = {
         # And again for `Tool`, on `ToolConfig.slug` and `ToolUsage.tool` —
         # the same six values under two field names (C-11 / P0-04).
         "ToolEnum": "tools.models.Tool",
+        # `PostStatus` reaches the schema from `PostSerializer` and from the
+        # guest review packet's post summary (P2-09).
+        "PostStatusEnum": "content.models.PostStatus",
+        # `DeliveryMode` on `Post.delivery_mode`, `Post.proposed_delivery_mode`
+        # and the schedule request — one set of values, three field names.
+        "DeliveryModeEnum": "content.models.DeliveryMode",
+        # `Visibility` on `Post`, `Thread` and `Comment` (P2-03).
+        "VisibilityEnum": "common.visibility.Visibility",
+        # `ThreadStatus` collides with `Post.status` on the bare name
+        # `status`; unnamed, spectacular mints "StatusB3fEnum", which is
+        # what a client would then have to import (P2-01).
+        "ThreadStatusEnum": "collaboration.models.ThreadStatus",
     },
 }
 

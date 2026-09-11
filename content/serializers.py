@@ -137,11 +137,19 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "media_asset_ids",
             "author_email",
             "status",
+            "visibility",
             "delivery_mode",
             "scheduled_at",
             "source",
             "category",
             "origin_post",
+            # The review surface needs all three to render a chain honestly:
+            # which stage the post is waiting at, whether it is frozen, and the
+            # time the author proposed for it (P2-07, P2-10, P2-11).
+            "current_stage",
+            "locked_at",
+            "proposed_delivery_mode",
+            "proposed_scheduled_at",
             "created_at",
             "updated_at",
         )
@@ -153,6 +161,14 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "scheduled_at",
             "source",
             "origin_post",
+            # Written by the approval service alone, for the same reason
+            # `scheduled_at` is written by the schedule service alone (A49):
+            # a client that could set them would be a second, ungated path
+            # into the state machine.
+            "current_stage",
+            "locked_at",
+            "proposed_delivery_mode",
+            "proposed_scheduled_at",
             "created_at",
             "updated_at",
         )
@@ -226,6 +242,41 @@ class PostScheduleRequestSerializer(serializers.Serializer[Any]):
         if value <= timezone.now():
             raise serializers.ValidationError("scheduled_at must be in the future.")
         return value
+
+
+class PostSubmitRequestSerializer(serializers.Serializer[Any]):
+    """`POST /posts/{id}/submit/` (P2-10).
+
+    The schedule half is **optional and is a proposal**, not a schedule: it is
+    parked on the post and consumed by the final approval, which calls the
+    ordinary schedule service. Same shape as
+    `PostScheduleRequestSerializer` above deliberately — the author fills in
+    one form whether or not a reviewer stands between them and the calendar.
+    """
+
+    note = serializers.CharField(required=False, allow_blank=True, default="")
+    delivery_mode = serializers.ChoiceField(
+        choices=DeliveryMode.choices, required=False, allow_blank=True, default=""
+    )
+    scheduled_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+    def validate_scheduled_at(self, value: Any) -> Any:
+        if value is not None and value <= timezone.now():
+            raise serializers.ValidationError("scheduled_at must be in the future.")
+        return value
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        """Both halves of the proposal or neither.
+
+        A delivery mode with no time is unschedulable and a time with no mode
+        is ambiguous between a reminder and a publish — either would be stored,
+        silently ignored at approval, and discovered as "why didn't it go out".
+        """
+        if bool(attrs.get("delivery_mode")) != (attrs.get("scheduled_at") is not None):
+            raise serializers.ValidationError(
+                {"scheduled_at": "Propose both `delivery_mode` and `scheduled_at`, or neither."}
+            )
+        return attrs
 
 
 class AdaptedMediaSerializer(serializers.Serializer[Any]):

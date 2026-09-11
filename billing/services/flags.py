@@ -38,12 +38,22 @@ if TYPE_CHECKING:
 #: before Phase 1 answer 404 rather than erroring.
 CONTENT_MODEL_V2 = "content_model_v2"
 
+#: Phase 2 — internal threads, approval chains, universal approval,
+#: token-scoped review and the notification fan-out. Off restores pre-phase
+#: behaviour: the collaboration surfaces answer 404 rather than erroring, and
+#: a workspace whose chain does not block schedules straight from `DRAFT` with
+#: no approval recorded — which is exactly what `requires_approval=False` did
+#: before C-02 made approval universal. A **blocking** chain is honoured with
+#: the flag either way, because that behaviour predates this phase.
+COLLABORATION_V2 = "collaboration_v2"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
 #: leaves a phase switched off in production and nobody able to say why.
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
+    COLLABORATION_V2: True,
 }
 
 

@@ -22,19 +22,25 @@ AUDIT_LOG_URL = "/api/v1/workspaces/audit-log/"
 # WorkspaceSettingsView
 # -----------------------------------------------------------------------------
 def test_reading_settings_is_open_to_any_plan(auth_client: Any, workspace: Any) -> None:
-    """Free/Pro can always see `requires_approval` is `False` — the toggle
-    cannot have been switched on without the feature (`patch` is gated)."""
+    """A new workspace's chain does not block: whoever schedules a post is the
+    one approving it (L-2), which is what `requires_approval: false` means."""
     response = auth_client.get(SETTINGS_URL)
 
     assert response.status_code == 200
-    assert response.json()["requires_approval"] is False
+    assert response.json() == {"requires_approval": False, "stage_count": 0, "max_stages": 1}
 
 
-def test_toggling_settings_requires_the_feature(auth_client: Any, workspace: Any) -> None:
+def test_requiring_a_separate_reviewer_is_available_on_every_plan(
+    auth_client: Any, workspace: Any
+) -> None:
+    """**The opposite of the pre-C-02 behaviour.** Requiring approval used to be
+    a 402 below Advanced. Approval is now universal, so the plan gate is gone
+    from the toggle; what Advanced buys is chain *depth* (P2-13), tested in
+    `test_approval_chains.py`."""
     response = auth_client.patch(SETTINGS_URL, {"requires_approval": True}, format="json")
 
-    assert response.status_code == 402
-    assert response.json()["error"]["code"] == "feature_not_available"
+    assert response.status_code == 200
+    assert response.json()["requires_approval"] is True
 
 
 def test_toggling_settings_requires_admin(
@@ -56,8 +62,7 @@ def test_an_admin_can_toggle_requires_approval(
 
     assert response.status_code == 200
     assert response.json()["requires_approval"] is False
-    advanced_workspace.refresh_from_db()
-    assert advanced_workspace.requires_approval is False
+    assert approvals.default_chain(advanced_workspace).blocks_publish is False
     assert advanced_workspace.audit_log.filter(verb="workspace.requires_approval").count() == 1
 
 

@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 
 from ai.models import Generation, GenerationKind, GenerationMode, VoiceProfile
 from channels.models import SocialAccount
+from collaboration.services import open_thread
 from config.api_urls import router
 from content.models import PostTemplate, RecurrenceRule
 from content.services.adaptation import render_post
@@ -219,7 +220,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 10
+    assert len(router.registry) == 11
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -266,6 +267,7 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         "post-template": PostTemplate.objects.create(
             workspace=other_workspace, name="Not yours either"
         ),
+        "thread": open_thread(post, author=other_owner, title="Not yours either", body="nor this"),
         "recurrence-rule": RecurrenceRule.objects.create(
             source=PostTemplate.objects.create(workspace=other_workspace, name="Nor this"),
             rrule="FREQ=DAILY",

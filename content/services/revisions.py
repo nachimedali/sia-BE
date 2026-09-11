@@ -213,6 +213,12 @@ def restore(post: Post, *, sequence: int, author: User | None = None) -> Post:
             f"A {post.get_status_display().lower()} post cannot be restored.",
             detail={"post": post.pk, "status": post.status},
         )
+    # A restore rewrites the body, so it is a content mutation like any other
+    # and the approval lock applies (P2-11). Reading history stays open — being
+    # locked out of what a post used to say helps nobody.
+    from workspaces.services.approvals import ensure_unlocked
+
+    ensure_unlocked(post)
 
     state = state_at(post, sequence)
 
@@ -252,6 +258,14 @@ def restore(post: Post, *, sequence: int, author: User | None = None) -> Post:
             )
 
     post.refresh_from_db()
+    # Restoring changes the body, so annotations are re-checked here too — and
+    # symmetrically: putting back the text an annotation was written about
+    # re-attaches it (P2-02). Imported at call time rather than at module
+    # scope: `collaboration.services` reads `content.models`, and `content
+    # .services.posts` already imports this module.
+    from collaboration.services import reanchor
+
+    reanchor(post)
     record(post, author=author, reason=f"restored from revision {sequence}", force=True)
     return post
 
