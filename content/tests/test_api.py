@@ -20,6 +20,7 @@ from content.services.posts import create_post
 from planning.models import BulkOperation, Campaign, Label, SavedView, Timetable
 from products.services.products import create_product
 from reminders.models import Reminder
+from taste.models import ContentCandidate, RuleSet, TasteProfile
 from workspaces.models import Membership
 from workspaces.services.provisioning import provision_workspace
 
@@ -223,7 +224,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 16
+    assert len(router.registry) == 19
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -257,6 +258,7 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         workspace=other_workspace, platform="instagram", provider_account_id="not-yours"
     )
     other_membership = Membership.objects.get(user=other_owner, workspace=other_workspace)
+    other_profile = TasteProfile.objects.create(workspace=other_workspace, version=1)
 
     objects_by_basename = {
         "post": post,
@@ -293,6 +295,12 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         ),
         "bulk-operation": BulkOperation.objects.create(
             workspace=other_workspace, action="delete", total_count=0
+        ),
+        # --- Phase 5 taste surfaces ---
+        "taste-profile": other_profile,
+        "ruleset": RuleSet.objects.create(workspace=other_workspace, version=1),
+        "candidate": ContentCandidate.objects.create(
+            workspace=other_workspace, taste_profile=other_profile
         ),
     }
 

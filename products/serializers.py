@@ -7,7 +7,7 @@ rather than defining a parallel one — a reference image is just a
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
@@ -15,6 +15,7 @@ from rest_framework import serializers
 from content.models import Platform
 from content.serializers import MediaAssetSerializer
 from products.models import AutopilotConfig, AutopilotDraft, Product, ProductFormat
+from taste.models import REASON_CODES
 
 
 class ProductSerializer(serializers.ModelSerializer[Product]):
@@ -153,3 +154,16 @@ class AutopilotDraftSerializer(serializers.ModelSerializer[AutopilotDraft]):
         if variant is None or variant.media_asset is None:
             return None
         return dict(MediaAssetSerializer(variant.media_asset).data)
+
+
+class DraftRejectRequestSerializer(serializers.Serializer[Any]):
+    """Why this draft was refused (P5-12).
+
+    Defaults to `other` rather than being required: a reviewer clearing a
+    queue should not be blocked on picking a taxonomy entry, and an
+    unclassified rejection is still worth more than a deleted row. The default
+    is deliberately the least informative code, so "they did not say" is
+    visible in the aggregate rather than disguised as a real reason.
+    """
+
+    reason_code = serializers.ChoiceField(choices=REASON_CODES, default="other")

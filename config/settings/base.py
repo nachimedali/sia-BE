@@ -60,6 +60,7 @@ LOCAL_APPS = [
     "collaboration",
     "notifications",
     "planning",
+    "taste",
     "products",
     "ai",
     "reminders",

@@ -18,7 +18,7 @@ from ai.models import Generation, GenerationMode
 from billing.models import CreditLedger, FeatureFlag, VideoLedger, VideoReason
 from billing.services import ledger
 from billing.services.flags import COLLABORATION_V2
-from content.models import Post, PostSource, PostStatus
+from content.models import Post
 from products.models import (
     AutopilotDraft,
     AutopilotDraftKind,
@@ -383,12 +383,24 @@ def test_auto_approve_no_longer_reaches_the_calendar_on_its_own(
     assert draft.post is None
 
 
-def test_the_pre_phase_auto_calendar_path_returns_with_the_flag_off(
+def test_no_flag_restores_the_auto_calendar_path(
     autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
-    """Part 3: **flag off is pre-phase behaviour, not an error.** This is what
-    makes the change above revertible on production-shaped data rather than
-    merely arguable."""
+    """**C-01 retired this path permanently, and the flag does not bring it
+    back.**
+
+    Phase 2 neutralised auto-landing behind `COLLABORATION_V2`, and this test
+    used to assert that switching the flag off restored it — which is Part 3's
+    ordinary rule that flag-off means pre-phase behaviour. Phase 5 removes the
+    branch outright, so that is no longer true here, and deliberately:
+    Part 7 rule 13 says nothing publishes without human approval with **no
+    tier, flag or configuration** excepted. A flag that restored auto-landing
+    would itself be the configuration rule 13 forbids, so the revertibility
+    Part 3 asks for cannot extend to this one branch.
+
+    The drafts are not lost — they wait in the review queue, which is where the
+    user acts on them anyway. What was removed is the 03:00 part.
+    """
     FeatureFlag.objects.create(
         organization=autopilot_workspace.organization, key=COLLABORATION_V2, enabled=False
     )
@@ -396,12 +408,10 @@ def test_the_pre_phase_auto_calendar_path_returns_with_the_flag_off(
 
     job = autopilot.run_config(autopilot_config)
 
-    assert job.status == AutopilotJobStatus.GENERATED
+    assert job.status == AutopilotJobStatus.QUEUED
     draft = AutopilotDraft.objects.get()
-    assert draft.status == AutopilotDraftStatus.SCHEDULED
-    assert draft.post is not None
-    assert draft.post.status == PostStatus.SCHEDULED
-    assert draft.post.source == PostSource.AUTOPILOT
+    assert draft.status == AutopilotDraftStatus.PENDING
+    assert draft.post is None, "a run put content on a calendar with nobody having read it"
 
 
 def test_auto_approve_without_a_connected_account_falls_back_to_the_queue(
@@ -410,22 +420,22 @@ def test_auto_approve_without_a_connected_account_falls_back_to_the_queue(
     """The drafts are generated and paid for either way, so they land in the
     queue rather than being lost to a Phase 9 precondition.
 
-    Run with the flag off, because that is the only configuration in which the
-    auto-schedule is attempted at all — and the fallback it exercises is the
-    one that has to keep working while the flag is a live rollback target.
+    **The reason is now `human_approval_required`, not `no_connected_accounts`**
+    — and that is the honest one. With the auto-calendar branch retired (C-01)
+    a run never attempts to schedule, so it never discovers the missing
+    account; reporting a precondition nothing checked would be inventing a
+    cause. What the user needs to know is why their drafts are waiting, and
+    they are waiting for a person.
     """
     from channels.models import SocialAccount
 
-    FeatureFlag.objects.create(
-        organization=autopilot_workspace.organization, key=COLLABORATION_V2, enabled=False
-    )
     SocialAccount.objects.all().delete()
     _auto_calendar(autopilot_config, autopilot_workspace, plans)
 
     job = autopilot.run_config(autopilot_config)
 
     assert job.status == AutopilotJobStatus.QUEUED
-    assert job.detail["reason"] == "no_connected_accounts"
+    assert job.detail["reason"] == "human_approval_required"
     assert job.detail["drafts_scheduled"] == 0
     assert AutopilotDraft.objects.get().status == AutopilotDraftStatus.PENDING
 
@@ -471,15 +481,15 @@ def test_a_draft_cannot_be_acted_on_twice(autopilot_config: Any, user: Any) -> N
     autopilot_config.cadence_days = 3
     autopilot_config.save()
     autopilot.run_config(autopilot_config)
-    draft = autopilot.reject_draft(AutopilotDraft.objects.get())
+    draft = autopilot.reject_draft(AutopilotDraft.objects.get(), actor=user)
 
     with pytest.raises(autopilot.AutopilotNotConfigurableError):
-        autopilot.reject_draft(draft)
+        autopilot.reject_draft(draft, actor=user)
     with pytest.raises(autopilot.AutopilotNotConfigurableError):
         autopilot.approve_draft(draft, actor=user)
 
 
-def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any) -> None:
+def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any, user: Any) -> None:
     """The user said no to that slot, not to that attempt — re-drafting it
     would spend the credits again on something already refused."""
     autopilot_config.cadence_days = 2
@@ -488,7 +498,7 @@ def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any) -> None
     start = timezone.now()
     with time_machine.travel(start, tick=False):
         autopilot.run_config(autopilot_config)
-    autopilot.reject_draft(AutopilotDraft.objects.order_by("scheduled_for")[0])
+    autopilot.reject_draft(AutopilotDraft.objects.order_by("scheduled_for")[0], actor=user)
     spent = CreditLedger.objects.filter(delta__lt=0).count()
 
     with time_machine.travel(start + dt.timedelta(hours=1), tick=False):

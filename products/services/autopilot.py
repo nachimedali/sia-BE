@@ -49,10 +49,9 @@ from ai.services import pipeline
 from ai.services.costing import resolve_cost
 from billing.models import UNLIMITED
 from billing.services.entitlements import Entitlements, entitlements_for
-from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import InsufficientCredits, OCCSError
 from content.models import DeliveryMode, Platform, PostSource
-from content.services.posts import create_post, update_post
+from content.services.posts import update_post
 from products.models import (
     AutopilotConfig,
     AutopilotDraft,
@@ -60,11 +59,14 @@ from products.models import (
     AutopilotDraftStatus,
     AutopilotJob,
     AutopilotJobStatus,
-    AutopilotLanding,
     AutopilotStrategy,
 )
 from products.services.guards import ensure_generation_ready
 from scheduling.services import schedule_post
+from taste.models import TasteProfile
+from taste.services import candidates as candidate_service
+from taste.services import profiles as profile_service
+from taste.services.prompting import PROMPT_TEMPLATE_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +200,13 @@ def due_configs(*, now: dt.datetime) -> list[AutopilotConfig]:
 # Generation
 # -----------------------------------------------------------------------------
 def _generate(
-    config: AutopilotConfig, *, kind: str, cost: int, brief: str, entitlements: Entitlements
+    config: AutopilotConfig,
+    *,
+    kind: str,
+    cost: int,
+    brief: str,
+    entitlements: Entitlements,
+    profile: TasteProfile | None = None,
 ) -> Generation:
     """One `mode=AUTOPILOT` generation, run through the ordinary pipeline.
 
@@ -230,6 +238,12 @@ def _generate(
         product=product,
         category=product.workspace.category,
         is_batch=True,
+        # **Provenance** (P5-15). Without the versions a shift in acceptance
+        # rate has five candidate causes and no way to separate them. Recorded
+        # at the call, not inferred later from timestamps — profiles change,
+        # and a reconstruction would be a guess dressed as a fact.
+        taste_profile_version=profile.version if profile is not None else None,
+        prompt_template_version=PROMPT_TEMPLATE_VERSION,
     )
     return pipeline.run_generation(generation, n=1)
 
@@ -255,23 +269,53 @@ def _draft_slot(
     """
     brief = "\n".join([STRATEGY_BRIEFS[strategy], _latitude_line(config.latitude)])
 
+    # `run_config` refuses without one, so this is always present — an
+    # assertion rather than a branch, because a silent `None` here would mean
+    # a draft nobody can ever approve.
+    profile = profile_service.active_profile(config.product.workspace)
+    assert profile is not None, "run_config guarantees an active taste profile"
+
     visual = _generate(
-        config, kind=GenerationKind.IMAGE, cost=image_cost, brief=brief, entitlements=entitlements
+        config,
+        kind=GenerationKind.IMAGE,
+        cost=image_cost,
+        brief=brief,
+        entitlements=entitlements,
+        profile=profile,
     )
     if visual.status != GenerationStatus.SUCCEEDED:
         return None
 
     caption = _generate(
-        config, kind=GenerationKind.TEXT, cost=text_cost, brief=brief, entitlements=entitlements
+        config,
+        kind=GenerationKind.TEXT,
+        cost=text_cost,
+        brief=brief,
+        entitlements=entitlements,
+        profile=profile,
     )
     body = ""
     if caption.status == GenerationStatus.SUCCEEDED:
         variant = caption.variants.first()
         body = variant.body if variant else ""
 
+    # **The candidate is the reviewable thing** (C-01, P5-07). The draft row
+    # keeps what is genuinely autopilot's — the slot, the strategy, the
+    # platform rotation — and the candidate is what a person says yes to. A
+    # workspace with no active taste profile produces no candidate and the
+    # draft waits, rather than being judged against nothing.
+    candidate = candidate_service.propose(
+        workspace=config.product.workspace,
+        profile=profile,
+        payload={"master_body": body},
+        product=config.product,
+        generation=visual,
+    )
+
     return AutopilotDraft.objects.create(
         product=config.product,
         generation=visual,
+        candidate=candidate,
         kind=AutopilotDraftKind.IMAGE,
         platform=platform,
         caption=body,
@@ -293,6 +337,17 @@ def run_config(config: AutopilotConfig, *, now: dt.datetime | None = None) -> Au
     except OCCSError as exc:
         job.status = AutopilotJobStatus.FAILED
         job.detail = {"reason": exc.code}
+        job.save(update_fields=["status", "detail"])
+        return job
+
+    # **No taste, no run** (C-01, P5-01). Since Phase 5 a draft is reviewed as
+    # a `ContentCandidate`, and a candidate is always judged against a profile
+    # — so a workspace that has not described its brand would get drafts it
+    # could never approve, having paid for every one of them. Refusing up front
+    # is the same shape as `ensure_generation_ready`: say why, spend nothing.
+    if profile_service.active_profile(product.workspace) is None:
+        job.status = AutopilotJobStatus.FAILED
+        job.detail = {"reason": "no_taste_profile"}
         job.save(update_fields=["status", "detail"])
         return job
 
@@ -384,68 +439,33 @@ def _finish(
     videos_deferred: int,
     blocked: str | None,
 ) -> AutopilotJob:
-    # `auto_approve` was already gated when it was written; re-checked here
-    # because a plan can be downgraded between configuring autopilot and the
-    # run that acts on it (I5's shape).
-    wants_calendar = (
-        config.auto_approve
-        and config.landing == AutopilotLanding.AUTO_CALENDAR
-        and bool(entitlements.feature("autopilot_auto_approve"))
-    )
-    to_calendar = (
-        wants_calendar
-        # **L-2, via P2-04.** Nothing reaches a calendar without a person, and
-        # this path had none: a run at 03:00 put generated content straight
-        # into the schedule. The drafts are not lost — they land in the review
-        # queue, which is where the user acts on them anyway, so what the user
-        # loses is the 03:00 part and not the work.
-        #
-        # Phase 5's C-01 retires this branch entirely, replacing `AutopilotDraft`
-        # with `ContentCandidate`. The flag is what makes the change revertible
-        # in the meantime (Part 3): off, the pre-phase behaviour returns.
-        and not flag_enabled(config.product.workspace.organization, COLLABORATION_V2)
-    )
+    # **The auto-calendar branch is gone** (C-01, P5-07).
+    #
+    # It put generated content on a calendar at 03:00 with nobody having read
+    # it. Phase 2 neutralised it behind `COLLABORATION_V2`; Phase 5 removes it,
+    # because a branch that only a flag stands between and a live account is
+    # not retired, it is waiting. `auto_approve` and `AUTO_CALENDAR` survive as
+    # *config the user set* — honoured now by landing their work in the review
+    # queue promptly rather than by skipping the review. Nothing here reaches
+    # a calendar without a person (L-2), and there is no longer a code path
+    # that could.
+    #
+    # What the user loses is the 03:00 part, not the work: the drafts are
+    # generated, paid for and waiting where they would have acted on them
+    # anyway.
     reason = blocked
-    if wants_calendar and not to_calendar and reason is None:
-        # Say so on the job rather than quietly queueing. A user who switched
+    if config.auto_approve and reason is None:
+        # Said on the job rather than quietly queued. Someone who switched
         # auto-approve on and finds their drafts waiting deserves the reason in
         # the run record, not a support ticket.
         reason = "human_approval_required"
     landed = 0
-    if to_calendar:
-        for draft in drafts:
-            try:
-                # Reachable only with `COLLABORATION_V2` off — see `to_calendar`
-                # above. In that pre-phase world no `APPROVE` row is written at
-                # all, so this names the person who switched `auto_approve` on
-                # rather than inventing a reviewer for content nobody read.
-                approve_draft(
-                    draft,
-                    actor=config.product.workspace.organization.owner,
-                    entitlements=entitlements,
-                )
-            except OCCSError as exc:
-                # Most likely no connected account yet (Phase 9's
-                # `NoConnectedAccountsError`). The drafts are generated and paid
-                # for either way, so they fall back to the review queue rather
-                # than being lost — and the rest of the run is not abandoned for
-                # a reason that would apply identically to every one of them.
-                logger.warning(
-                    "autopilot could not auto-schedule; leaving drafts for review",
-                    extra={"config_id": config.pk, "code": exc.code},
-                )
-                reason = reason or exc.code
-                break
-            landed += 1
 
     if blocked is not None:
         job.status = AutopilotJobStatus.BLOCKED_QUOTA
-    elif to_calendar and reason is None:
-        job.status = AutopilotJobStatus.GENERATED
     else:
-        # Including a failed auto-schedule: the drafts really are in the queue,
-        # so that is what the status says, with `reason` explaining why they
-        # did not go straight to the calendar.
+        # The drafts really are in the queue, so that is what the status says,
+        # with `reason` explaining why they did not go straight to a calendar.
         job.status = AutopilotJobStatus.QUEUED
 
     job.detail = {
@@ -482,6 +502,7 @@ def run_due(*, now: dt.datetime | None = None) -> int:
 # Review queue
 # -----------------------------------------------------------------------------
 @transaction.atomic
+@transaction.atomic
 def approve_draft(
     draft: AutopilotDraft, *, actor: User, entitlements: Entitlements | None = None
 ) -> AutopilotDraft:
@@ -513,14 +534,24 @@ def approve_draft(
     workspace = product.workspace
     entitlements = entitlements or entitlements_for(workspace)
 
-    variant = draft.generation.variants.first()
-    post = create_post(
-        workspace=workspace,
-        author=workspace.organization.owner,
-        master_body=draft.caption,
-        category=workspace.category,
-        media_assets=[variant.media_asset] if variant and variant.media_asset else [],
-    )
+    proposal = draft.candidate
+    if proposal is None:
+        raise AutopilotNotConfigurableError(
+            "This draft has no candidate to approve.",
+            detail={"draft": draft.pk},
+        )
+
+    # **The one door into `Post`** (C-01, P5-G3). `candidates.approve` writes
+    # the `Decision` naming `actor` and then materialises — autopilot does not
+    # construct a post itself, and `test_autopilot_cannot_reach_create_post_at_all`
+    # is what keeps that true rather than a promise in this docstring.
+    candidate = candidate_service.approve(proposal, actor=actor)
+    post = candidate.post
+    if post is None:  # pragma: no cover — `approve` materialises or raises
+        raise AutopilotNotConfigurableError(
+            "Approval produced no post.", detail={"draft": draft.pk}
+        )
+
     # Not settable through `create_post` — `PostSerializer` marks all three
     # read-only (A49) precisely so only the phase that owns them writes them.
     update_post(
@@ -530,6 +561,13 @@ def approve_draft(
         product=product,
         generation=draft.generation,
     )
+
+    # The generated visual, attached separately: `media_asset_ids` is a
+    # content field, so passing it above would revert the post to review the
+    # instant it was approved.
+    variant = draft.generation.variants.first()
+    if variant is not None and variant.media_asset is not None:
+        update_post(post, reason="autopilot", media_asset_ids=[variant.media_asset])
 
     mode = (
         DeliveryMode.AUTO_PUBLISH if entitlements.feature("auto_publish") else DeliveryMode.REMINDER
@@ -546,16 +584,30 @@ def approve_draft(
     return draft
 
 
-def reject_draft(draft: AutopilotDraft) -> AutopilotDraft:
+@transaction.atomic
+def reject_draft(
+    draft: AutopilotDraft, *, actor: User, reason_code: str = "other"
+) -> AutopilotDraft:
     """Rejection is final for that slot, not just for that attempt: the
     uniqueness constraint keeps the row, so the next run sees the slot as
     covered and does not spend the credits again on something the user has
-    already said no to."""
+    already said no to.
+
+    **The reason goes into the decision log** (P5-12). A rejection with no
+    structured code teaches nothing — it is the difference between "63% of
+    your rejections were `off_brand_voice`", which routes to a profile
+    revision, and a shrug.
+    """
     if draft.status != AutopilotDraftStatus.PENDING:
         raise AutopilotNotConfigurableError(
             "This draft has already been acted on.",
             detail={"draft": draft.pk, "status": draft.status},
         )
+
+    proposal = draft.candidate
+    if proposal is not None:
+        candidate_service.reject(proposal, actor=actor, reason_code=reason_code)
+
     draft.status = AutopilotDraftStatus.REJECTED
     draft.save(update_fields=["status", "updated_at"])
     return draft

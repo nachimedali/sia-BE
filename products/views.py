@@ -34,6 +34,7 @@ from products.models import AutopilotConfig, AutopilotDraft, AutopilotDraftStatu
 from products.serializers import (
     AutopilotConfigSerializer,
     AutopilotDraftSerializer,
+    DraftRejectRequestSerializer,
     ProductCompletenessSerializer,
     ProductReferenceImagesUploadSerializer,
     ProductSerializer,
@@ -163,10 +164,22 @@ class AutopilotApproveView(_AutopilotView):
 
 class AutopilotRejectView(_AutopilotView):
     @extend_schema(
-        request=None,
+        request=DraftRejectRequestSerializer,
         responses={200: AutopilotDraftSerializer},
         summary="Reject a draft, retiring its slot",
+        description=(
+            "`reason_code` comes from the fixed vocabulary (P5-12) and lands "
+            "in the decision log. Structured codes are what make rejections "
+            'aggregable — *"63% of your rejections were off_brand_voice"* '
+            "routes to a profile revision, and free text routes nowhere."
+        ),
     )
     def post(self, request: Request, pk: int) -> Response:
-        draft = autopilot_service.reject_draft(self.draft(request, pk))
+        payload = DraftRejectRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        draft = autopilot_service.reject_draft(
+            self.draft(request, pk),
+            actor=authenticated_user(request),
+            reason_code=payload.validated_data["reason_code"],
+        )
         return Response(AutopilotDraftSerializer(draft).data)
