@@ -47,6 +47,13 @@ CONTENT_MODEL_V2 = "content_model_v2"
 #: the flag either way, because that behaviour predates this phase.
 COLLABORATION_V2 = "collaboration_v2"
 
+#: Phase 3 — documents, campaigns, labels, saved views, timetables and bulk
+#: operations. Off restores pre-phase behaviour: the planning surfaces answer
+#: 404 rather than erroring, and a post is a social post as it always was —
+#: `content_kind` defaults to `SOCIAL`, so nothing already stored changes
+#: meaning when the flag moves in either direction.
+PLANNING_V3 = "planning_v3"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
@@ -54,6 +61,7 @@ COLLABORATION_V2 = "collaboration_v2"
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
+    PLANNING_V3: True,
 }
 
 

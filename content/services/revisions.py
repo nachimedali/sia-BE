@@ -78,6 +78,10 @@ def snapshot_of(post: Post) -> dict[str, Any]:
     ]
     return {
         "master_body": post.master_body,
+        # Found in review: a DOC's content lives here, not in `master_body`
+        # (P3-02), and this key was missing — so editing a document produced
+        # zero revisions, silently, since nothing else on a DOC ever changes.
+        "doc_body": post.doc_body,
         "media": [
             {
                 "media_asset": attachment.media_asset_id,
@@ -224,7 +228,12 @@ def restore(post: Post, *, sequence: int, author: User | None = None) -> Post:
 
     with transaction.atomic():
         post.master_body = state["master_body"]
-        post.save(update_fields=["master_body", "updated_at"])
+        # `.get(..., [])`, not `state["doc_body"]`: a revision written before
+        # this field existed has no such key, and this codebase has never
+        # deployed, so that case is theoretical — but a restore is exactly the
+        # wrong place to let a theoretical case become a `KeyError`.
+        post.doc_body = state.get("doc_body", [])
+        post.save(update_fields=["master_body", "doc_body", "updated_at"])
 
         PostMediaAttachment.objects.filter(post=post).delete()
         PostMediaAttachment.objects.bulk_create(

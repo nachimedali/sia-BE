@@ -13,10 +13,10 @@ price OCCS charges, so a constants module is the right home for it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from content.models import MediaKind, Platform
+from content.models import MediaKind, Platform, PostFormat
 
 # --- shared option definitions ----------------------------------------------
 #
@@ -62,6 +62,12 @@ class Option:
     #: forced to carry a field its kind has no use for.
     choices: tuple[str, ...] = ()
     max_length: int | None = None
+    #: `remote_choice` only. Names the list the composer fetches instead of
+    #: drawing a text box — a Pinterest board id typed by hand is a rejected
+    #: pin. Validation stays **offline**: the value is checked as a string
+    #: here, because a validator that made a network call would fail a save
+    #: whenever the provider was slow.
+    source: str = ""
     #: What an absent key means. Never `None` for a `bool` — a tri-state
     #: boolean is how "unset" and "false" start being confused.
     default: Any = None
@@ -69,23 +75,65 @@ class Option:
 
 
 @dataclass(frozen=True)
-class PlatformRule:
-    char_limit: int
+class FormatRule:
+    """What one `(platform, format)` pair permits (P4-05).
+
+    **The media constraints live here, not on the platform.** A platform-level
+    cap cannot say the thing that is actually true — a LinkedIn feed post takes
+    nine images and its document carousel takes one PDF — so a single number
+    forces every format to share the loosest of them, and the composer accepts
+    a post the provider will reject at publish time, on the one path nobody is
+    watching.
+    """
+
     max_media: int
     allowed_media_kinds: frozenset[str]
+    #: `None` means "inherit the platform's limit", not "no limit". A format
+    #: that does not narrow the caption says nothing rather than repeating a
+    #: number that would then have two places to be wrong.
+    char_limit: int | None = None
+    #: Formats that cannot exist without media — a reel with no video is not a
+    #: reel. `0` is the honest default: a plain feed post is text alone.
+    min_media: int = 0
+
+
+@dataclass(frozen=True)
+class PlatformRule:
+    char_limit: int
     hashtag_placement: str  # "inline" | "trailing_block"
     supports_thread: bool
+    #: `{format: FormatRule}` (P4-04). Non-empty, and always carrying `FEED` —
+    #: the format a post has when nobody chose one. Asserted by
+    #: `test_formats.py`, because a platform whose default is missing would
+    #: make every target need an explicit choice the composer has no reason to
+    #: ask for.
+    formats: dict[str, FormatRule] = field(default_factory=dict)
     #: Per-platform composer fields (P1-11). Empty is the honest default: a
     #: platform with nothing to configure declares nothing, rather than
     #: inheriting a union of every other platform's options.
     options: tuple[Option, ...] = ()
 
 
+#: The media-kind sets, named once. The table below is meant to be *read* —
+#: `frozenset({MediaKind.IMAGE, MediaKind.VIDEO})` repeated nine times is noise
+#: that hides the one row where it differs.
+STILLS = frozenset({MediaKind.IMAGE})
+MOTION = frozenset({MediaKind.VIDEO})
+VISUAL = frozenset({MediaKind.IMAGE, MediaKind.VIDEO})
+DOCS = frozenset({MediaKind.DOCUMENT})
+
+
 PLATFORM_RULES: dict[str, PlatformRule] = {
     Platform.INSTAGRAM: PlatformRule(
         char_limit=2200,
-        max_media=10,
-        allowed_media_kinds=frozenset({MediaKind.IMAGE, MediaKind.VIDEO}),
+        formats={
+            PostFormat.FEED: FormatRule(max_media=10, allowed_media_kinds=VISUAL),
+            PostFormat.CAROUSEL: FormatRule(max_media=10, allowed_media_kinds=VISUAL, min_media=2),
+            # One video, and it must be there — a reel with no video is not a
+            # reel, which is what `min_media` exists to say.
+            PostFormat.REEL: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+            PostFormat.STORY: FormatRule(max_media=1, allowed_media_kinds=VISUAL, min_media=1),
+        },
         hashtag_placement="trailing_block",
         supports_thread=False,
         options=(
@@ -98,8 +146,14 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     ),
     Platform.LINKEDIN: PlatformRule(
         char_limit=3000,
-        max_media=9,
-        allowed_media_kinds=frozenset({MediaKind.IMAGE, MediaKind.VIDEO}),
+        formats={
+            PostFormat.FEED: FormatRule(max_media=9, allowed_media_kinds=VISUAL),
+            PostFormat.CAROUSEL: FormatRule(max_media=9, allowed_media_kinds=STILLS, min_media=2),
+            # The document post. One file, and `DOCUMENT` is its own kind
+            # rather than an image: a PDF that validated as an image would be
+            # rejected by the provider after passing every check here.
+            PostFormat.PDF_CAROUSEL: FormatRule(max_media=1, allowed_media_kinds=DOCS, min_media=1),
+        },
         hashtag_placement="inline",
         supports_thread=False,
         options=(
@@ -119,8 +173,9 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     ),
     Platform.TIKTOK: PlatformRule(
         char_limit=2200,
-        max_media=1,
-        allowed_media_kinds=frozenset({MediaKind.VIDEO}),
+        formats={
+            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+        },
         hashtag_placement="inline",
         supports_thread=False,
         options=(
@@ -130,8 +185,10 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     ),
     Platform.YOUTUBE: PlatformRule(
         char_limit=5000,
-        max_media=1,
-        allowed_media_kinds=frozenset({MediaKind.VIDEO}),
+        formats={
+            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+            PostFormat.SHORT: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+        },
         hashtag_placement="inline",
         supports_thread=False,
         options=(
@@ -148,15 +205,19 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     ),
     Platform.THREADS: PlatformRule(
         char_limit=500,
-        max_media=10,
-        allowed_media_kinds=frozenset({MediaKind.IMAGE, MediaKind.VIDEO}),
+        formats={
+            PostFormat.FEED: FormatRule(max_media=10, allowed_media_kinds=VISUAL),
+        },
         hashtag_placement="inline",
         supports_thread=True,
     ),
     Platform.FACEBOOK: PlatformRule(
         char_limit=5000,
-        max_media=10,
-        allowed_media_kinds=frozenset({MediaKind.IMAGE, MediaKind.VIDEO}),
+        formats={
+            PostFormat.FEED: FormatRule(max_media=10, allowed_media_kinds=VISUAL),
+            PostFormat.STORY: FormatRule(max_media=1, allowed_media_kinds=VISUAL, min_media=1),
+            PostFormat.REEL: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+        },
         hashtag_placement="inline",
         supports_thread=False,
         options=(
@@ -167,6 +228,88 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
             Option("targeting_interests", "list[str]", "Restrict to interests"),
             Option("targeting_locales", "list[str]", "Restrict to languages"),
             Option("tagged_page_ids", "list[str]", "Tag Pages in this post"),
+        ),
+    ),
+    # --- Phase 4 (P4-01, P4-02, P4-03) -------------------------------------
+    #
+    # Three platforms, three rows. Nothing below this file changed to add
+    # them except the adapter's provider-field map, which is itself a table —
+    # `tests/test_phase4_gates.py` is what holds that claim to account.
+    Platform.X: PlatformRule(
+        char_limit=280,
+        formats={
+            PostFormat.FEED: FormatRule(max_media=4, allowed_media_kinds=VISUAL),
+        },
+        hashtag_placement="inline",
+        # Threading comes from this flag alone — the `(n/m)` splitter built for
+        # Threads (P4-01) is reached by declaring `True`, not by adding a
+        # branch for X.
+        supports_thread=True,
+        options=(
+            Option(
+                "reply_settings",
+                "choice",
+                "Who can reply",
+                choices=("everyone", "following", "mentioned"),
+                default="everyone",
+            ),
+        ),
+    ),
+    Platform.PINTEREST: PlatformRule(
+        char_limit=500,
+        formats={
+            # A pin with no image is not a pin: on Pinterest the media *is*
+            # the post and the text is its caption, which is what `min_media`
+            # says here and could not be said at platform level at all.
+            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=VISUAL, min_media=1),
+        },
+        hashtag_placement="inline",
+        supports_thread=False,
+        options=(
+            Option(
+                "board_id",
+                "remote_choice",
+                "Board",
+                source="pinterest_boards",
+                required=True,
+            ),
+            Option("title", "str", "Pin title", max_length=100),
+            Option("destination_link", "url", "Where the pin links to"),
+        ),
+    ),
+    Platform.GOOGLE_BUSINESS: PlatformRule(
+        char_limit=1500,
+        formats={
+            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=VISUAL),
+        },
+        hashtag_placement="inline",
+        supports_thread=False,
+        # **The deliberate stress test** (P4-03). Offers and events are post
+        # *types*, not formats: `PostFormat` describes shape — feed, story,
+        # reel — and an offer is a feed post carrying extra fields, so bending
+        # the format enum around it would hand every other platform two values
+        # it can never use.
+        options=(
+            Option(
+                "post_type",
+                "choice",
+                "Post type",
+                choices=("STANDARD", "OFFER", "EVENT"),
+                default="STANDARD",
+            ),
+            Option(
+                "cta_type",
+                "choice",
+                "Button",
+                choices=("BOOK", "ORDER", "SHOP", "LEARN_MORE", "SIGN_UP", "CALL"),
+            ),
+            Option("cta_url", "url", "Where the button goes"),
+            Option("event_title", "str", "Event title", max_length=58),
+            Option("event_start", "str", "Event starts (ISO 8601)"),
+            Option("event_end", "str", "Event ends (ISO 8601)"),
+            Option("offer_coupon_code", "str", "Coupon code", max_length=58),
+            Option("offer_redeem_url", "url", "Where to redeem"),
+            Option("offer_terms", "str", "Terms and conditions", max_length=5000),
         ),
     ),
 }
@@ -181,3 +324,26 @@ def options_for(platform: str) -> dict[str, Option]:
     """
     rule = PLATFORM_RULES.get(platform)
     return {option.key: option for option in rule.options} if rule else {}
+
+
+def formats_for(platform: str) -> dict[str, FormatRule]:
+    """This platform's declared formats, by name.
+
+    Empty for an unknown platform rather than raising — the same reasoning
+    `options_for` follows: an unknown platform is already refused upstream,
+    and exploding here turns a bad request into a 500.
+    """
+    rule = PLATFORM_RULES.get(platform)
+    return dict(rule.formats) if rule else {}
+
+
+def format_rule(platform: str, post_format: str) -> FormatRule | None:
+    """The constraints for one `(platform, format)` pair, or `None` if this
+    platform does not declare that format.
+
+    `None` rather than a fallback to `FEED`: silently substituting a format
+    the caller did not ask for is how a composer ends up offering Instagram a
+    YouTube Short. The two callers that must not crash — the renderer and the
+    served declarations — handle the `None` explicitly and visibly.
+    """
+    return formats_for(platform).get(post_format)

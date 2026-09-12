@@ -151,8 +151,20 @@ def test_the_declarations_are_served_to_the_frontend(
     for platform, rule in PLATFORM_RULES.items():
         row = served[platform]
         assert row["char_limit"] == rule.char_limit
-        assert row["max_media"] == rule.max_media
         assert [option["key"] for option in row["options"]] == [o.key for o in rule.options]
+
+        # Per-format since P4-05. The platform-level cap is gone, and a test
+        # still asserting one would be asserting the loosest of the formats'
+        # numbers — the one value that is never right for any of them.
+        served_formats = {entry["format"]: entry for entry in row["formats"]}
+        assert set(served_formats) == set(rule.formats)
+        for name, spec in rule.formats.items():
+            assert served_formats[name]["max_media"] == spec.max_media
+            assert served_formats[name]["min_media"] == spec.min_media
+            assert served_formats[name]["allowed_media_kinds"] == sorted(spec.allowed_media_kinds)
+            # Served resolved, never null: the composer needs the number that
+            # applies, not a fallback rule it would have to reimplement.
+            assert served_formats[name]["char_limit"] == (spec.char_limit or rule.char_limit)
 
 
 @pytest.mark.django_db
@@ -165,3 +177,30 @@ def test_a_served_choice_option_carries_its_choices(auth_client: object, workspa
 
     assert visibility["choices"] == ["PUBLIC", "CONNECTIONS"]
     assert visibility["default"] == "PUBLIC"
+
+
+def test_a_remote_choice_option_is_served_with_its_source(
+    auth_client: object, workspace: object
+) -> None:
+    """Without `source` the composer cannot know which list to fetch, and a
+    Pinterest board would render as a text box that rejects whatever is typed
+    into it (P4-02)."""
+    body = auth_client.get("/api/v1/platform-rules/").json()  # type: ignore[attr-defined]
+    pinterest = next(row for row in body["platforms"] if row["platform"] == "pinterest")
+    board = next(option for option in pinterest["options"] if option["key"] == "board_id")
+
+    assert board["kind"] == "remote_choice"
+    assert board["source"] == "pinterest_boards"
+
+
+def test_every_other_kind_is_served_with_an_empty_source(
+    auth_client: object, workspace: object
+) -> None:
+    # Always present, never null: a client that had to branch on absence would
+    # be one refactor away from branching on platform instead.
+    body = auth_client.get("/api/v1/platform-rules/").json()  # type: ignore[attr-defined]
+    for row in body["platforms"]:
+        for option in row["options"]:
+            assert "source" in option
+            if option["kind"] != "remote_choice":
+                assert option["source"] == ""

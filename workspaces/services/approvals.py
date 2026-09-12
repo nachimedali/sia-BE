@@ -43,9 +43,11 @@ reviewers".
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
@@ -153,6 +155,41 @@ def default_chain(workspace: Workspace) -> ApprovalChain:
     return chain
 
 
+@transaction.atomic
+def append_stage(
+    chain: ApprovalChain, *, required_approvers: Sequence[Any] = (), **fields: Any
+) -> ApprovalStage:
+    """Adds a stage to the end of the chain, order and all.
+
+    **Locked on the chain row** (found in review): a plain `aggregate(Max(
+    "order"))` read followed by a separate `create()` let two concurrent
+    appends compute the same next `order`, and the second `create()` hit
+    `unique_approval_stage_order` as a raw, uncaught `IntegrityError` —
+    `common.exceptions`'s handler does not special-case it, so it fell through
+    to a bare 500 instead of either succeeding in turn or failing with a
+    proper error. `select_for_update` serialises the two requests exactly the
+    way `content.services.revisions.record` already serialises two concurrent
+    saves of the same post on its `sequence` number — the same shape, the same
+    reason.
+
+    The depth check moves inside the lock too: checking it before acquiring
+    the lock would leave a window where two concurrent appends both read the
+    same count and both pass, landing one stage over the plan's ceiling.
+    """
+    from billing.services.entitlements import entitlements_for
+
+    ApprovalChain.objects.select_for_update().get(pk=chain.pk)
+    entitlements_for(chain.workspace).require_chain_depth(chain.stages.count())
+
+    stage = ApprovalStage.objects.create(
+        chain=chain,
+        order=(chain.stages.aggregate(Max("order"))["order__max"] or 0) + 1,
+        **fields,
+    )
+    stage.required_approvers.set(required_approvers)
+    return stage
+
+
 def first_stage(chain: ApprovalChain) -> ApprovalStage | None:
     return chain.stages.order_by("order").first()
 
@@ -196,6 +233,7 @@ def _record(
     note: str = "",
     stage: ApprovalStage | None = None,
     guest_link: Any = None,
+    required_permission: str = "",
 ) -> ApprovalAction:
     row = ApprovalAction.objects.create(
         post=post,
@@ -204,6 +242,7 @@ def _record(
         action=action,
         stage=stage,
         note=note,
+        required_permission=required_permission,
     )
     log(
         workspace=post.workspace,
@@ -318,11 +357,24 @@ def approve(
     if current is None:
         # A non-blocking chain, or a blocking one with no stages configured.
         # One approval finishes it.
-        _record(post, action=ApprovalActionType.APPROVE, actor=actor, note=note)
+        _record(
+            post,
+            action=ApprovalActionType.APPROVE,
+            actor=actor,
+            note=note,
+            required_permission=Permission.APPROVE,
+        )
         return _finalise_approval(post, scheduler=actor)
 
     _check_stage_authority(post, current, actor)
-    _record(post, action=ApprovalActionType.APPROVE, actor=actor, note=note, stage=current)
+    _record(
+        post,
+        action=ApprovalActionType.APPROVE,
+        actor=actor,
+        note=note,
+        stage=current,
+        required_permission=Permission.APPROVE,
+    )
     return _advance(post, stage=current, scheduler=actor)
 
 
@@ -413,7 +465,22 @@ def _finalise_approval(post: Post, *, scheduler: User | None) -> Post:
         post, event_key=EventKey.POST_APPROVED, actor=scheduler, recipients=[post.author]
     )
 
-    if scheduler is not None and post.proposed_delivery_mode and post.proposed_scheduled_at:
+    if (
+        scheduler is not None
+        and post.proposed_delivery_mode
+        and post.proposed_scheduled_at
+        # **Not silently scheduled once it has gone stale** (found in review).
+        # A multi-stage chain can sit `PENDING_REVIEW` for days; `schedule_
+        # post` only ever bounded the proposed time from above
+        # (`require_scheduling_horizon`), never checked it was still in the
+        # future, so a slow chain could clear onto a moment already past —
+        # which the beat scan then treats as due immediately, publishing (or
+        # reminding) at an instant nobody chose. Left on the post rather than
+        # cleared, the same shape `scheduler is None` already uses for "not
+        # scheduled yet, and that is deliberate": the approval itself is still
+        # legitimate, but the proposal needs a human to pick a new time.
+        and post.proposed_scheduled_at > timezone.now()
+    ):
         mode, when = post.proposed_delivery_mode, post.proposed_scheduled_at
         post.proposed_delivery_mode = ""
         post.proposed_scheduled_at = None
@@ -480,6 +547,7 @@ def approve_implicitly(post: Post, *, actor: User) -> Post:
         action=ApprovalActionType.APPROVE,
         actor=actor,
         note="approved at schedule (open chain)",
+        required_permission=Permission.PUBLISH,
     )
     post.status = PostStatus.APPROVED
     post.save(update_fields=["status", "updated_at"])
@@ -568,7 +636,14 @@ def ensure_approval_still_valid(post: Post) -> None:
     if latest is None or latest.actor is None:
         return
 
-    required = (
+    # Fixed at the moment the approval was recorded (found in review: this
+    # used to be recomputed from the chain's *current* `blocks_publish`, so an
+    # admin toggling that setting after the fact silently changed which
+    # authority a past approval is judged against). A blank value only reaches
+    # here for a row written before this field existed — this codebase has
+    # never deployed, so that is a theoretical case, not a live one, and the
+    # old recompute is the correct fallback for it rather than a crash.
+    required = latest.required_permission or (
         Permission.APPROVE if default_chain(post.workspace).blocks_publish else Permission.PUBLISH
     )
     if required not in member_permissions(latest.actor, post.workspace):

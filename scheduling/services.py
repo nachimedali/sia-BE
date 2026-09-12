@@ -28,7 +28,7 @@ from billing.services import trial
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import StateConflict
-from content.models import DeliveryMode, Post, PostStatus
+from content.models import ContentKind, DeliveryMode, Post, PostStatus
 from reminders.services import arm_reminder
 from scheduling.publishing import build_targets
 from workspaces.services import approvals
@@ -71,6 +71,16 @@ def schedule_post(
     keyword with no default makes the omission a `TypeError` at the call site
     rather than a null in the audit trail.
     """
+    # **A DOC has nowhere to go** (P3-01). It carries no targets and no
+    # adaptation, so a scheduled one would sit in the beat scan forever, or —
+    # worse — build zero targets and report success. 409 rather than 400: the
+    # request is well-formed, it is this post that cannot be in this state.
+    if post.content_kind == ContentKind.DOC:
+        raise StateConflict(
+            "A document is published by hand, not scheduled.",
+            detail={"content_kind": post.content_kind},
+        )
+
     entitlements = entitlements_for(post.workspace)
     entitlements.require_scheduling_horizon(scheduled_at)
 

@@ -72,6 +72,13 @@ from content.views import (
 )
 from notifications.views import NotificationListView, NotificationPreferenceView
 from onboarding.views import OnboardingCompleteView, OnboardingView
+from planning.views import (
+    BulkOperationViewSet,
+    CampaignViewSet,
+    LabelViewSet,
+    SavedViewViewSet,
+    TimetableViewSet,
+)
 from products.views import (
     AutopilotApproveView,
     AutopilotQueueView,
@@ -106,6 +113,11 @@ router.register("media", MediaAssetViewSet, basename="media-asset")
 router.register("post-templates", PostTemplateViewSet, basename="post-template")
 router.register("recurrence-rules", RecurrenceRuleViewSet, basename="recurrence-rule")
 router.register("threads", ThreadViewSet, basename="thread")
+router.register("campaigns", CampaignViewSet, basename="campaign")
+router.register("labels", LabelViewSet, basename="label")
+router.register("saved-views", SavedViewViewSet, basename="saved-view")
+router.register("timetables", TimetableViewSet, basename="timetable")
+router.register("bulk-operations", BulkOperationViewSet, basename="bulk-operation")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")

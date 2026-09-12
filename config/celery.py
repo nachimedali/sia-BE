@@ -75,6 +75,10 @@ app.conf.task_routes = {
     # is waiting on them, and they must never delay a scheduled publish.
     "billing.tasks.*": {"queue": "metrics_q"},
     "notifications.tasks.*": {"queue": "notify_q"},
+    # Bulk items are ordinary content edits at volume, and a batch of 500 must
+    # never be able to delay a scheduled publish — so they share `media_q`'s
+    # bookkeeping posture rather than sitting anywhere near `publish_q`.
+    "planning.tasks.*": {"queue": "media_q"},
 }
 
 app.autodiscover_tasks()

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Count, Max
+from django.db.models import Count
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
@@ -32,7 +32,6 @@ from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
 from workspaces.models import (
     ApiKey,
-    ApprovalStage,
     AuditLog,
     Membership,
     Organization,
@@ -162,15 +161,11 @@ class ApprovalChainStageView(APIView):
         payload = ApprovalStageSerializer(data=request.data, context={"request": request})
         payload.is_valid(raise_exception=True)
 
-        entitlements_for(workspace).require_chain_depth(chain.stages.count())
-
         approvers = payload.validated_data.pop("required_approvers", [])
-        stage = ApprovalStage.objects.create(
-            chain=chain,
-            order=(chain.stages.aggregate(Max("order"))["order__max"] or 0) + 1,
-            **payload.validated_data,
-        )
-        stage.required_approvers.set(approvers)
+        # Locked and depth-checked together, inside `append_stage` (found in
+        # review: the old unlocked read-then-create here could race two
+        # concurrent appends onto the same `order` and crash with a raw 500).
+        approvals.append_stage(chain, required_approvers=approvers, **payload.validated_data)
         return Response(
             ApprovalChainSerializer(chain, context={"request": request}).data,
             status=status.HTTP_201_CREATED,

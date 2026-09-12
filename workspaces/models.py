@@ -740,6 +740,20 @@ class ApprovalAction(AppendOnly):
     )
     note = models.TextField(blank=True)
 
+    #: Which `Permission` this **specific** `APPROVE` row actually required and
+    #: used, fixed at the moment it was written — null on every other action
+    #: type and on a grandfathered/guest row, where there is no actor whose
+    #: authority type matters. Found missing in review: without this,
+    #: `ensure_approval_still_valid` had to *recompute* what should have been
+    #: required by reading the chain's **current** `blocks_publish`, so an
+    #: admin toggling that setting after the fact silently changed which
+    #: permission a past approval is judged against — retroactively
+    #: invalidating a legitimate approval, or failing to catch a real one,
+    #: neither of which is what re-checking an approver's authority means.
+    #: Blank, not null — the same convention `delivery_mode` uses, so a `CharField`
+    #: has exactly one "not set" value rather than two ambiguous ones.
+    required_permission = models.CharField(max_length=16, choices=Permission.choices, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

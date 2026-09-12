@@ -42,6 +42,18 @@ from common.exceptions import ProviderError
 #: the contract test asserts they agree about which flow a platform takes.
 SELECTION_PLATFORMS = frozenset({"facebook", "linkedin"})
 
+#: Provider-backed option lists, by the `source` a `rules.py` `remote_choice`
+#: option names (P4-02). Declared here rather than accepted as a free string
+#: from the caller: an endpoint that forwarded any source to the vendor would
+#: be a proxy for every call the vendor exposes.
+#:
+#: `platform` is part of the row because a source belongs to one platform — a
+#: Pinterest board list requested for an Instagram account is a bug worth a
+#: 400, not an empty list that looks like "no boards yet".
+REMOTE_OPTION_SOURCES: dict[str, str] = {
+    "pinterest_boards": "pinterest",
+}
+
 
 class PlatformError(ProviderError):
     default_code = "platform_error"
@@ -156,6 +168,22 @@ class PlatformAdapter(Protocol):
     ) -> PublishResult: ...
 
     def disconnect(self, *, provider_account_id: str) -> None: ...
+
+    def list_remote_options(
+        self, *, platform: str, provider_account_id: str, source: str
+    ) -> list[dict[str, Any]]:
+        """Reference data only the provider knows — a Pinterest board list.
+
+        Returns `[{"id", "name"}]`, empty for a source this adapter does not
+        serve. Empty rather than raising: an unrecognised source is a composer
+        bug, and a form that renders an empty select is recoverable where a
+        500 is not.
+
+        **Read-only, and outside the publish path.** It answers the composer
+        while someone is typing, so it must never be on the path that sends a
+        post.
+        """
+        ...
 
 
 def echo_targets(params: dict[str, Any], targets: list[ConnectTarget]) -> dict[str, Any]:

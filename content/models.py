@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from common.records import AppendOnly
@@ -36,6 +37,13 @@ class Platform(models.TextChoices):
     YOUTUBE = "youtube", "YouTube"
     THREADS = "threads", "Threads"
     FACEBOOK = "facebook", "Facebook"
+    # --- Phase 4 (P4-01, P4-02, P4-03) ---
+    #: `"x"`, not `"twitter"`. The value is what the provider and every stored
+    #: `PostTarget` carry, so it is chosen once and never renamed — the display
+    #: label is where a rebrand belongs.
+    X = "x", "X"
+    PINTEREST = "pinterest", "Pinterest"
+    GOOGLE_BUSINESS = "google_business", "Google Business Profile"
 
 
 class PostStatus(models.TextChoices):
@@ -61,6 +69,43 @@ class DeliveryMode(models.TextChoices):
     AUTO_PUBLISH = "AUTO_PUBLISH", "Auto-publish"
 
 
+class PostFormat(models.TextChoices):
+    """What shape a post takes on one platform (P4-04).
+
+    Declared in full, gated per platform by `rules.py`'s `formats` table — the
+    same shape `PostStatus` and `GenerationMode` already use. A platform does
+    not get a format because the enum has one; it gets it by declaring a row,
+    and `PostTarget.clean` refuses the rest.
+
+    `SHORT` and `REEL` are **not** aliases. They are two platforms' names for
+    a similar idea with different constraints and different provider fields,
+    and collapsing them would mean the composer offering YouTube a format
+    YouTube has never heard of.
+    """
+
+    FEED = "FEED", "Feed post"
+    STORY = "STORY", "Story"
+    REEL = "REEL", "Reel"
+    SHORT = "SHORT", "Short"
+    CAROUSEL = "CAROUSEL", "Carousel"
+    PDF_CAROUSEL = "PDF_CAROUSEL", "Document carousel"
+
+
+class ContentKind(models.TextChoices):
+    """What a `Post` *is* (P3-01).
+
+    **A subtype, not a sibling model.** A sibling would duplicate seven
+    subsystems to avoid one column — approval chains, threads, revisions,
+    labels, campaign membership, permissions and quota counting — and the
+    calendar alone settles it: every view, filter, bulk action and saved view
+    would have to merge two querysets forever, and each new one would have to
+    remember to.
+    """
+
+    SOCIAL = "SOCIAL", "Social post"
+    DOC = "DOC", "Document"
+
+
 class PostSource(models.TextChoices):
     MANUAL = "MANUAL", "Manual"
     AI = "AI", "AI"
@@ -81,7 +126,16 @@ class Post(models.Model):
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="authored_posts"
     )
+    content_kind = models.CharField(
+        max_length=8, choices=ContentKind.choices, default=ContentKind.SOCIAL
+    )
     master_body = models.TextField(blank=True)
+    #: A `DOC`'s rich text, as the structured block list `content.services.blocks`
+    #: declares — **never HTML** (P3-02). Kept out of `master_body` rather than
+    #: overloading it: two formats in one column would make every reader of that
+    #: field — the renderer, the digest, search — parse before it could trust,
+    #: and the first one to forget would render a JSON array to a customer.
+    doc_body = models.JSONField(default=list, blank=True)
     media_assets = models.ManyToManyField(
         "content.MediaAsset", through="PostMediaAttachment", related_name="posts", blank=True
     )
@@ -281,6 +335,11 @@ class PostMediaAttachment(models.Model):
 class MediaKind(models.TextChoices):
     IMAGE = "IMAGE", "Image"
     VIDEO = "VIDEO", "Video"
+    #: A PDF, for LinkedIn's document carousel (P4-04). Its own kind rather
+    #: than an image: a PDF that validated as an image would pass every check
+    #: here and be rejected by the provider, which is the failure mode moving
+    #: constraints to `(platform, format)` exists to prevent.
+    DOCUMENT = "DOCUMENT", "Document"
 
 
 class MediaSource(models.TextChoices):
@@ -378,6 +437,13 @@ class PostTarget(models.Model):
 
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="targets")
     platform = models.CharField(max_length=16, choices=Platform.choices)
+    #: What shape this target takes on its platform (P4-04). Validated against
+    #: the `(platform, format)` rules row in `clean()` — the enum says what
+    #: exists, the table says what *this* platform offers, and only the second
+    #: is the truth a provider will honour.
+    post_format = models.CharField(
+        max_length=16, choices=PostFormat.choices, default=PostFormat.FEED
+    )
     social_account = models.ForeignKey(
         "channels.SocialAccount",
         null=True,
@@ -446,6 +512,31 @@ class PostTarget(models.Model):
     def __str__(self) -> str:
         return f"{self.post_id} -> {self.platform} ({self.state})"
 
+    def clean(self) -> None:
+        """The format has to be one this platform actually declares (P4-04).
+
+        Refused **here, at the write**, not in the renderer: a target carrying
+        an impossible format is a bad row, and the place to say so is where it
+        is created, while someone can still choose another. The renderer's job
+        by then is to draw something, so it falls back to `FEED` with a warning
+        rather than turning a preview into a 500.
+
+        Imported inside the method: `rules.py` reads `content.models` for its
+        enums, so a module-level import here would be a cycle.
+        """
+        from content.services.rules import formats_for
+
+        supported = formats_for(self.platform)
+        if supported and self.post_format not in supported:
+            raise ValidationError(
+                {
+                    "post_format": (
+                        f"{self.platform} does not offer the {self.post_format} format. "
+                        f"Available: {', '.join(sorted(supported))}."
+                    )
+                }
+            )
+
 
 class PostRevision(AppendOnly):
     """One version of a post's content (P1-08).
@@ -507,18 +598,13 @@ class PostRevision(AppendOnly):
         return f"{self.post_id} v{self.sequence}"
 
 
-class TemplateKind(models.TextChoices):
-    """Declared in full, gated to what is reachable — the same shape
-    `PostStatus` and `GenerationMode` already use.
-
-    `DOC` is Phase 3's (`Post.content_kind`). The enum lands now so a template
-    saved in Phase 1 does not need migrating when Phase 3 arrives;
-    `content.services.templates.CREATABLE_KINDS` is what refuses it in the
-    meantime.
-    """
-
-    SOCIAL = "SOCIAL", "Social"
-    DOC = "DOC", "Document"
+#: Phase 1 declared this separately as `TemplateKind`, anticipating
+#: `Post.content_kind` and saying so in its own docstring. Phase 3 brought that
+#: column, and two enums over the identical value set is the drift P1-16
+#: refused for `rules.py` — so the template field now reads the one
+#: declaration, and the name survives as an alias for the call sites that
+#: describe a *template's* kind rather than a post's.
+TemplateKind = ContentKind
 
 
 class PostTemplate(models.Model):

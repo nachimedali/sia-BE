@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from channels.adapters.base import (
+    REMOTE_OPTION_SOURCES,
     SELECTION_PLATFORMS,
     ConnectedAccount,
     ConnectResolution,
@@ -115,6 +116,23 @@ class FakePlatformAdapter:
         )
         self._by_key[idempotency_key] = result
         return result
+
+    def list_remote_options(
+        self, *, platform: str, provider_account_id: str, source: str
+    ) -> list[dict[str, Any]]:
+        """Deterministic boards, derived from the account id (P4-02).
+
+        Derived rather than a fixed list so two accounts do not answer
+        identically — a composer that showed the same boards for every
+        connection would pass a test built on a constant and fail the moment
+        anyone looked at it.
+        """
+        if source not in REMOTE_OPTION_SOURCES:
+            return []
+        return [
+            {"id": f"{provider_account_id}-board-{index}", "name": name}
+            for index, name in enumerate(("Ideas", "Products", "Seasonal"), start=1)
+        ]
 
     # --- analytics (Phase 11) --------------------------------------------
     def disconnect(self, *, provider_account_id: str) -> None:

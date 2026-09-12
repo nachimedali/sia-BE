@@ -132,6 +132,8 @@ class PostSerializer(serializers.ModelSerializer[Post]):
         model = Post
         fields: ClassVar[tuple[str, ...]] = (
             "id",
+            "content_kind",
+            "doc_body",
             "master_body",
             "media",
             "media_asset_ids",
@@ -288,6 +290,11 @@ class AdaptedMediaSerializer(serializers.Serializer[Any]):
 
 class AdaptedPayloadSerializer(serializers.Serializer[Any]):
     platform = serializers.CharField()
+    #: The shape this was rendered as (P4-04). Served rather than left for the
+    #: reader to infer: the caps that produced this media list came from the
+    #: `(platform, format)` row, so a client re-deriving it could disagree
+    #: with what was actually applied.
+    post_format = serializers.CharField()
     body = serializers.CharField()
     thread = serializers.ListField(child=serializers.CharField())
     hashtags = serializers.ListField(child=serializers.CharField())
@@ -416,29 +423,55 @@ class TrimRequestSerializer(serializers.Serializer[Any]):
 class PlatformOptionSerializer(serializers.Serializer[Any]):
     """One declared composer field, as `rules.py` states it.
 
-    `label` and `required` shadow attributes of `rest_framework.fields.Field`.
-    Harmless at runtime — DRF's metaclass moves declared fields off the class
-    into `_declared_fields` before an instance exists — but mypy sees the class
-    body, so the two assignments are annotated. Renaming them is not an option:
-    these are the keys the composer reads, and a wire format bent around a type
-    checker is a wire format nobody can guess.
+    `label`, `required` and `source` shadow attributes of
+    `rest_framework.fields.Field`. Harmless at runtime — DRF's metaclass moves
+    declared fields off the class into `_declared_fields` before an instance
+    exists — but mypy sees the class body, so the assignments are annotated.
+    Renaming them is not an option: these are the keys the composer reads, and
+    a wire format bent around a type checker is a wire format nobody can guess.
+
+    **`source` deserves a specific warning.** On `Field` it is the binding
+    that says *which attribute to read*, so passing `source=` to any field in
+    this serializer would be changing where a value comes from, not naming
+    this key. As a declared field name it is fine — it reads `instance
+    ["source"]`, which is what the view puts there — and
+    `test_a_remote_choice_option_is_served_with_its_source` is what keeps that
+    true.
     """
 
     key = serializers.CharField()
     kind = serializers.CharField()
     label = serializers.CharField()  # type: ignore[assignment]
     choices = serializers.ListField(child=serializers.CharField())
+    #: `remote_choice` only — which provider-backed list the composer should
+    #: fetch (P4-02). Empty for every other kind, so the field is always
+    #: present and the client never has to branch on its absence.
+    source = serializers.CharField(allow_blank=True)  # type: ignore[assignment]
     max_length = serializers.IntegerField(allow_null=True)
     default = serializers.JSONField(allow_null=True)
     required = serializers.BooleanField()  # type: ignore[assignment]
 
 
+class PlatformFormatSerializer(serializers.Serializer[Any]):
+    """One `(platform, format)` row's constraints (P4-05).
+
+    `char_limit` is served **resolved** — the format's own, or the platform's
+    where the format does not narrow it. The composer needs the number that
+    applies, not a null it would have to know the fallback rule to interpret.
+    """
+
+    format = serializers.CharField()
+    max_media = serializers.IntegerField()
+    min_media = serializers.IntegerField()
+    allowed_media_kinds = serializers.ListField(child=serializers.CharField())
+    char_limit = serializers.IntegerField()
+
+
 class PlatformRuleSerializer(serializers.Serializer[Any]):
     platform = serializers.CharField()
     char_limit = serializers.IntegerField()
-    max_media = serializers.IntegerField()
-    allowed_media_kinds = serializers.ListField(child=serializers.CharField())
     supports_thread = serializers.BooleanField()
+    formats = PlatformFormatSerializer(many=True)
     options = PlatformOptionSerializer(many=True)
 
 

@@ -91,6 +91,63 @@ def test_the_settings_toggle_writes_the_chain_not_a_column(
     assert approvals.default_chain(advanced_workspace).blocks_publish is False
 
 
+def test_concurrent_stage_appends_cannot_collide_on_the_same_order(
+    advanced_workspace: Any, admin_user: Any
+) -> None:
+    """Found in review: `order` was a plain `aggregate(Max("order"))` read
+    followed by a separate `create()`, with no lock and no atomic wrap — two
+    admins configuring stages at the same instant could both compute the same
+    next order, and the second `create()` would hit `unique_approval_stage_
+    order` as a raw, uncaught `IntegrityError`, which `common.exceptions`'s
+    handler does not special-case, so it falls through to a bare 500.
+
+    Real threads against real Postgres, the same shape
+    `billing.tests.test_quota_trial::test_concurrent_spends_cannot_exceed_the_
+    quota` already uses for the parallel org-ledger race.
+    """
+    import threading
+
+    from django.db import connections
+    from rest_framework.test import APIClient
+
+    outcomes: list[int] = []
+    errors: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def append_stage(name: str) -> None:
+        barrier.wait(timeout=10)
+        try:
+            api = APIClient()
+            api.force_authenticate(admin_user)
+            response = api.post(CHAIN_URL, {"name": name}, format="json")
+            if response.status_code == 201:
+                outcomes.append(response.status_code)
+            else:
+                errors.append(f"{response.status_code}: {response.content!r}")
+        finally:
+            connections.close_all()
+
+    threads = [
+        threading.Thread(target=append_stage, args=("Brand lead",)),
+        threading.Thread(target=append_stage, args=("Legal",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert errors == [], f"a concurrent append failed instead of queueing: {errors}"
+    assert outcomes == [201, 201]
+
+    chain = approvals.default_chain(advanced_workspace)
+    assert sorted(chain.stages.values_list("order", flat=True)) == [1, 2]
+
+
+test_concurrent_stage_appends_cannot_collide_on_the_same_order = pytest.mark.django_db(
+    transaction=True
+)(test_concurrent_stage_appends_cannot_collide_on_the_same_order)
+
+
 def test_a_second_stage_is_an_advanced_feature(
     client_as: Any, advanced_workspace: Any, admin_user: Any, plans: Any
 ) -> None:
@@ -349,6 +406,54 @@ def test_the_proposed_time_is_scheduled_when_the_last_stage_clears(
     # Consumed, so a later re-approval cannot silently reschedule it again.
     assert post.proposed_delivery_mode == ""
     assert post.proposed_scheduled_at is None
+
+
+def test_a_stale_proposal_is_not_silently_scheduled_when_a_slow_chain_finally_clears(
+    chain: Any,
+    draft: Any,
+    contributor_user: Any,
+    admin_user: Any,
+    second_admin: Any,
+    advanced_social_account: Any,
+) -> None:
+    """Found in review: a multi-stage chain can sit `PENDING_REVIEW` for days.
+    `schedule_post` only ever checked an *upper* bound on the proposed time
+    (`require_scheduling_horizon`), never that it was still in the future — so
+    a stale proposal reaching `_finalise_approval` at the last stage would
+    schedule (or, worse, `AUTO_PUBLISH`) at a moment nobody chose, the instant
+    the beat scan next ran, because a past `scheduled_at` is already due.
+
+    The fix degrades rather than errors: the approval itself still lands
+    (`APPROVED`, locked — the reviewer's decision was legitimate), but a stale
+    proposal is left **on the post, untouched**, for a human to re-decide —
+    the same shape `scheduler is None` (the guest path) already uses for "not
+    scheduled yet, and that is deliberate."
+    """
+    _stage(chain, order=1, name="Brand lead")
+    _stage(chain, order=2, name="Legal")
+    when = timezone.now() + dt.timedelta(days=1)
+
+    post = approvals.submit_for_review(
+        draft, actor=contributor_user, delivery_mode="AUTO_PUBLISH", scheduled_at=when
+    )
+    post = approvals.approve(post, actor=admin_user)  # stage 1 clears
+    assert post.status == PostStatus.PENDING_REVIEW
+
+    # The second reviewer takes their time — long enough that the proposed
+    # slot has now passed. Set directly rather than travelling real time: the
+    # scenario is "the clock moved", and the effect is identical either way.
+    post.proposed_scheduled_at = timezone.now() - dt.timedelta(hours=1)
+    post.save(update_fields=["proposed_scheduled_at"])
+
+    post = approvals.approve(post, actor=second_admin)  # the last stage clears
+
+    assert post.status == PostStatus.APPROVED
+    assert post.locked_at is not None  # the approval itself still landed
+    assert post.scheduled_at is None  # never silently scheduled at a stale time
+    # Left visible rather than discarded, so a human can pick a new time.
+    assert post.proposed_delivery_mode == "AUTO_PUBLISH"
+    assert post.proposed_scheduled_at is not None
+    assert post.proposed_scheduled_at < timezone.now()
 
 
 def test_a_submission_without_a_proposal_just_lands_approved(
