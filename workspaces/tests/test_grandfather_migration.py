@@ -185,3 +185,49 @@ def test_the_invariant_holds_across_the_whole_corpus_after_migrating(
         assert ApprovalAction.objects.filter(post=post, action="APPROVE").exists(), (
             f"post {post.pk} survived the migration in {post.status} with no approval"
         )
+
+
+def test_a_grandfathered_post_is_locked_exactly_like_a_normally_approved_one(
+    pre_grandfather_schema: Any,
+) -> None:
+    """Found in review: the migration wrote the `ApprovalAction` row but left
+    `locked_at` null, which is the field `ensure_unlocked` actually checks.
+
+    The gap is not academic. `update_post` only reverts an *unlocked*
+    `APPROVED` post's content edit back to `PENDING_REVIEW` — a grandfathered
+    `SCHEDULED` post (never `APPROVED` in this run) fails that check on status
+    alone, so with `locked_at` left null its content could be edited in place,
+    keeping its `SCHEDULED` status and its `scheduled_at`, and publish with
+    content nobody re-reviewed. That is precisely what C-02 exists to forbid.
+    """
+    rows = _legacy_rows(pre_grandfather_schema)
+
+    _migrate_fully_forward()
+
+    from django.contrib.auth import get_user_model
+
+    from content.models import Post
+    from content.services.posts import update_post
+    from workspaces.services import approvals
+
+    scheduled = Post.objects.get(pk=rows["scheduled"].pk)
+    assert scheduled.locked_at is not None, "grandfathered post was left unlocked"
+
+    # Re-fetched through the *real* model: `rows["user"]` came out of
+    # `old_apps.get_model`, the frozen historical model the migration itself
+    # runs against, which the current-model service calls below correctly
+    # refuse to accept as a real `User` FK target.
+    actor = get_user_model().objects.get(pk=rows["user"].pk)
+
+    # The behavioural half: an edit must be refused exactly as it would be for
+    # a post that went through `_finalise_approval` and got locked there.
+    import pytest as _pytest
+
+    from common.exceptions import StateConflict
+
+    with _pytest.raises(StateConflict):
+        update_post(scheduled, author=actor, master_body="Rewritten after the fact")
+
+    # And unlocking a grandfathered post is the same audited path as any other.
+    unlocked = approvals.unlock(scheduled, actor=actor)
+    assert unlocked.locked_at is None

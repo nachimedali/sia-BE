@@ -69,3 +69,19 @@ class ConnectCompleteResponseSerializer(serializers.Serializer[dict[str, Any]]):
     account = SocialAccountSerializer(required=False, allow_null=True)
     targets = ConnectTargetSerializer(many=True, required=False)
     params = serializers.DictField(required=False)
+
+
+class RemoteOptionSerializer(serializers.Serializer[Any]):
+    """One choice in a provider-backed list — a Pinterest board (P4-02).
+
+    `id` and `name` only. The provider's own row carries more, and forwarding
+    it would put a vendor's shape in front of the composer, which is the thing
+    the adapter layer exists to prevent.
+    """
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+
+
+class RemoteOptionListSerializer(serializers.Serializer[Any]):
+    options = RemoteOptionSerializer(many=True)

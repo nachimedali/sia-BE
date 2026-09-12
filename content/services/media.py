@@ -34,6 +34,13 @@ _IMAGE_MIME_PREFIX = "image/"
 _VIDEO_MIME_PREFIX = "video/"
 _ALLOWED_VIDEO_MIME = frozenset({"video/mp4", "video/quicktime", "video/webm"})
 
+#: A PDF is recognised by its **magic bytes**, never by its declared type —
+#: the rule this whole module is built on. `%PDF-` is the header every
+#: conforming file starts with, and checking it is what stops a renamed
+#: executable becoming a "document" because the client said so.
+_PDF_MAGIC = b"%PDF-"
+_DOCUMENT_MIME = "application/pdf"
+
 
 class UnsupportedMediaError(OCCSError):
     default_code = "unsupported_media"
@@ -54,6 +61,15 @@ def _sniff_content_type(upload: UploadedFile[Any]) -> str:
     return declared or guessed
 
 
+def _is_pdf(upload: UploadedFile[Any]) -> bool:
+    """Reads the header, not the filename. Seeks back either way, because the
+    checksum and the storage write both still need the whole file."""
+    upload.seek(0)
+    header = upload.read(len(_PDF_MAGIC))
+    upload.seek(0)
+    return bool(header == _PDF_MAGIC)
+
+
 def ingest_media(
     *, workspace: Workspace, upload: UploadedFile[Any], source: str = MediaSource.UPLOAD
 ) -> MediaAsset:
@@ -66,7 +82,13 @@ def ingest_media(
     content_type = _sniff_content_type(upload)
     width = height = duration_ms = None
 
-    if content_type.startswith(_VIDEO_MIME_PREFIX):
+    if _is_pdf(upload):
+        # Before the video/image split, and by content rather than by name: a
+        # PDF has no dimensions to probe and no aspect ratio to reject, so
+        # both of the branches below would refuse it for the wrong reason.
+        kind = MediaKind.DOCUMENT
+        mime = _DOCUMENT_MIME
+    elif content_type.startswith(_VIDEO_MIME_PREFIX):
         if content_type not in _ALLOWED_VIDEO_MIME:
             raise UnsupportedMediaError(
                 f"Unsupported video type: {content_type}.", code="invalid_video"

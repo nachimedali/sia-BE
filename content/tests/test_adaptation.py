@@ -106,7 +106,7 @@ def test_media_dropped_beyond_the_platform_cap() -> None:
         master_body="carousel", media_assets=assets, platform=Platform.INSTAGRAM
     )
 
-    assert len(payload.media) == PLATFORM_RULES[Platform.INSTAGRAM].max_media
+    assert len(payload.media) == PLATFORM_RULES[Platform.INSTAGRAM].formats["FEED"].max_media
     assert payload.media[0].id == 0
     assert any("allows at most" in warning for warning in payload.warnings)
 
@@ -133,6 +133,7 @@ def test_as_dict_is_json_shaped() -> None:
     # description renders `""`, never a missing key.
     assert as_dict["media"] == [{"id": 1, "kind": MediaKind.IMAGE, "url": "/m/1.png", "alt": ""}]
     assert set(as_dict) == {
+        "post_format",
         "platform",
         "body",
         "thread",

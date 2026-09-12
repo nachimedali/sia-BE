@@ -32,6 +32,12 @@ _CHECKS: dict[str, type | tuple[type, ...]] = {
     #: A `MediaAsset` id. Shaped like an `int` and validated like a reference —
     #: see `_resolve_media_asset`.
     "media": int,
+    #: An id from a list only the provider knows (a Pinterest board). Checked
+    #: as a string and no further: validating it would mean calling the
+    #: provider mid-save, so a slow board list would become a failed post. The
+    #: composer fetches the list via `Option.source`; the provider rejects a
+    #: wrong id, which is the same answer a stale cached list would give.
+    "remote_choice": str,
 }
 
 

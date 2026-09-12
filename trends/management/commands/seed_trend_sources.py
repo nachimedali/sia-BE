@@ -36,7 +36,24 @@ PLATFORM_KINDS: dict[str, list[str]] = {
     Platform.YOUTUBE: [TrendSourceKind.YOUTUBE],
     Platform.THREADS: [TrendSourceKind.REDDIT],
     Platform.LINKEDIN: [TrendSourceKind.RSS],
+    # --- Phase 4 platforms ---
+    # Reddit for both: it is the kind that captures people saying *why*
+    # something worked, which is the only signal we can actually get for these
+    # two without a vendor that does not exist yet.
+    Platform.X: [TrendSourceKind.REDDIT],
+    Platform.PINTEREST: [TrendSourceKind.REDDIT],
 }
+
+#: Platforms with **no trend corpus, deliberately**, and the reason — because
+#: the alternative is inventing one.
+#:
+#: Google Business Profile is a local-business surface, not a discovery one:
+#: there is no feed of what is working on it to harvest, and seeding a source
+#: that returns nothing would put an empty section in front of a customer and
+#: call it a trend engine. Declared rather than merely absent so that adding a
+#: platform still forces this decision — `test_seed_sources.py` fails on a
+#: platform that appears in neither table.
+PLATFORMS_WITHOUT_TRENDS: frozenset[str] = frozenset({Platform.GOOGLE_BUSINESS})
 
 #: Which vendor answers for each kind (D12). The value lands on the row, so
 #: repointing a kind at a different vendor is an admin edit.

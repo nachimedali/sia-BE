@@ -317,6 +317,30 @@ class ZernioAdapter:
             )
         return PublishResult(provider_post_id=existing_id, was_replay=True)
 
+    def list_remote_options(
+        self, *, platform: str, provider_account_id: str, source: str
+    ) -> list[dict[str, Any]]:
+        """Pinterest's board list (P4-02).
+
+        A source this adapter does not serve answers empty rather than
+        raising — see the protocol. The path is Zernio's documented contract
+        at OpenAPI v1.0.4 and not observed behaviour (U-5), which is why a
+        wrong guess here is one row in `_REMOTE_OPTION_PATHS` to change.
+        """
+        path = _REMOTE_OPTION_PATHS.get(source)
+        if path is None:
+            return []
+
+        with _client() as client:
+            payload = _json(
+                client.get(path.format(account_id=provider_account_id)),
+                label=f"Zernio {source}",
+            )
+        return [
+            {"id": str(row.get("id", "")), "name": str(row.get("name", ""))}
+            for row in payload.get("items", [])
+        ]
+
     def disconnect(self, *, provider_account_id: str) -> None:
         with _client() as client:
             _raise_for(
@@ -356,12 +380,25 @@ def get_platform_adapter() -> PlatformAdapter:
 #: Like every other Zernio field name in this module, these are the documented
 #: contract at OpenAPI v1.0.4 and not observed behaviour (U-5) — which is
 #: exactly why a wrong guess here should be one row to change.
+#: Where each provider-backed option list lives, by `source`. A table for the
+#: same reason `PROVIDER_OPTION_FIELDS` is one: a vendor path is a vendor fact,
+#: and the day it moves should be one row to edit rather than a method to find.
+_REMOTE_OPTION_PATHS: dict[str, str] = {
+    "pinterest_boards": "/v1/accounts/{account_id}/pinterest-boards",
+}
+
+
 PROVIDER_OPTION_FIELDS: dict[str, dict[str, str]] = {
     "instagram": {
         "first_comment": "firstComment",
         "location_id": "locationId",
         "collab_handles": "collaborators",
         "tagged_handles": "taggedAccounts",
+        # Declared since P1-11 and unmapped until Phase 4's gate went looking:
+        # an unmapped option is *dropped*, so toggling "also share a reel to
+        # the feed" changed nothing and said nothing. The composer showed a
+        # switch that did not exist.
+        "share_to_feed": "shareToFeed",
     },
     "facebook": {
         "first_comment": "firstComment",
@@ -381,6 +418,25 @@ PROVIDER_OPTION_FIELDS: dict[str, dict[str, str]] = {
     "tiktok": {
         "allow_comments": "allowComments",
         "allow_duet": "allowDuet",
+    },
+    "x": {
+        "reply_settings": "replySettings",
+    },
+    "pinterest": {
+        "board_id": "boardId",
+        "title": "title",
+        "destination_link": "link",
+    },
+    "google_business": {
+        "post_type": "topicType",
+        "cta_type": "actionType",
+        "cta_url": "actionUrl",
+        "event_title": "eventTitle",
+        "event_start": "eventStartTime",
+        "event_end": "eventEndTime",
+        "offer_coupon_code": "couponCode",
+        "offer_redeem_url": "redeemOnlineUrl",
+        "offer_terms": "termsConditions",
     },
     "youtube": {
         "title": "title",

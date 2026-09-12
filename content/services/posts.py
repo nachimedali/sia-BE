@@ -7,11 +7,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from rest_framework.exceptions import ValidationError
+
 from accounts.models import User
 from categories.models import Category
 from collaboration import services as collaboration
-from common.exceptions import OCCSError
+from common.exceptions import OCCSError, StateConflict
 from content.models import (
+    ContentKind,
     MediaAsset,
     Post,
     PostMediaAttachment,
@@ -20,6 +23,7 @@ from content.models import (
 )
 from content.services import options as option_rules
 from content.services import revisions
+from content.services.blocks import validate_document
 from content.services.rules import OPTIONS_SCHEMA_VERSION
 from workspaces.models import Workspace
 from workspaces.services import approvals
@@ -70,9 +74,24 @@ def create_post(
     master_body: str = "",
     category: Category | None = None,
     media_assets: Sequence[MediaAsset] = (),
+    content_kind: str = ContentKind.SOCIAL,
+    doc_body: Any | None = None,
 ) -> Post:
+    if doc_body is not None and content_kind != ContentKind.DOC:
+        # Rejected rather than ignored. A `SOCIAL` post carrying a document
+        # body is a row two readers would disagree about, and the author who
+        # wrote that text would never be told it went nowhere.
+        raise ValidationError({"doc_body": "Only a DOC post carries a document body."})
+    if content_kind == ContentKind.DOC:
+        doc_body = validate_document(doc_body or [], workspace=workspace)
+
     post = Post.objects.create(
-        workspace=workspace, author=author, master_body=master_body, category=category
+        workspace=workspace,
+        author=author,
+        master_body=master_body,
+        category=category,
+        content_kind=content_kind,
+        doc_body=doc_body or [],
     )
     if media_assets:
         _replace_media(post, media_assets)
@@ -87,7 +106,7 @@ def create_post(
 #: around it. Deliberately narrow: `source`/`product`/`generation`/`category`
 #: are all written by other phases' services (autopilot, repurposing) through
 #: this same function, and none of them should silently undo an approval.
-_CONTENT_FIELDS = frozenset({"master_body", "media_asset_ids"})
+_CONTENT_FIELDS = frozenset({"master_body", "media_asset_ids", "doc_body"})
 
 
 def update_post(
@@ -111,6 +130,21 @@ def update_post(
     approver signed off on.
     """
     approvals.ensure_unlocked(post)
+
+    # **The same invariant `create_post` enforces at birth, held on every
+    # later write too** (found in review: a PATCH reached `setattr` with zero
+    # validation, which reopened the cross-tenant image hole `_validate_image`
+    # exists to close, skipped the 1,000-block cap, and let `content_kind` and
+    # `doc_body` disagree — exactly the state `create_post`'s own check exists
+    # to forbid). Checked against the **resulting** kind, not the post's
+    # current one: a caller converting a draft to a document in one request
+    # sends both fields together, and only the combination after the patch is
+    # meaningful.
+    if "doc_body" in fields:
+        resulting_kind = fields.get("content_kind", post.content_kind)
+        if resulting_kind != ContentKind.DOC:
+            raise ValidationError({"doc_body": "Only a DOC post carries a document body."})
+        fields["doc_body"] = validate_document(fields["doc_body"], workspace=post.workspace)
 
     touches_content = bool(_CONTENT_FIELDS & fields.keys())
     media_assets = fields.pop("media_asset_ids", None)
@@ -237,3 +271,39 @@ def set_platform_options(
 
     revisions.record(post, author=author, reason=f"{platform} options")
     return target
+
+
+def mark_doc_published(post: Post, *, actor: User) -> Post:
+    """A `DOC` reaching `PUBLISHED` by hand (P3-01).
+
+    **The only status transition in the system with no delivery behind it.** A
+    document has no targets, no adaptation and no provider; "published" here
+    means the team has agreed it is finished, which is a claim only a person
+    can make. It is refused on a `SOCIAL` post because that would be a second,
+    unaudited route past the publish pipeline — exactly what Part 7 rule 13
+    exists to prevent.
+
+    **Idempotent on the quota, not merely on the status** (P3-03). A
+    double-click must not cost a customer two posts out of a six-post package,
+    so the trial is spent on the transition into `PUBLISHED` and never again.
+    """
+    from billing.services import trial
+    from billing.services.entitlements import entitlements_for
+
+    if post.content_kind != ContentKind.DOC:
+        raise StateConflict(
+            "Only a document is published by hand; a social post goes through scheduling.",
+            detail={"content_kind": post.content_kind},
+        )
+    if post.status == PostStatus.PUBLISHED:
+        return post
+
+    # Before the status write, so an exhausted trial leaves the document
+    # exactly as it was rather than published-but-unpaid.
+    if entitlements_for(post.workspace).plan.counts_docs_against_quota:
+        trial.consume_trial_post(post.workspace)
+
+    post.status = PostStatus.PUBLISHED
+    post.save(update_fields=["status", "updated_at"])
+    revisions.record(post, author=actor, reason="published")
+    return post

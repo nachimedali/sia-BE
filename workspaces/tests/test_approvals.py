@@ -328,3 +328,84 @@ def test_ensure_approval_still_valid_passes_while_the_approver_still_holds_admin
     post = approvals.approve(post, actor=admin_user)
 
     approvals.ensure_approval_still_valid(post)  # must not raise
+
+
+def test_ensure_approval_still_valid_is_unaffected_by_the_chain_blocking_afterward(
+    workspace: Any, user: Any
+) -> None:
+    """Found in review: the check used to recompute `required` from
+    `default_chain(post.workspace).blocks_publish` **read fresh at publish
+    time**, rather than from what was actually true when the approval
+    happened. An admin turning review on after an EDITOR's legitimate,
+    open-chain approval must not retroactively invalidate that approval —
+    the approver's authority did not change; the workspace's policy did.
+    """
+    from workspaces.models import Membership, Role
+
+    post = schedule_post(
+        post=create_post(workspace=workspace, author=user, master_body="Open chain"),
+        delivery_mode="REMINDER",
+        scheduled_at=timezone.now() + dt.timedelta(days=1),
+        actor=user,
+    )
+    membership = Membership.objects.get(user=user, workspace=workspace)
+    membership.role = Role.EDITOR
+    membership.permissions = ["view", "comment", "edit", "publish", "analyze"]
+    membership.save(update_fields=["role", "permissions"])
+
+    # The chain starts blocking *after* the approval already happened.
+    chain = approvals.default_chain(workspace)
+    chain.blocks_publish = True
+    chain.save(update_fields=["blocks_publish"])
+
+    approvals.ensure_approval_still_valid(post)  # must not raise
+
+
+def test_ensure_approval_still_valid_still_catches_a_real_revocation_on_an_open_chain(
+    workspace: Any, user: Any
+) -> None:
+    """The fix must not turn the check into a no-op: revoking the actual
+    permission the approver used must still be caught, regardless of the
+    chain's current setting."""
+    from workspaces.models import Membership, Role
+
+    post = schedule_post(
+        post=create_post(workspace=workspace, author=user, master_body="Open chain"),
+        delivery_mode="REMINDER",
+        scheduled_at=timezone.now() + dt.timedelta(days=1),
+        actor=user,
+    )
+    membership = Membership.objects.get(user=user, workspace=workspace)
+    membership.role = Role.EDITOR
+    membership.permissions = ["view", "comment", "edit", "publish", "analyze"]
+    membership.save(update_fields=["role", "permissions"])
+
+    # The chain also starts blocking, so a *naive* fix that just always checks
+    # `publish` for an open-chain approval would wrongly pass here too if it
+    # ignored a genuinely revoked `publish` grant.
+    chain = approvals.default_chain(workspace)
+    chain.blocks_publish = True
+    chain.save(update_fields=["blocks_publish"])
+
+    membership.permissions = ["view", "analyze"]  # publish revoked
+    membership.save(update_fields=["permissions"])
+
+    with pytest.raises(approvals.ApprovalRevokedError):
+        approvals.ensure_approval_still_valid(post)
+
+
+def test_ensure_approval_still_valid_is_unaffected_by_the_chain_unblocking_afterward(
+    advanced_workspace: Any, contributor_user: Any, admin_user: Any
+) -> None:
+    """The symmetric case: a real, explicit `approve` (needing `approve`) must
+    not be second-guessed against `publish` just because an admin turned
+    review off afterward."""
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    post = approvals.submit_for_review(post, actor=contributor_user)
+    post = approvals.approve(post, actor=admin_user)
+
+    chain = approvals.default_chain(advanced_workspace)
+    chain.blocks_publish = False
+    chain.save(update_fields=["blocks_publish"])
+
+    approvals.ensure_approval_still_valid(post)  # must not raise

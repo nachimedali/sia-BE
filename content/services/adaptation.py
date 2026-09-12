@@ -17,8 +17,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from common.text import HASHTAG_RE
+from content.models import ContentKind, PostFormat
 from content.services.options import resolve as resolve_options
-from content.services.rules import PLATFORM_RULES
+from content.services.rules import PLATFORM_RULES, format_rule
 
 if TYPE_CHECKING:
     from content.models import Post
@@ -61,6 +62,11 @@ class AdaptedMedia:
 class AdaptedPayload:
     platform: str
     body: str
+    #: Which shape this was rendered as (P4-04). On the payload rather than
+    #: derived by the reader, because the constraints that produced this body
+    #: and this media list came from the `(platform, format)` row — a consumer
+    #: that had to re-derive it could disagree with what was actually applied.
+    post_format: str = PostFormat.FEED
     thread: list[str] = field(default_factory=list)
     hashtags: list[str] = field(default_factory=list)
     media: list[AdaptedMedia] = field(default_factory=list)
@@ -77,6 +83,7 @@ class AdaptedPayload:
         comparing this output, not by comparing dataclasses."""
         return {
             "platform": self.platform,
+            "post_format": self.post_format,
             "body": self.body,
             "thread": list(self.thread),
             "hashtags": list(self.hashtags),
@@ -150,6 +157,7 @@ def adapt_for_platform(
     master_body: str,
     media_assets: Sequence[MediaLike],
     platform: str,
+    post_format: str = PostFormat.FEED,
     alt_text: Mapping[int, str] | None = None,
     options: Mapping[str, Any] | None = None,
     workspace: Any = None,
@@ -166,45 +174,59 @@ def adapt_for_platform(
     hashtags = _extract_hashtags(master_body)
     warnings: list[str] = []
 
+    # **Resolved from the `(platform, format)` row, not from the platform**
+    # (P4-05). An undeclared format falls back to `FEED` *and says so*, rather
+    # than raising: by the time the renderer runs, refusing would turn a
+    # preview into a 500, and `PostTarget.clean` is where an unsupported
+    # format is actually refused — at the write, where it can be fixed.
+    spec = format_rule(platform, post_format)
+    if spec is None:
+        warnings.append(f"{platform} does not support the {post_format} format; rendered as FEED.")
+        post_format = PostFormat.FEED
+        spec = format_rule(platform, PostFormat.FEED)
+    assert spec is not None  # every platform declares FEED; test_formats.py holds it
+    char_limit = spec.char_limit or rule.char_limit
+
     working_body = master_body.strip()
     if rule.hashtag_placement == "trailing_block" and hashtags:
         working_body = _strip_hashtags(working_body)
 
     thread: list[str] = []
     truncated = False
-    if len(working_body) > rule.char_limit:
+    if len(working_body) > char_limit:
         if rule.supports_thread:
-            thread = _split_into_thread(working_body, rule.char_limit)
+            thread = _split_into_thread(working_body, char_limit)
             body = thread[0] if thread else ""
         else:
-            body = _truncate(working_body, rule.char_limit)
+            body = _truncate(working_body, char_limit)
             truncated = True
-            warnings.append(f"Body truncated to {rule.char_limit} characters for {platform}.")
+            warnings.append(f"Body truncated to {char_limit} characters for {platform}.")
     else:
         body = working_body
 
     if rule.hashtag_placement == "trailing_block" and hashtags:
         block = " ".join(f"#{tag}" for tag in hashtags)
         candidate = f"{body}\n\n{block}" if body else block
-        if len(candidate) <= rule.char_limit:
+        if len(candidate) <= char_limit:
             body = candidate
         else:
             warnings.append(
                 "Hashtag block did not fit in the body; use the hashtags list separately."
             )
 
-    allowed = [asset for asset in media_assets if asset.kind in rule.allowed_media_kinds]
+    allowed = [asset for asset in media_assets if asset.kind in spec.allowed_media_kinds]
     unsupported_count = len(media_assets) - len(allowed)
     if unsupported_count:
         warnings.append(
             f"{unsupported_count} asset(s) dropped: {platform} does not support that media type."
         )
 
-    kept = allowed[: rule.max_media]
+    kept = allowed[: spec.max_media]
     over_cap_count = len(allowed) - len(kept)
     if over_cap_count:
         warnings.append(
-            f"{over_cap_count} asset(s) dropped: {platform} allows at most {rule.max_media}."
+            f"{over_cap_count} asset(s) dropped: {platform} allows at most "
+            f"{spec.max_media} for a {post_format.lower()} post."
         )
 
     descriptions = alt_text or {}
@@ -218,8 +240,18 @@ def adapt_for_platform(
         for asset in kept
     ]
 
+    if len(kept) < spec.min_media:
+        # A reel with no video is not a reel. Warned rather than raised for the
+        # same reason as the format fallback above — the composer shows this
+        # before anyone schedules, which is when it can still be fixed.
+        warnings.append(
+            f"A {post_format.lower()} post on {platform} needs at least "
+            f"{spec.min_media} media item(s); this has {len(kept)}."
+        )
+
     return AdaptedPayload(
         platform=platform,
+        post_format=post_format,
         body=body,
         thread=thread,
         hashtags=hashtags,
@@ -269,6 +301,14 @@ def render_post(post: Post, platforms: Iterable[str]) -> dict[str, AdaptedPayloa
     caller passes a platform and receives what will be sent; it is never handed
     the parts and asked to assemble them.
     """
+    # **A DOC early-returns rather than being routed around** (P3-01). Callers
+    # keep going through the one renderer and are told there is nothing to
+    # adapt; the alternative — every call site checking `content_kind` first —
+    # is exactly the second decision point Part 7 rule 1 exists to forbid, and
+    # the first caller to forget it would render a JSON block list as a caption.
+    if post.content_kind == ContentKind.DOC:
+        return {}
+
     # `post.media_attachments.all()` evaluated exactly **once**, not through
     # `Post.ordered_attachments()` — that helper does its own `.all()`
     # internally, and calling it here and then reading `media_attachments`
@@ -301,6 +341,11 @@ def render_post(post: Post, platforms: Iterable[str]) -> dict[str, AdaptedPayloa
             master_body=_resolved_body(post, target),
             media_assets=_resolved_media(assets, by_id, target),
             platform=platform,
+            # The target's own format, resolved here with every other
+            # override (P1-04): body, media, options and now shape all become
+            # what publish sends in exactly one place. A platform with no
+            # target yet — preview before scheduling — renders as `FEED`.
+            post_format=target.post_format if target is not None else PostFormat.FEED,
             alt_text=_resolved_alt_text(base_alt, target_alt, target),
             options=target.platform_options if target is not None else {},
             workspace=post.workspace,

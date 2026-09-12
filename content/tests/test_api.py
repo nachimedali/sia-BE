@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from ai.models import Generation, GenerationKind, GenerationMode, VoiceProfile
 from channels.models import SocialAccount
@@ -15,6 +17,7 @@ from content.models import PostTemplate, RecurrenceRule
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post
+from planning.models import BulkOperation, Campaign, Label, SavedView, Timetable
 from products.services.products import create_product
 from reminders.models import Reminder
 from workspaces.models import Membership
@@ -220,7 +223,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 11
+    assert len(router.registry) == 16
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -273,6 +276,23 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
             rrule="FREQ=DAILY",
             timezone="UTC",
             horizon_days=7,
+        ),
+        # --- Phase 3 planning surfaces ---
+        "campaign": Campaign.objects.create(
+            workspace=other_workspace,
+            name="Not yours either",
+            starts_at=timezone.now(),
+            ends_at=timezone.now() + dt.timedelta(days=7),
+        ),
+        "label": Label.objects.create(
+            workspace=other_workspace, name="Not yours", colour="#FF5722"
+        ),
+        "saved-view": SavedView.objects.create(workspace=other_workspace, name="Not yours"),
+        "timetable": Timetable.objects.create(
+            workspace=other_workspace, name="Not yours", timezone="UTC"
+        ),
+        "bulk-operation": BulkOperation.objects.create(
+            workspace=other_workspace, action="delete", total_count=0
         ),
     }
 

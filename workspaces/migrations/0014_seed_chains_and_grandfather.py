@@ -6,12 +6,19 @@ Three steps that have to happen in this order and in one deploy:
 1. **A default chain per workspace**, carrying forward exactly what the old
    boolean meant — `blocks_publish = requires_approval`. Nobody's review
    posture changes; only where it is stored.
-2. **A grandfathering `APPROVE` action** for every post that has already been
-   committed to going out without one. C-02 makes approval universal from here
-   on, and a post that got past the old rules would otherwise sit in a system
-   whose central invariant it violates — *no `SCHEDULED` post without an
-   `APPROVE` row* would be false on day one, and the test asserting it would
-   have to carve out an exception that never expires.
+2. **A grandfathering `APPROVE` action, and a lock, for every post that has
+   already been committed to going out without one.** C-02 makes approval
+   universal from here on, and a post that got past the old rules would
+   otherwise sit in a system whose central invariant it violates — *no
+   `SCHEDULED` post without an `APPROVE` row* would be false on day one, and
+   the test asserting it would have to carve out an exception that never
+   expires. **The lock is not optional** (found in review, 2026-09-11):
+   `content.services.posts.update_post` only reverts an *unlocked* `APPROVED`
+   post's edit back to review — a grandfathered `SCHEDULED` post is never
+   `APPROVED` in this run and fails that check on status alone, so leaving
+   `locked_at` null would let its content be edited in place, keeping its
+   `scheduled_at`, and publish with text nobody re-reviewed. `unlock()` is the
+   same audited path back out for these rows as for any other.
 3. **Drop the column**, now that nothing reads it.
 
 **Grandfathered with `ApprovalAction`, not `Decision`.** BUILD-PLAN C-02 names
@@ -35,6 +42,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.db import migrations
+from django.utils import timezone
 
 #: Kept in step with `workspaces.services.approvals.DEFAULT_CHAIN_NAME`. A
 #: literal rather than an import: a migration must describe the world as it was
@@ -77,11 +85,20 @@ def forwards(apps: Any, schema_editor: Any) -> None:
     approved_post_ids = set(
         ApprovalAction.objects.filter(action="APPROVE").values_list("post_id", flat=True)
     )
-    ApprovalAction.objects.bulk_create(
-        ApprovalAction(post_id=post_id, actor=None, action="APPROVE", note=GRANDFATHER_NOTE)
-        for post_id in Post.objects.filter(status__in=COMMITTED_STATUSES)
+    grandfathered_ids = list(
+        Post.objects.filter(status__in=COMMITTED_STATUSES)
         .exclude(pk__in=approved_post_ids)
         .values_list("pk", flat=True)
+    )
+    ApprovalAction.objects.bulk_create(
+        ApprovalAction(post_id=post_id, actor=None, action="APPROVE", note=GRANDFATHER_NOTE)
+        for post_id in grandfathered_ids
+    )
+    # Locked exactly as `_finalise_approval` locks a normally-approved post —
+    # `ensure_unlocked` is the check every later edit path goes through, and it
+    # reads this column, not the `ApprovalAction` row.
+    Post.objects.filter(pk__in=grandfathered_ids, locked_at__isnull=True).update(
+        locked_at=timezone.now()
     )
 
 

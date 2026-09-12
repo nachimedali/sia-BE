@@ -26,11 +26,14 @@ from rest_framework.views import APIView
 
 from billing.permissions import HasFeature
 from channels import services
+from channels.adapters.base import REMOTE_OPTION_SOURCES
+from channels.adapters.zernio import get_platform_adapter
 from channels.models import SocialAccount
 from channels.serializers import (
     ConnectCompleteRequestSerializer,
     ConnectCompleteResponseSerializer,
     ConnectStartResponseSerializer,
+    RemoteOptionListSerializer,
     SocialAccountSerializer,
 )
 from common.exceptions import OCCSError
@@ -61,6 +64,37 @@ class SocialAccountViewSet(
     permission_classes: list[Any] = [IsAuthenticated, HasFeature("auto_publish")]
     pagination_class = DefaultPagination
     queryset = SocialAccount.objects.all()
+
+    @extend_schema(
+        responses={200: RemoteOptionListSerializer},
+        summary="A provider-backed option list for this account",
+        description=(
+            "The choices behind a `remote_choice` composer field — a "
+            "Pinterest board list (P4-02). The `source` must be one "
+            "`rules.py` declares for this account's platform; anything else "
+            "is a **400**, because an endpoint that forwarded an arbitrary "
+            "source would be a proxy for every call the vendor exposes."
+        ),
+    )
+    @action(detail=True, methods=["get"], url_path=r"options/(?P<source>[\w-]+)")
+    def remote_options(
+        self, request: Request, pk: str | None = None, source: str | None = None
+    ) -> Response:
+        account = self.get_object()
+        expected_platform = REMOTE_OPTION_SOURCES.get(source or "")
+        if expected_platform is None or expected_platform != account.platform:
+            raise OCCSError(
+                f"{account.platform} declares no option list called {source!r}.",
+                code="unknown_option_source",
+                detail={"source": source, "platform": account.platform},
+            )
+
+        options = get_platform_adapter().list_remote_options(
+            platform=account.platform,
+            provider_account_id=account.provider_account_id,
+            source=source or "",
+        )
+        return Response({"options": options})
 
     @extend_schema(
         request=ConnectCompleteRequestSerializer,

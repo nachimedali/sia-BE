@@ -44,6 +44,16 @@ PLANS: list[dict[str, Any]] = [
         "trial_days": 0,
         "trial_post_quota": 6,
         "max_workspaces": 1,
+        # --- planning surfaces (Phase 3, P3-03/P3-04/P3-10) ---------------
+        # Columns landed in Phase 0 and sat at their model defaults until
+        # Phase 3 read them. `max_campaigns: 0` meant *nobody could create a
+        # campaign* the moment the quota check went live, which is what
+        # seeding these is fixing. Admin-editable like every other commercial
+        # number here (Part 7 rule 10).
+        "counts_docs_against_quota": False,
+        "max_campaigns": 1,
+        "max_labels": 5,
+        "included_views": 2,
         "price_per_workspace_cents": 0,
         "features": {
             "trend_engine": False,
@@ -81,6 +91,16 @@ PLANS: list[dict[str, Any]] = [
         "max_workspace_members": 1,
         "max_products": 1,
         "trial_days": 0,
+        # --- planning surfaces (Phase 3, P3-03/P3-04/P3-10) ---------------
+        # Columns landed in Phase 0 and sat at their model defaults until
+        # Phase 3 read them. `max_campaigns: 0` meant *nobody could create a
+        # campaign* the moment the quota check went live, which is what
+        # seeding these is fixing. Admin-editable like every other commercial
+        # number here (Part 7 rule 10).
+        "counts_docs_against_quota": False,
+        "max_campaigns": 2,
+        "max_labels": 10,
+        "included_views": 3,
         "features": {
             "trend_engine": False,
             "repurposing": False,
@@ -112,6 +132,16 @@ PLANS: list[dict[str, Any]] = [
         "price_per_workspace_cents": 3700,
         "max_workspaces": 3,
         "sort_order": 1,
+        # --- planning surfaces (Phase 3, P3-03/P3-04/P3-10) ---------------
+        # Columns landed in Phase 0 and sat at their model defaults until
+        # Phase 3 read them. `max_campaigns: 0` meant *nobody could create a
+        # campaign* the moment the quota check went live, which is what
+        # seeding these is fixing. Admin-editable like every other commercial
+        # number here (Part 7 rule 10).
+        "counts_docs_against_quota": False,
+        "max_campaigns": 20,
+        "max_labels": 40,
+        "included_views": 20,
         "monthly_ai_credits": 150,
         "included_videos": 4,
         "max_social_accounts": 5,
@@ -149,6 +179,16 @@ PLANS: list[dict[str, Any]] = [
         "price_per_workspace_cents": 9700,
         "max_workspaces": 10,
         "sort_order": 2,
+        # --- planning surfaces (Phase 3, P3-03/P3-04/P3-10) ---------------
+        # Columns landed in Phase 0 and sat at their model defaults until
+        # Phase 3 read them. `max_campaigns: 0` meant *nobody could create a
+        # campaign* the moment the quota check went live, which is what
+        # seeding these is fixing. Admin-editable like every other commercial
+        # number here (Part 7 rule 10).
+        "counts_docs_against_quota": False,
+        "max_campaigns": -1,
+        "max_labels": -1,
+        "included_views": -1,
         "monthly_ai_credits": 400,
         "included_videos": 12,
         "max_social_accounts": 10,

@@ -29,6 +29,7 @@ from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
 from content.editing.base import CropBox
 from content.models import (
+    ContentKind,
     MediaAsset,
     Platform,
     Post,
@@ -128,6 +129,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         because a typo that returns everything is worse than one that 400s.
         """
         queryset = super().get_queryset()
+        queryset = self._filter_by_content_kind(queryset)
         statuses = self.request.query_params.getlist("status")
         if not statuses:
             return queryset
@@ -141,6 +143,24 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             )
         return queryset.filter(status__in=statuses)
 
+    def _filter_by_content_kind(self, queryset: Any) -> Any:
+        """`?content_kind=` — the calendar and the list both show documents and
+        social posts together, so narrowing to one is a filter rather than a
+        separate endpoint. That is the whole reason `DOC` is a subtype and not a
+        sibling model (P3-01).
+        """
+        kinds = self.request.query_params.getlist("content_kind")
+        if not kinds:
+            return queryset
+        unknown = sorted(set(kinds) - set(ContentKind.values))
+        if unknown:
+            raise OCCSError(
+                f"Unknown content kind: {', '.join(unknown)}.",
+                code="invalid_content_kind",
+                detail={"content_kind": unknown},
+            )
+        return queryset.filter(content_kind__in=kinds)
+
     def perform_create(self, serializer: BaseSerializer[Post]) -> None:
         assert isinstance(serializer, PostSerializer)  # always this view's own serializer_class
         data = serializer.validated_data
@@ -150,6 +170,8 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             master_body=data.get("master_body", ""),
             category=data.get("category"),
             media_assets=data.get("media_asset_ids", []),
+            content_kind=data.get("content_kind", ContentKind.SOCIAL),
+            doc_body=data.get("doc_body"),
         )
 
     def perform_update(self, serializer: BaseSerializer[Post]) -> None:
@@ -645,15 +667,28 @@ class PlatformRuleListView(APIView):
                     {
                         "platform": platform,
                         "char_limit": rule.char_limit,
-                        "max_media": rule.max_media,
-                        "allowed_media_kinds": sorted(rule.allowed_media_kinds),
                         "supports_thread": rule.supports_thread,
+                        # Per `(platform, format)` since P4-05 — the composer
+                        # needs the cap for the format the user actually picked,
+                        # and a platform-level number would be the loosest of
+                        # them, which is the one value that is never right.
+                        "formats": [
+                            {
+                                "format": name,
+                                "max_media": spec.max_media,
+                                "min_media": spec.min_media,
+                                "allowed_media_kinds": sorted(spec.allowed_media_kinds),
+                                "char_limit": spec.char_limit or rule.char_limit,
+                            }
+                            for name, spec in sorted(rule.formats.items())
+                        ],
                         "options": [
                             {
                                 "key": option.key,
                                 "kind": option.kind,
                                 "label": option.label,
                                 "choices": list(option.choices),
+                                "source": option.source,
                                 "max_length": option.max_length,
                                 "default": option.default,
                                 "required": option.required,
