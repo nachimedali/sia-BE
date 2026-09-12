@@ -54,6 +54,13 @@ COLLABORATION_V2 = "collaboration_v2"
 #: meaning when the flag moves in either direction.
 PLANNING_V3 = "planning_v3"
 
+#: Phase 5 — the taste model, the candidate queue and the decision log. Off
+#: restores pre-phase behaviour: the taste surfaces answer 404, and autopilot
+#: keeps producing drafts exactly as it did. What the flag does **not** restore
+#: is auto-landing on a calendar — C-01 retired that outright, because Part 7
+#: rule 13 admits no flag that skips the human.
+TASTE_V5 = "taste_v5"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
@@ -62,6 +69,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
     PLANNING_V3: True,
+    TASTE_V5: True,
 }
 
 

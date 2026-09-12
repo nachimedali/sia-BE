@@ -92,6 +92,11 @@ from reminders.views import (
     ReminderSnoozeView,
     ReminderViewSet,
 )
+from taste.views import (
+    ContentCandidateViewSet,
+    RuleSetViewSet,
+    TasteProfileViewSet,
+)
 from tools.views import ToolListView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
 from workspaces.views import (
@@ -118,6 +123,9 @@ router.register("labels", LabelViewSet, basename="label")
 router.register("saved-views", SavedViewViewSet, basename="saved-view")
 router.register("timetables", TimetableViewSet, basename="timetable")
 router.register("bulk-operations", BulkOperationViewSet, basename="bulk-operation")
+router.register("taste-profiles", TasteProfileViewSet, basename="taste-profile")
+router.register("candidates", ContentCandidateViewSet, basename="candidate")
+router.register("rulesets", RuleSetViewSet, basename="ruleset")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")

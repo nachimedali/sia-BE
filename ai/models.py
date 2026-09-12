@@ -132,6 +132,20 @@ class Generation(models.Model):
     is_batch = models.BooleanField(default=False)
     provider = models.CharField(max_length=64, blank=True)
     model = models.CharField(max_length=64, blank=True)
+
+    # --- provenance (P5-15) ------------------------------------------------
+    # **Attribution is impossible without all of these.** A change in
+    # acceptance rate otherwise has five candidate causes — the model, the
+    # prompt, the taste profile, the rule set, or the content itself — and no
+    # way to tell them apart. `provider`/`model` and the token counts above
+    # cover the first and the cost; these three cover the rest.
+    #
+    # Null on a generation that predates Phase 5, and on any run with no taste
+    # profile behind it. Null rather than zero: "we did not record it" and
+    # "version 0" are different claims, and only the first is true.
+    taste_profile_version = models.PositiveIntegerField(null=True, blank=True)
+    ruleset_version = models.PositiveIntegerField(null=True, blank=True)
+    prompt_template_version = models.CharField(max_length=40, blank=True)
     tokens_in = models.PositiveIntegerField(default=0)
     tokens_out = models.PositiveIntegerField(default=0)
     credits_charged = models.PositiveIntegerField(default=0)
@@ -156,6 +170,16 @@ class Generation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind} {self.mode} {self.pk} ({self.status})"
+
+    @property
+    def model_identity(self) -> str:
+        """`provider/model`, or whichever half is known.
+
+        One string because that is what a `Decision` records and what a digest
+        groups by — a reader comparing the two halves separately would have to
+        reimplement this join, and would eventually do it differently.
+        """
+        return "/".join(part for part in (self.provider, self.model) if part)
 
 
 class GenerationVariant(models.Model):

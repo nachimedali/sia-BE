@@ -69,6 +69,11 @@ def autopilot_product(autopilot_workspace: Any, make_png_upload: Any) -> Any:
 
 @pytest.fixture
 def autopilot_config(autopilot_product: Any, generation_costs: None) -> Any:
+    """A configured autopilot — which since Phase 5 means a configured *brand*
+    too: a run refuses without an active taste profile, because a draft that
+    could never be approved is one the customer paid for and cannot use."""
     from products.models import AutopilotConfig
+    from taste.services.profiles import activate, create_profile
 
+    activate(create_profile(workspace=autopilot_product.workspace))
     return AutopilotConfig.objects.create(product=autopilot_product, enabled=True)

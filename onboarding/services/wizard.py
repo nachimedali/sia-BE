@@ -147,4 +147,18 @@ def complete_onboarding(workspace: Workspace, user: User) -> Workspace:
         workspace.onboarding_complete = True
         workspace.save(update_fields=["onboarding_complete", "updated_at"])
 
+        # **Seed a first taste profile** (P5-04). Inferred from whatever the
+        # brand has already published, left *inactive* for the user to correct.
+        # A blank profile at first run is the single largest predictor of early
+        # churn, and asking somebody to describe their own voice before the
+        # product has done anything for them is how that happens.
+        #
+        # Inside the `if` so a re-completion does not disturb a profile the
+        # user has since written, and imported at call time because
+        # `taste.services` reads `content.models`, which reads this app's
+        # workspace in turn.
+        from taste.services.seeding import seed_profile
+
+        seed_profile(workspace=workspace, created_by=user)
+
     return workspace

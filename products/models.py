@@ -241,6 +241,21 @@ class AutopilotDraft(models.Model):
         on_delete=models.SET_NULL,
         related_name="autopilot_drafts",
     )
+    #: The reviewable proposal this slot produced (C-01, P5-07). **The draft
+    #: is autopilot's slot bookkeeping — `scheduled_for`, `strategy`, the
+    #: platform rotation — and the candidate is the thing a person judges.**
+    #: Approval goes through `taste.services.candidates`, so a `Decision` is
+    #: written before anything becomes a `Post`; nothing here constructs one.
+    #:
+    #: Nullable for the rows that predate Phase 5, which have no candidate and
+    #: never will — backfilling one would invent a review that never happened.
+    candidate = models.ForeignKey(
+        "taste.ContentCandidate",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="autopilot_drafts",
+    )
     kind = models.CharField(max_length=8, choices=AutopilotDraftKind.choices)
     platform = models.CharField(max_length=16, blank=True)
     caption = models.TextField(blank=True)
