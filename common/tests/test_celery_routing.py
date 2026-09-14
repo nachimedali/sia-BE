@@ -43,6 +43,10 @@ def test_every_queue_is_declared() -> None:
         ("ai.tasks.video_render", "media_q"),
         ("ai.tasks.generate_image", "ai_q"),
         ("analytics.tasks.poll_metrics", "metrics_q"),
+        # Report rendering is measurement work on the measurement pool
+        # (P6-05/P6-07): batch posture, and a slow render must never sit in
+        # front of a publish.
+        ("analytics.tasks.run_due_reports", "metrics_q"),
         ("trends.tasks.extract_recipes", "trends_q"),
         ("notifications.tasks.deliver_notification", "notify_q"),
     ],

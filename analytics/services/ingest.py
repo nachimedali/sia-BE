@@ -494,6 +494,8 @@ def snapshot_accounts() -> int:
             )
             continue
 
+        _capture_demographics(account, provider, moment)
+
         followers = stats.get("followers")
         _snapshot, created = AccountSnapshot.objects.get_or_create(
             social_account=account,
@@ -611,3 +613,61 @@ def mark_bootstrapped(provider_key: str) -> None:
         provider_key=provider_key,
         defaults={"bootstrapped_at": timezone.now()},
     )
+
+
+def _capture_demographics(account: Any, provider: Any, moment: Any) -> None:
+    """Who follows this account, on the **same daily pass** as the follower
+    count (P6-01) — not a second ladder.
+
+    Demographics move slowly and the provider lags up to 48 hours, so a
+    tighter cadence would spend quota re-reading numbers that have not moved.
+
+    **A provider that declines writes an `UNAVAILABLE` row, not an empty
+    chart.** Below 100 followers the provider reports nothing (L-5), and the
+    difference between "we cannot see this yet" and "your audience is nobody"
+    is the whole reason `availability` exists.
+    """
+    from analytics.models import AudienceDemographic, Availability, DemographicDimension
+
+    fetch = getattr(provider, "fetch_demographics", None)
+    if fetch is None:
+        return
+
+    try:
+        breakdowns = fetch(
+            platform=account.platform, provider_account_id=account.provider_account_id
+        )
+    except MetricsError:
+        logger.warning("demographics fetch failed", exc_info=True, extra={"account_id": account.pk})
+        return
+
+    if not breakdowns:
+        # One row per dimension so the absence is visible per axis rather than
+        # inferred from a missing record — a surface cannot render "unavailable"
+        # for a row it never received.
+        for dimension in DemographicDimension.values:
+            AudienceDemographic.objects.get_or_create(
+                social_account=account,
+                dimension=dimension,
+                captured_at=moment,
+                defaults={
+                    "breakdown": None,
+                    "availability": Availability.UNAVAILABLE,
+                    "provider_key": getattr(provider, "key", ""),
+                },
+            )
+        return
+
+    for dimension, breakdown in breakdowns.items():
+        if dimension not in DemographicDimension.values:
+            continue
+        AudienceDemographic.objects.get_or_create(
+            social_account=account,
+            dimension=dimension,
+            captured_at=moment,
+            defaults={
+                "breakdown": breakdown,
+                "availability": Availability.MEASURED,
+                "provider_key": getattr(provider, "key", ""),
+            },
+        )

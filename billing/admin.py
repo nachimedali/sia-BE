@@ -224,6 +224,7 @@ class PlanAdmin(ImmutableCodeAdmin):
                     "scheduling_horizon_days",
                     "max_labels",
                     "max_campaigns",
+                    "max_tracked_competitors",
                     "included_views",
                     "version_history_days",
                     "storage_bytes",

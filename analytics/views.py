@@ -19,35 +19,62 @@ Repurposing *is* a paid feature (§4.1), so those three endpoints carry
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
+from django.conf import settings
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
 from analytics import webhooks
-from analytics.models import AudienceComment, RepurposeCandidate
+from analytics.models import (
+    AudienceComment,
+    AudienceDemographic,
+    Report,
+    ReportRun,
+    RepurposeCandidate,
+)
 from analytics.serializers import (
+    AudienceDemographicSerializer,
     AudienceReplyResultSerializer,
     AudienceReplySerializer,
     BestTimeSerializer,
     CommentSerializer,
+    CompetitorComparisonSerializer,
+    CompetitorSerializer,
     OverviewSerializer,
+    ReportRunRequestSerializer,
+    ReportRunSerializer,
+    ReportSerializer,
+    ReportShareLinkSerializer,
+    ReportShareSerializer,
     RepurposeCandidateSerializer,
     SentimentSummarySerializer,
+    SharedReportSerializer,
     TargetPerformanceSerializer,
 )
-from analytics.services import audience, repurposing, signals
-from billing.permissions import HasFeature
+from analytics.services import audience, report_share, reporting, repurposing, signals
+from billing.permissions import HasFeature, HasFlag
 from billing.services.entitlements import entitlements_for
-from common.exceptions import OCCSError
-from common.workspaces import request_workspace
-from workspaces.models import Workspace
+from billing.services.flags import ANALYTICS_V6
+from common.exceptions import OCCSError, StateConflict
+from common.mixins import WorkspaceScopedQuerySetMixin
+from common.pagination import DefaultPagination
+from common.throttling import IPTokenBucketThrottle
+from common.workspaces import authenticated_user, request_workspace
+from trends.services import competitors as competitor_service
+from workspaces.models import Permission, Workspace
+from workspaces.permissions import HasPermission
 
 REPURPOSE_FEATURE = "repurposing"
 
@@ -262,3 +289,323 @@ def _candidate(workspace: Workspace, pk: int) -> RepurposeCandidate:
         pk=pk,
         post__workspace=workspace,
     )
+
+
+# -----------------------------------------------------------------------------
+# Reporting (Phase 6)
+# -----------------------------------------------------------------------------
+def _report_permissions(action: str) -> list[Any]:
+    """Read with `analyze`, write with `edit`.
+
+    A report is an analysis surface, so viewing one is the `analyze`
+    permission rather than `view` — a member who may read posts is not
+    thereby entitled to the workspace's performance.
+    """
+    read = action in {"list", "retrieve", "runs"}
+    needed = Permission.ANALYZE if read else Permission.EDIT
+    return [
+        permission()
+        for permission in (IsAuthenticated, HasFlag(ANALYTICS_V6), HasPermission(needed))
+    ]
+
+
+class ReportViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Report]):
+    """Saved report definitions, and the runs they produce (P6-04).
+
+    The definition is declarative — `{kind, options}` sections — and rendering
+    lives in `services.reporting`, so the screen and the PDF are one code path
+    rather than two that agree today.
+    """
+
+    serializer_class = ReportSerializer
+    permission_classes: list[Any] = [IsAuthenticated, HasPermission(Permission.ANALYZE)]
+    pagination_class = DefaultPagination
+    queryset = Report.objects.select_related("created_by")
+
+    def get_permissions(self) -> Any:
+        return _report_permissions(self.action)
+
+    def perform_create(self, serializer: BaseSerializer[Report]) -> None:
+        serializer.save(
+            workspace=request_workspace(self.request), created_by=authenticated_user(self.request)
+        )
+
+    @extend_schema(
+        responses={200: ReportRunSerializer(many=True)},
+        summary="Every rendering of this report",
+    )
+    @action(detail=True, methods=["get"], url_path="runs")
+    def runs(self, request: Request, pk: str | None = None) -> Response:
+        runs = self.get_object().runs.all()
+        return Response(ReportRunSerializer(runs, many=True).data)
+
+    @extend_schema(
+        request=ReportRunRequestSerializer,
+        responses={201: ReportRunSerializer, 402: None},
+        summary="Render this report now",
+        description=(
+            "**402 when the window exceeds the plan's history horizon** — a "
+            "client-facing document with a quietly clipped range is worse than "
+            "an error, because nobody can tell by reading it (P6-09)."
+        ),
+    )
+    @action(detail=True, methods=["post"], url_path="render")
+    def render(self, request: Request, pk: str | None = None) -> Response:
+        report = self.get_object()
+        payload = ReportRunRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        ends_at = payload.validated_data.get("ends_at") or timezone.now()
+        starts_at = payload.validated_data.get("starts_at") or (
+            ends_at - dt.timedelta(days=report.window_days)
+        )
+        run = reporting.render_report(
+            report,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            requested_by=authenticated_user(request),
+        )
+        return Response(ReportRunSerializer(run).data, status=status.HTTP_201_CREATED)
+
+
+class _RunScopedView(APIView):
+    """Anything addressed by a run id.
+
+    One resolution, shared by the two views below rather than written twice:
+    the queryset is filtered by workspace, so another tenant's run is a 404 and
+    never a 403 (Part 7 rule 3).
+    """
+
+    permission_classes: list[Any] = [
+        IsAuthenticated,
+        HasFlag(ANALYTICS_V6),
+        HasPermission(Permission.ANALYZE),
+    ]
+
+    def run_or_404(self, request: Request, pk: int) -> ReportRun:
+        return get_object_or_404(
+            ReportRun.objects.filter(report__workspace=request_workspace(request)), pk=pk
+        )
+
+
+class ReportRunShareView(_RunScopedView):
+    """Share one rendered run and list who holds a link.
+
+    **Revoke is not optional machinery**, for the same reason it is not on a
+    `GUEST_VIEW` post link: a multi-use link cannot expire by being consumed,
+    so without an explicit close there is no way to answer "stop that person
+    seeing this" before the thirtieth day. It is the view below.
+    """
+
+    @extend_schema(
+        responses={200: ReportShareLinkSerializer(many=True)},
+        summary="Who this report has been shared with",
+    )
+    def get(self, request: Request, pk: int) -> Response:
+        links = self.run_or_404(request, pk).share_links.all()
+        return Response(ReportShareLinkSerializer(links, many=True).data)
+
+    @extend_schema(
+        request=ReportShareSerializer,
+        responses={201: ReportShareLinkSerializer},
+        summary="Share this report with someone who has no account",
+        description=(
+            "Returns the link row, **never the raw token** — that exists once, "
+            "in the response body's `url`, so a later read of this list cannot "
+            "replay it."
+        ),
+    )
+    def post(self, request: Request, pk: int) -> Response:
+        run = self.run_or_404(request, pk)
+        payload = ReportShareSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        try:
+            link, raw = report_share.issue(
+                run,
+                created_by=authenticated_user(request),
+                email=payload.validated_data.get("email", ""),
+            )
+        except ValueError as error:
+            # 409: the run exists and the caller may see it, but it is in the
+            # wrong state. No permission and no upgrade changes that.
+            raise StateConflict(str(error)) from error
+
+        body = dict(ReportShareLinkSerializer(link).data)
+        body["url"] = f"{settings.SITE_URL}/{report_share.ROUTE}/{raw}"
+        return Response(body, status=status.HTTP_201_CREATED)
+
+
+class ReportShareRevokeView(_RunScopedView):
+    @extend_schema(
+        request=None,
+        responses={204: None},
+        summary="Close a report share link",
+        description="Idempotent — revoking a closed link is 204, not 409.",
+    )
+    def post(self, request: Request, pk: int, link_id: int) -> Response:
+        run = self.run_or_404(request, pk)
+        link = get_object_or_404(run.share_links, pk=link_id)
+        report_share.revoke(link)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SharedReportThrottle(IPTokenBucketThrottle):
+    """Generous, like the review one. A client reloading a report on a shaky
+    connection must never see this; it is defence in depth against naive
+    enumeration, which a 256-bit token already makes infeasible."""
+
+    scope = "analytics:shared-report"
+    capacity = 60
+    refill_per_second = 1
+
+
+class SharedReportView(APIView):
+    """The public, token-scoped read (P6-06).
+
+    No login — the token is the credential, exactly as on the reminder packet
+    and the review packet. A token is not a workspace-scoped pk, so the tenancy
+    sweep has nothing to walk here and `report_share.resolve` is the access
+    control instead.
+    """
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+    throttle_classes: list[Any] = [SharedReportThrottle]
+
+    @extend_schema(
+        responses={200: SharedReportSerializer},
+        summary="Read a report from a shared link",
+        description=(
+            "Returns the run's **frozen** payload. A figure somebody quoted in "
+            "a meeting still says what it said, however the numbers have moved "
+            "since."
+        ),
+        auth=[],
+    )
+    def get(self, request: Request, token: str) -> Response:
+        link = report_share.resolve(token)
+        if link is None:
+            raise NotFound("This link is invalid, expired or has been revoked.")
+        return Response(SharedReportSerializer(report_share.guest_context(link)).data)
+
+
+class AudienceDemographicsView(_AnalyticsView):
+    """Who follows this workspace's accounts (P6-01).
+
+    The newest capture per `(account, dimension)`, including the `UNAVAILABLE`
+    ones — a dimension the provider declined is a row that says so, because a
+    surface cannot render "we cannot see this yet" for an axis it never
+    received.
+    """
+
+    permission_classes: list[Any] = [
+        IsAuthenticated,
+        HasFlag(ANALYTICS_V6),
+        HasPermission(Permission.ANALYZE),
+    ]
+
+    @extend_schema(
+        responses={200: AudienceDemographicSerializer(many=True)},
+        summary="Audience demographics per connected account",
+    )
+    def get(self, request: Request) -> Response:
+        workspace = self.workspace(request)
+        rows = (
+            AudienceDemographic.objects.filter(social_account__workspace=workspace)
+            .select_related("social_account")
+            .order_by("social_account_id", "dimension", "-captured_at")
+        )
+        newest: dict[tuple[int, str], Any] = {}
+        for row in rows:
+            newest.setdefault((row.social_account_id, row.dimension), row)
+        return Response(AudienceDemographicSerializer(list(newest.values()), many=True).data)
+
+
+class _CompetitorView(_AnalyticsView):
+    """Shared permissions for the three competitor routes.
+
+    A base rather than one view inheriting another: subclassing a view that
+    already declares `get`/`post` would silently publish those verbs on the
+    child's URL too, which is how a detail route ends up answering a list.
+    """
+
+    permission_classes: list[Any] = [
+        IsAuthenticated,
+        HasFlag(ANALYTICS_V6),
+        HasPermission(Permission.ANALYZE),
+    ]
+
+
+class CompetitorView(_CompetitorView):
+    """The competitors this workspace watches (P6-08).
+
+    A trend source kind behind the scenes — the same five stages, the same
+    per-kind scoring partition — which is why there is no second pipeline to
+    configure here.
+    """
+
+    @extend_schema(
+        responses={200: CompetitorSerializer(many=True)},
+        summary="Tracked competitor accounts",
+    )
+    def get(self, request: Request) -> Response:
+        rows = competitor_service.tracked(self.workspace(request))
+        return Response(CompetitorSerializer(rows, many=True).data)
+
+    @extend_schema(
+        request=CompetitorSerializer,
+        responses={201: CompetitorSerializer, 402: None},
+        summary="Start tracking a competitor",
+        description=(
+            "**402 at the plan's cap** — the number of tracked competitors is "
+            "an admin-editable row, and each one costs a vendor call per "
+            "refresh."
+        ),
+    )
+    def post(self, request: Request) -> Response:
+        payload = CompetitorSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        source = competitor_service.track(
+            self.workspace(request),
+            platform=payload.validated_data["platform"],
+            handle=payload.validated_data["handle"],
+            label=payload.validated_data.get("label", ""),
+        )
+        return Response(CompetitorSerializer(source).data, status=status.HTTP_201_CREATED)
+
+
+class CompetitorDetailView(_CompetitorView):
+    @extend_schema(
+        responses={204: None},
+        summary="Stop tracking a competitor",
+        description=(
+            "Deactivated, not deleted: what was already measured is what a past "
+            "comparison was computed from."
+        ),
+    )
+    def delete(self, request: Request, pk: int) -> Response:
+        source = get_object_or_404(competitor_service.tracked(self.workspace(request)), pk=pk)
+        competitor_service.untrack(source)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CompetitorComparisonView(_CompetitorView):
+    @extend_schema(
+        responses={200: CompetitorComparisonSerializer},
+        summary="This workspace against the competitors it tracks",
+        description=(
+            "Both sides are interactions over audience — the same calculation, "
+            "which is what makes them comparable. An unreported follower count "
+            "gives a **null** rate, never a zero one."
+        ),
+    )
+    def get(self, request: Request) -> Response:
+        workspace = self.workspace(request)
+        platform = request.query_params.get("platform", "")
+        if not platform:
+            raise ValidationError({"platform": "Name the platform to compare on."})
+
+        competitor_service.refresh(workspace, platform=platform)
+        result = competitor_service.comparison(workspace, platform=platform)
+        return Response(CompetitorComparisonSerializer(result).data)

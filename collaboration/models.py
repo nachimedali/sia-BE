@@ -35,6 +35,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from common.tokens import digest as token_digest
 from common.visibility import Visibility
 
 
@@ -347,4 +348,11 @@ class ReviewLink(models.Model):
 
     @staticmethod
     def hash_token(raw: str) -> str:
-        return hashlib.sha256(raw.encode()).hexdigest()
+        """Delegates to `common.tokens` (P6-06).
+
+        Kept as a method because call sites read better for it, but there is
+        one implementation of the digest — two would eventually disagree, and
+        a review link and a report share hashing differently would be a quiet,
+        permanent authentication difference between surfaces that look alike.
+        """
+        return token_digest(raw)

@@ -36,9 +36,17 @@ from analytics.views import (
     AnalyticsPostsView,
     AnalyticsSentimentView,
     AudienceCommentReplyView,
+    AudienceDemographicsView,
+    CompetitorComparisonView,
+    CompetitorDetailView,
+    CompetitorView,
+    ReportRunShareView,
+    ReportShareRevokeView,
+    ReportViewSet,
     RepurposeAcceptView,
     RepurposeDismissView,
     RepurposeQueueView,
+    SharedReportView,
     ZernioCommentWebhookView,
 )
 from billing.views import (
@@ -130,6 +138,7 @@ router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
 router.register("reminders", ReminderViewSet, basename="reminder")
+router.register("reports", ReportViewSet, basename="report")
 router.register("channels", SocialAccountViewSet, basename="social-account")
 router.register("workspaces/members", MembershipViewSet, basename="membership")
 
@@ -205,6 +214,39 @@ urlpatterns = [
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
     path("analytics/comments/", AnalyticsCommentsView.as_view(), name="analytics-comments"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
+    # --- Phase 6: demographics and competitors ---
+    # Both answer for the caller's own workspace, so there is no id for the
+    # tenancy sweep to walk; the competitor detail route resolves its pk
+    # through `competitors.tracked`, which is workspace-filtered.
+    path(
+        "analytics/demographics/",
+        AudienceDemographicsView.as_view(),
+        name="analytics-demographics",
+    ),
+    path("analytics/competitors/", CompetitorView.as_view(), name="analytics-competitors"),
+    path(
+        "analytics/competitors/<int:pk>/",
+        CompetitorDetailView.as_view(),
+        name="analytics-competitor-detail",
+    ),
+    path(
+        "analytics/competitors/comparison/",
+        CompetitorComparisonView.as_view(),
+        name="analytics-competitor-comparison",
+    ),
+    # --- Phase 6: report shares ---
+    # `{pk}` is a run, resolved through a workspace-filtered queryset inside
+    # the view, so another tenant's run is a 404 and never a 403.
+    path("reports/runs/<int:pk>/share/", ReportRunShareView.as_view(), name="report-share"),
+    path(
+        "reports/runs/<int:pk>/share/<int:link_id>/revoke/",
+        ReportShareRevokeView.as_view(),
+        name="report-share-revoke",
+    ),
+    # Public and token-scoped, exactly like the review and reminder packets: a
+    # token is not a workspace-scoped pk, so the sweep has nothing to walk and
+    # `report_share.resolve` is the access control.
+    path("shared-reports/<str:token>/", SharedReportView.as_view(), name="shared-report"),
     # L-4a. A plain path like its siblings, and the `{pk}` is resolved through
     # a workspace-filtered queryset inside the view — another tenant's comment
     # id is a 404, not a 403 (Part 7 rule 3).

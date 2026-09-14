@@ -245,6 +245,11 @@ class Plan(CatalogueItem):
     included_views = models.IntegerField(default=0)
     max_labels = models.IntegerField(default=0)
     max_campaigns = models.IntegerField(default=0)
+    #: How many competitor accounts a workspace may track (P6-08). A row like
+    #: every other commercial number (Part 7 rule 10) — the ingest cost is one
+    #: vendor call per tracked account per refresh, so this is genuinely what
+    #: the plan is paying for.
+    max_tracked_competitors = models.IntegerField(default=0)
     storage_bytes = models.BigIntegerField(default=0)
     version_history_days = models.IntegerField(default=0)
 
@@ -302,6 +307,7 @@ QUOTA_FIELDS = frozenset(
         "included_views",
         "max_labels",
         "max_campaigns",
+        "max_tracked_competitors",
         "version_history_days",
         "comment_capture_interval_minutes",
     }

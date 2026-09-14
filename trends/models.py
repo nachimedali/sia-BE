@@ -41,6 +41,14 @@ class TrendSourceKind(models.TextChoices):
     REDDIT = "REDDIT", "Reddit"
     RSS = "RSS", "RSS feed"
     ACCOUNT = "ACCOUNT", "Tracked account"
+    #: A competitor this one workspace watches (P6-08). **A source kind, not a
+    #: parallel pipeline**: it ingests, normalises, scores and clusters through
+    #: the same five stages, and inherits stage 3's per-kind percentile
+    #: partition for free — which is the whole reason to model it here. A
+    #: competitor's follower count and a Reddit thread's are not comparable,
+    #: and scoring them in one pool would let whichever has the more generous
+    #: denominator win every cluster.
+    COMPETITOR = "COMPETITOR", "Competitor account"
 
 
 class TrendModality(models.TextChoices):
@@ -60,10 +68,31 @@ class TrendSource(models.Model):
     category = models.ForeignKey(
         "categories.Category", on_delete=models.CASCADE, related_name="trend_sources"
     )
+    #: **Null is the shared corpus; a workspace is a private source** (P6-08).
+    #: Every source before Phase 6 was category-shared, which is what makes the
+    #: trend engine cheap — one extraction serves every workspace in a
+    #: category. A competitor list is not shareable: who a brand watches is
+    #: competitive information about that brand, so its source is owned, its
+    #: items never enter the shared window, and `ingest.sources_for` filters on
+    #: null rather than trusting each caller to remember.
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="trend_sources",
+    )
     platform = models.CharField(max_length=32, choices=Platform.choices)
     kind = models.CharField(max_length=24, choices=TrendSourceKind.choices)
+    #: What to call this source on screen — a competitor's brand name. Blank on
+    #: a shared source, which is named by its category and kind.
+    label = models.CharField(max_length=120, blank=True)
     vendor = models.CharField(max_length=60, blank=True)
     query = models.JSONField(default=dict, blank=True)
+    #: The account this source follows, on a kind that follows one. Its own
+    #: column rather than a key inside `query` because it is what the unique
+    #: constraint is built on, and a JSON key cannot carry one.
+    handle = models.CharField(max_length=200, blank=True)
     is_active = models.BooleanField(default=True)
 
     #: The newest `posted_at` this source has already yielded. Ingest asks only
@@ -77,10 +106,20 @@ class TrendSource(models.Model):
     class Meta:
         ordering: ClassVar[list[str]] = ["category__name", "platform", "kind"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
+            # Shared sources keep the original identity. Postgres treats every
+            # null as distinct, so a workspace-owned source needs its own
+            # constraint or two workspaces could not track the same competitor
+            # — and one workspace could track it twice.
             models.UniqueConstraint(
                 fields=["category", "platform", "kind", "vendor"],
-                name="unique_trend_source_per_category_platform_kind_vendor",
-            )
+                condition=models.Q(workspace__isnull=True),
+                name="unique_shared_trend_source",
+            ),
+            models.UniqueConstraint(
+                fields=["workspace", "platform", "kind", "handle"],
+                condition=models.Q(workspace__isnull=False),
+                name="unique_tracked_source_per_workspace",
+            ),
         ]
 
     def __str__(self) -> str:
