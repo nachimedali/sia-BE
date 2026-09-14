@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from celery import shared_task
 
-from analytics.services import ingest, repurposing
+from analytics.services import ingest, repurposing, schedules
 
 
 @shared_task(name="analytics.tasks.capture_due_metrics")
@@ -31,3 +31,15 @@ def snapshot_accounts() -> int:
 @shared_task(name="analytics.tasks.scan_repurpose_candidates")
 def scan_repurpose_candidates() -> int:
     return repurposing.scan_all()
+
+
+@shared_task(name="analytics.tasks.run_due_reports")
+def run_due_reports() -> int:
+    """Monthly reports, in each workspace's own zone (P6-07).
+
+    Hourly rather than monthly, because "the first of the month" happens
+    fourteen times across the zones we serve — one monthly tick would be the
+    wrong instant for nearly everybody. `is_due` is what stops that becoming
+    24 documents: a report is owed only while no run covers its window.
+    """
+    return schedules.run_due()

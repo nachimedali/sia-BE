@@ -185,5 +185,55 @@
       "lang": "en",
       "raw_metrics": {}
     }
+  ],
+  "COMPETITOR": [
+    {
+      "external_id": "cmp-1",
+      "posted_at": "2026-08-02T09:00:00+00:00",
+      "body": "Our winter glaze collection lands today — six colours, small batch",
+      "modality": "IMAGE",
+      "author_handle": "rival-ceramics",
+      "author_followers": 48000,
+      "media_url": "https://example.test/cmp-1.jpg",
+      "lang": "en",
+      "raw_metrics": {
+        "likes": 2100,
+        "comments": 140,
+        "shares": 60,
+        "saves": 310
+      }
+    },
+    {
+      "external_id": "cmp-2",
+      "posted_at": "2026-08-01T17:30:00+00:00",
+      "body": "Behind the wheel: how a mug gets its handle",
+      "modality": "VIDEO",
+      "author_handle": "rival-ceramics",
+      "author_followers": 48000,
+      "media_url": "https://example.test/cmp-2.mp4",
+      "lang": "en",
+      "raw_metrics": {
+        "likes": 5400,
+        "comments": 420,
+        "shares": 260,
+        "saves": 900
+      }
+    },
+    {
+      "external_id": "cmp-3",
+      "posted_at": "2026-07-30T08:15:00+00:00",
+      "body": "Studio seconds sale this weekend only",
+      "modality": "IMAGE",
+      "author_handle": "rival-ceramics",
+      "author_followers": 48000,
+      "media_url": "https://example.test/cmp-3.jpg",
+      "lang": "en",
+      "raw_metrics": {
+        "likes": 640,
+        "comments": 25,
+        "shares": 8,
+        "saves": 40
+      }
+    }
   ]
 }

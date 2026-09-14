@@ -1,0 +1,12 @@
+Your report: {{ report.name }}
+
+{{ workspace.name }} has shared a report with you, covering
+{{ run.window_start|date:"j F Y" }} to {{ run.window_end|date:"j F Y" }}.
+
+{{ report_url }}
+
+You don't need an account. The figures are fixed as of when the report was
+produced, so this link will keep showing you exactly what you're reading today.
+
+This link is yours alone — don't forward it. It stops working in 30 days, and
+whoever sent it can close it sooner.

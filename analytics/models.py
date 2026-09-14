@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -479,3 +480,191 @@ class MetricCapability(models.Model):
     def __str__(self) -> str:
         state = "available" if self.available else "unavailable"
         return f"{self.provider_key}/{self.platform}/{self.metric_key} ({state})"
+
+
+class DemographicDimension(models.TextChoices):
+    """What a breakdown is *of*. A closed set, because a dimension the surface
+    cannot label is a chart with no axis."""
+
+    AGE = "AGE", "Age"
+    GENDER = "GENDER", "Gender"
+    COUNTRY = "COUNTRY", "Country"
+    CITY = "CITY", "City"
+    LANGUAGE = "LANGUAGE", "Language"
+
+
+class AudienceDemographic(ImmutableCapture):
+    """Who follows an account, captured on the **existing** daily snapshot
+    (P6-01) — not a new ladder.
+
+    Hung off the 01:30 job deliberately: demographics move slowly and the
+    provider lags up to 48 hours, so a tighter cadence would spend quota to
+    re-read numbers that have not changed.
+
+    **Availability is not optional here.** The provider needs ≥100 followers
+    before it will report a breakdown at all (L-5), and an account below that
+    threshold must render as *unavailable* rather than as a chart of zeros —
+    "we cannot see your audience yet" and "your audience is nobody" are
+    different statements, and only one of them is true.
+    """
+
+    social_account = models.ForeignKey(
+        "channels.SocialAccount", on_delete=models.CASCADE, related_name="demographics"
+    )
+    captured_at = models.DateTimeField()
+    dimension = models.CharField(max_length=16, choices=DemographicDimension.choices)
+    #: `{bucket: share}` — e.g. `{"25-34": 0.41}`. Null on an `UNAVAILABLE`
+    #: row, which carries no numbers at all rather than zeros.
+    breakdown = models.JSONField(null=True, blank=True)
+    availability = models.CharField(
+        max_length=12, choices=Availability.choices, default=Availability.MEASURED
+    )
+    provider_key = models.CharField(max_length=32, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-captured_at"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["social_account", "dimension", "captured_at"],
+                name="one_demographic_per_account_dimension_capture",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.social_account_id} {self.dimension} ({self.availability})"
+
+
+# -----------------------------------------------------------------------------
+# Reporting (Phase 6)
+# -----------------------------------------------------------------------------
+class ReportSchedule(models.TextChoices):
+    NONE = "NONE", "On demand only"
+    MONTHLY = "MONTHLY", "Every month"
+
+
+class Report(models.Model):
+    """A saved, **declarative** report (P6-04).
+
+    `sections` is a list of `{kind, options}` — what to include, never how to
+    draw it. Rendering lives in `services.reporting` and the render port, so
+    the same definition produces the on-screen view and the PDF. A report whose
+    stored shape was a layout would have to be migrated every time the design
+    moved.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="reports"
+    )
+    name = models.CharField(max_length=120)
+    sections = models.JSONField(default=list, blank=True)
+    schedule = models.CharField(
+        max_length=8, choices=ReportSchedule.choices, default=ReportSchedule.NONE
+    )
+    #: How far back a run covers. Bounded by `analytics_history_days` at render
+    #: time rather than here, because a plan change must not silently rewrite a
+    #: saved report — it should fail loudly the next time it runs (P6-09).
+    window_days = models.PositiveIntegerField(default=30)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reports",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["name"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["workspace", "name"], name="report_name_is_unique_per_workspace"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class ReportRunStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    READY = "READY", "Ready"
+    FAILED = "FAILED", "Failed"
+
+
+class ReportRun(models.Model):
+    """One rendering of one report over one window.
+
+    Kept rather than regenerated on demand: a number a client was shown last
+    month must still say what it said, even after later captures change the
+    totals. A report that silently re-renders is a report nobody can cite.
+    """
+
+    report = models.ForeignKey(Report, on_delete=models.CASCADE, related_name="runs")
+    window_start = models.DateTimeField()
+    window_end = models.DateTimeField()
+    status = models.CharField(
+        max_length=8, choices=ReportRunStatus.choices, default=ReportRunStatus.PENDING
+    )
+    #: The rendered sections, exactly as they were computed. The PDF is derived
+    #: from this, so what a viewer reads on screen and what they download are
+    #: the same numbers by construction rather than by two code paths agreeing.
+    payload = models.JSONField(default=dict, blank=True)
+    document = models.FileField(upload_to="reports/", blank=True)
+    error_detail = models.JSONField(default=dict, blank=True)
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="report_runs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at", "-id"]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["report", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.report_id} {self.window_start:%Y-%m-%d} ({self.status})"
+
+
+class ReportShareLink(models.Model):
+    """A report sent to somebody with no account (P6-06).
+
+    **The Phase 2 `GUEST_VIEW` pattern, reused rather than reinvented**: minted
+    at send, only the SHA-256 digest stored, expiring, revocable, and resolved
+    by one lookup that is itself the access control. The digest comes from
+    `common.tokens`, so a review link and a report share cannot end up hashing
+    differently.
+
+    Multi-use like `GUEST_VIEW`, and revocable for the same reason: a link that
+    cannot expire by being consumed has no other way to be closed.
+    """
+
+    run = models.ForeignKey(ReportRun, on_delete=models.CASCADE, related_name="share_links")
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    email = models.EmailField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="report_share_links",
+    )
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"share of run {self.run_id}"
+
+    @property
+    def is_usable(self) -> bool:
+        return self.revoked_at is None and self.expires_at > timezone.now()

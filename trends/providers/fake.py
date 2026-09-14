@@ -80,13 +80,20 @@ class FakeTrendVendor:
         self, *, query: dict[str, Any], since: dt.datetime | None, limit: int
     ) -> list[RawTrendItem]:
         self.calls.append({"query": query, "since": since, "limit": limit})
+        # A tracked-account source names *whose* posts it wants, and two
+        # competitors must not return the same corpus under the same ids —
+        # `(source, external_id)` is the identity ingest upserts on, so an
+        # unstamped fake would make every competitor look like one account.
+        handle = str(query.get("handle") or "")
         items = [
             RawTrendItem(
-                external_id=str(entry["external_id"]),
+                external_id=f"{handle}:{entry['external_id']}"
+                if handle
+                else str(entry["external_id"]),
                 posted_at=_posted_at(entry),
                 body=str(entry.get("body", "")),
                 modality=str(entry.get("modality", "TEXT")),
-                author_handle=str(entry.get("author_handle", "")),
+                author_handle=handle or str(entry.get("author_handle", "")),
                 author_followers=int(entry.get("author_followers", 0)),
                 media_url=str(entry.get("media_url", "")),
                 lang=str(entry.get("lang", "")),

@@ -15,6 +15,7 @@ returned a constant would let the decay classification pass without working.
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 from django.utils import timezone
 
@@ -51,6 +52,10 @@ class FakeMetricsProvider:
         self.pending: set[str] = set()
         self.delta_cursor = ""
         self.delta_batches: list[list[RawMetricPayload]] = []
+        #: Accounts the fake reports as below the provider's 100-follower
+        #: threshold, so a test can exercise the unavailable path without a
+        #: real underpopulated account (L-5, P6-01).
+        self.tiny_accounts: set[str] = set()
 
     # --- capability ------------------------------------------------------
     def supports(self, platform: str, metric: str) -> bool:
@@ -124,6 +129,22 @@ class FakeMetricsProvider:
         seen = self.calls.count(provider_account_id)
         self.calls.append(provider_account_id)
         return {"followers": 1000 + seen * 25, "following": 180, "total_posts": 42 + seen}
+
+    def fetch_demographics(
+        self, *, platform: str, provider_account_id: str
+    ) -> dict[str, Any] | None:
+        """`None` when the provider will not report — not an empty breakdown.
+
+        Below 100 followers the real provider declines, and a caller handed
+        `{}` would happily store a chart of nothing. `None` forces the
+        `UNAVAILABLE` row the surface renders as "we cannot see this yet".
+        """
+        if provider_account_id in self.tiny_accounts or platform in self.unsupported:
+            return None
+        return {
+            "AGE": {"18-24": 0.21, "25-34": 0.44, "35-44": 0.24, "45+": 0.11},
+            "COUNTRY": {"PT": 0.52, "ES": 0.23, "FR": 0.25},
+        }
 
     # --- plumbing --------------------------------------------------------
     def _bare(self, platform: str, provider_post_id: str, availability: str) -> RawMetricPayload:

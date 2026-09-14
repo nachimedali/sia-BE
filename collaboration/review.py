@@ -30,7 +30,6 @@ nothing", with no error anywhere to explain it.
 
 from __future__ import annotations
 
-import secrets
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
@@ -48,6 +47,7 @@ from collaboration.models import (
     Thread,
 )
 from common.mail import Email, get_mail_sender
+from common.tokens import mint as mint_token
 from common.visibility import Visibility
 from content.models import Post
 
@@ -76,14 +76,14 @@ def issue(
         post=post, purpose=purpose, email=normalised, revoked_at__isnull=True
     ).update(revoked_at=timezone.now())
 
-    raw = secrets.token_urlsafe(32)
+    raw, token_hash = mint_token()
     link = ReviewLink.objects.create(
         post=post,
         purpose=purpose,
         email=normalised,
         display_name=display_name,
         created_by=created_by,
-        token_hash=ReviewLink.hash_token(raw),
+        token_hash=token_hash,
         expires_at=timezone.now() + TTL[purpose],
     )
 

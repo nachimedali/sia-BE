@@ -247,6 +247,12 @@ SPECTACULAR_SETTINGS = {
         # `status`; unnamed, spectacular mints "StatusB3fEnum", which is
         # what a client would then have to import (P2-01).
         "ThreadStatusEnum": "collaboration.models.ThreadStatus",
+        # Two more on the bare name `status` (P6-04): a report's own schedule
+        # and a run's outcome. Left unnamed they become "Status6c9Enum" and
+        # friends — a hash a client would have to import and that moves the
+        # next time anything else adds a `status`.
+        "ReportScheduleEnum": "analytics.models.ReportSchedule",
+        "ReportRunStatusEnum": "analytics.models.ReportRunStatus",
     },
 }
 
@@ -335,6 +341,16 @@ CELERY_BEAT_SCHEDULE = {
         "task": "analytics.tasks.snapshot_accounts",
         "schedule": crontab(hour=1, minute=30),
     },
+    # Hourly, and deliberately not monthly: "the first of the month" arrives
+    # at a different instant in every zone we serve, so a single monthly tick
+    # would be the wrong moment for nearly every customer (P6-07). The job
+    # asks which reports are *owed* a run, so ticking 24 times produces one
+    # document, and a worker down over a boundary catches up rather than
+    # skipping the month.
+    "analytics-run-due-reports": {
+        "task": "analytics.tasks.run_due_reports",
+        "schedule": crontab(minute=35),
+    },
     # Nightly, as §8.9 specifies. After the capture and snapshot jobs, so it
     # scores against the freshest numbers rather than yesterday's.
     "analytics-scan-repurpose": {
@@ -381,6 +397,13 @@ STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 USE_FAKE_BILLING = env.bool("USE_FAKE_BILLING", default=not STRIPE_SECRET_KEY)
+
+# P6-05. No PDF engine ships yet — the real one needs a headless browser or a
+# typesetting library, which is a system dependency a fresh checkout must not
+# require (Part 7 rule 6). Defaults on, so every report path runs end to end
+# with the fake; flipping it off without wiring an engine raises loudly rather
+# than emitting a blank document.
+USE_FAKE_REPORT_RENDERER = env.bool("USE_FAKE_REPORT_RENDERER", default=True)
 
 # Public URL of the frontend. Email links point here, not at the API.
 SITE_URL = env("SITE_URL", default="http://localhost:3000")

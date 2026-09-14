@@ -52,6 +52,7 @@ PLANS: list[dict[str, Any]] = [
         # number here (Part 7 rule 10).
         "counts_docs_against_quota": False,
         "max_campaigns": 1,
+        "max_tracked_competitors": 0,
         "max_labels": 5,
         "included_views": 2,
         "price_per_workspace_cents": 0,
@@ -99,6 +100,7 @@ PLANS: list[dict[str, Any]] = [
         # number here (Part 7 rule 10).
         "counts_docs_against_quota": False,
         "max_campaigns": 2,
+        "max_tracked_competitors": 3,
         "max_labels": 10,
         "included_views": 3,
         "features": {
@@ -140,6 +142,7 @@ PLANS: list[dict[str, Any]] = [
         # number here (Part 7 rule 10).
         "counts_docs_against_quota": False,
         "max_campaigns": 20,
+        "max_tracked_competitors": 10,
         "max_labels": 40,
         "included_views": 20,
         "monthly_ai_credits": 150,
@@ -187,6 +190,7 @@ PLANS: list[dict[str, Any]] = [
         # number here (Part 7 rule 10).
         "counts_docs_against_quota": False,
         "max_campaigns": -1,
+        "max_tracked_competitors": -1,
         "max_labels": -1,
         "included_views": -1,
         "monthly_ai_credits": 400,

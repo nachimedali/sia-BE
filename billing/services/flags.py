@@ -61,6 +61,14 @@ PLANNING_V3 = "planning_v3"
 #: rule 13 admits no flag that skips the human.
 TASTE_V5 = "taste_v5"
 
+#: Phase 6 — saved reports, report runs and their PDFs, share links,
+#: audience demographics and competitor tracking. Off restores pre-phase
+#: behaviour: the reporting surfaces answer 404 rather than erroring, and the
+#: daily account snapshot goes back to recording a follower count and nothing
+#: else. Captures already taken stay where they are — a flag that deleted rows
+#: on the way down would not be a rollback, it would be a data loss.
+ANALYTICS_V6 = "analytics_v6"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
@@ -70,6 +78,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     COLLABORATION_V2: True,
     PLANNING_V3: True,
     TASTE_V5: True,
+    ANALYTICS_V6: True,
 }
 
 

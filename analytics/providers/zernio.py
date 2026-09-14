@@ -53,6 +53,26 @@ PROVIDER_KEY = "zernio"
 #: TikTok target's comment surface is `UNAVAILABLE`, never an empty thread.
 NO_COMMENT_PLATFORMS = frozenset({"tiktok"})
 
+#: Platform → the demographics endpoint that answers for it. **Declared, not
+#: branched**: a platform missing from this table reports its audience
+#: unavailable, which is the honest answer for Threads, LinkedIn and TikTok —
+#: Zernio publishes a demographics endpoint for none of them.
+DEMOGRAPHIC_ENDPOINTS: dict[str, str] = {
+    "instagram": "/v1/analytics/instagram/demographics/{account}",
+    "youtube": "/v1/analytics/youtube/demographics/{account}",
+    "facebook": "/v1/analytics/facebook/page-insights/{account}",
+}
+
+#: `DemographicDimension` value → the key Zernio returns it under. Kept here
+#: rather than in the model so the vendor's vocabulary stops at the port.
+DEMOGRAPHIC_KEYS: dict[str, str] = {
+    "AGE": "ageRanges",
+    "GENDER": "genders",
+    "COUNTRY": "countries",
+    "CITY": "cities",
+    "LANGUAGE": "languages",
+}
+
 #: Platforms whose analytics Zernio does not cover at all. Empty for the six
 #: platforms this system publishes to — Zernio's gaps (Reddit, Bluesky,
 #: Telegram, Snapchat) are all platforms we do not support. Kept as a named
@@ -267,6 +287,40 @@ class ZernioMetricsProvider:
             "total_posts": _first(account, "postCount", "posts"),
         }
 
+    def fetch_demographics(
+        self, *, platform: str, provider_account_id: str
+    ) -> dict[str, Any] | None:
+        """Who follows this account, or `None` where the vendor will not say.
+
+        **Coverage is a table, not a branch** — `DEMOGRAPHIC_ENDPOINTS` says
+        which platforms Zernio answers for at all, and a platform absent from
+        it returns `None` rather than an empty breakdown. The caller writes
+        that as `UNAVAILABLE`.
+
+        `None` also covers the two ways the vendor itself declines: fewer than
+        100 followers, and a breakdown that has not yet caught up (it lags up
+        to 48 hours). Both are "we cannot see this", and neither is a zero.
+        """
+        endpoint = DEMOGRAPHIC_ENDPOINTS.get(platform)
+        if endpoint is None:
+            return None
+
+        with _client() as client:
+            response = client.get(endpoint.format(account=provider_account_id))
+        # 404 is the vendor's answer for an account below the follower
+        # threshold, and 202 for a breakdown still being computed. Neither is
+        # an error worth retrying inside a daily job.
+        if response.status_code in (202, 404):
+            return None
+        body = self._json(response, label="Zernio demographics")
+
+        breakdowns: dict[str, Any] = {}
+        for dimension, key in DEMOGRAPHIC_KEYS.items():
+            shares = _shares(body.get(key))
+            if shares:
+                breakdowns[dimension] = shares
+        return breakdowns or None
+
     # --- plumbing --------------------------------------------------------
     def _payload_from(
         self, response: Any, *, platform: str, provider_post_id: str
@@ -366,3 +420,34 @@ def _reaction_counts(value: Any) -> dict[str, int] | None:
         except (TypeError, ValueError):
             continue
     return counts
+
+
+def _shares(raw: Any) -> dict[str, float] | None:
+    """A `{bucket: share}` map summing to 1, from either counts or shares.
+
+    Zernio returns absolute follower counts on some dimensions and percentages
+    on others, so normalising here is what stops every reader downstream from
+    having to guess which it is holding. Shares rather than counts because a
+    demographic breakdown is only ever read as a proportion, and a count would
+    additionally leak the follower total into a chart that never uses it.
+
+    `None` for a payload that is missing, malformed or entirely zero — an
+    all-zero breakdown is the vendor saying it has nothing, and dividing by it
+    would be the fabricated row Part 7 rule 12 forbids.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    values: dict[str, float] = {}
+    for bucket, value in raw.items():
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number >= 0:
+            values[str(bucket)] = number
+
+    total = sum(values.values())
+    if not values or total <= 0:
+        return None
+    return {bucket: round(number / total, 4) for bucket, number in values.items()}
