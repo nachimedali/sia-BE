@@ -91,6 +91,9 @@ app.conf.task_routes = {
     # bookkeeping posture rather than sitting anywhere near `publish_q`.
     "planning.tasks.*": {"queue": "media_q"},
     "learn.tasks.*": {"queue": "analyze_q"},
+    # Cohort benchmarks (P8) rebuild a projection over every contributor and
+    # aggregate it: the same minutes-to-hours batch posture as Learn.
+    "benchmarks.tasks.*": {"queue": "analyze_q"},
 }
 
 app.autodiscover_tasks()

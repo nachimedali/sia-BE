@@ -297,6 +297,13 @@ class Workspace(models.Model):
     timezone = models.CharField(max_length=64, default="UTC")
     regions = models.JSONField(default=list, blank=True)
     platforms = models.JSONField(default=list, blank=True)
+    #: The one market this brand is benchmarked in (P8-02), as an ISO 3166-1
+    #: alpha-2 code. Separate from `regions`, which is free text the wizard
+    #: collects for grounding ("PT", "Portugal" and "EN" all appear there): a
+    #: cohort key that could read "Portugal" for one brand and "PT" for another
+    #: splits one cohort into two, each too small to report. Blank until the
+    #: workspace opts into benchmarks, which is where it is asked for.
+    market = models.CharField(max_length=2, blank=True)
 
     # --- commercial ---
     # `plan`, `owner`, `trial_ends_at` and `stripe_customer_id` moved to
