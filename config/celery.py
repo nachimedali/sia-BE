@@ -14,6 +14,7 @@ its own worker deployment (implementation.md Phase 16.5).
 | metrics_q  | low               | silent retry, tolerate gaps                |
 | trends_q   | lowest            | silent retry, last corpus stays valid      |
 | notify_q   | high              | retry; someone is waiting to be told       |
+| analyze_q  | lowest, batch     | retries on the next schedule, never inline |
 """
 
 from __future__ import annotations
@@ -40,6 +41,16 @@ QUEUE_NAMES = (
     # out to a whole team at once, and a burst of notifications must not be
     # able to delay the reminder that tells someone to publish at 09:00.
     "notify_q",
+    # P7-01. Learn reads a whole campaign's captures and decisions and may sit
+    # on a provider for a narration call — minutes to hours is the expected
+    # shape, not a fault. Its own pool because that posture is the opposite of
+    # every other queue's: a digest that arrives late is fine, a digest that
+    # delays a publish is not, and a job this long would otherwise occupy a
+    # worker that something time-critical is waiting for. **Retries land on
+    # the next schedule rather than immediately** — the inputs are a trailing
+    # window, so nothing is lost by waiting and a provider outage does not
+    # become a retry storm.
+    "analyze_q",
 )
 
 app.conf.task_queues = tuple(Queue(name) for name in QUEUE_NAMES)
@@ -79,6 +90,7 @@ app.conf.task_routes = {
     # never be able to delay a scheduled publish — so they share `media_q`'s
     # bookkeeping posture rather than sitting anywhere near `publish_q`.
     "planning.tasks.*": {"queue": "media_q"},
+    "learn.tasks.*": {"queue": "analyze_q"},
 }
 
 app.autodiscover_tasks()

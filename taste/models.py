@@ -139,6 +139,18 @@ class RuleSet(models.Model):
     )
     version = models.PositiveIntegerField()
     is_active = models.BooleanField(default=False)
+    #: The digest that proposed this set, when Learn built it (P7-11). Null on
+    #: a set a human assembled, which is the honest answer rather than a gap.
+    #: `SET_NULL` rather than `CASCADE`: an accepted ruleset outlives the
+    #: document that suggested it, and deleting the digest must not delete the
+    #: rules a workspace is currently generating under.
+    derived_from = models.ForeignKey(
+        "learn.Digest",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="proposed_rulesets",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -172,18 +184,30 @@ class RuleKind(models.TextChoices):
 class Rule(models.Model):
     """One accepted conclusion.
 
-    `provenance` — the `Finding` this rule came from — **arrives with Phase 7**,
-    which is the phase that builds `Finding`. Adding a FK to a model that does
-    not exist is not possible, and a nullable integer pretending to be one is
-    worse than the column's absence: it would type-check, resolve to nothing,
-    and look like traceability. The same ordering call P2-06 made for
-    `Decision`. Acceptance criterion 11 ("a rule proposal traces backward to
-    the findings that produced it") is Phase 7's to satisfy.
+    `provenance` is the `Finding` this rule came from — added in Phase 7, the
+    phase that builds `Finding`, and the column acceptance criterion 11 rests
+    on: *a rule proposal traces backward to the specific findings and posts
+    that produced it*. Null on a rule a human wrote directly, which is not a
+    gap — it is the honest answer, and it is why the column is nullable rather
+    than defaulted to some placeholder finding.
     """
 
     ruleset = models.ForeignKey(RuleSet, on_delete=models.CASCADE, related_name="rules")
     kind = models.CharField(max_length=16, choices=RuleKind.choices)
     payload = models.JSONField(default=dict, blank=True)
+
+    #: The evidence (P7-11). `PROTECT` rather than `CASCADE`: deleting the
+    #: finding a rule was derived from would leave an accepted rule with a
+    #: dangling justification, which is worse than refusing the delete — the
+    #: rule is still in force either way, and only one of those outcomes can
+    #: still answer "why".
+    provenance = models.ForeignKey(
+        "learn.Finding",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="derived_rules",
+    )
 
     #: Who said yes, and when. Null on a *proposed* rule that nobody has
     #: accepted yet — which is how "proposed" and "active" are told apart
@@ -370,8 +394,25 @@ class Decision(AppendOnly):
 
     append_only_hint = "record a new decision instead of editing this one."
 
+    #: Exactly one of `candidate` / `rule` is set, enforced by a constraint
+    #: below. **A rule proposal is judged with the same vocabulary as a piece
+    #: of content** (P7-11): Learn proposes, a human accepts or rejects, and
+    #: the rejection is training signal in its own right. A separate table for
+    #: proposal verdicts would have split that dataset in two and left every
+    #: "what do we turn down" query to union them for ever.
     candidate = models.ForeignKey(
-        ContentCandidate, on_delete=models.CASCADE, related_name="decisions"
+        ContentCandidate,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="decisions",
+    )
+    rule = models.ForeignKey(
+        "taste.Rule",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="decisions",
     )
     #: The payload **exactly as the reviewer saw it**. Stored rather than read
     #: back off the candidate: an edit after the fact would otherwise rewrite
@@ -379,7 +420,10 @@ class Decision(AppendOnly):
     #: table exists to answer.
     payload_as_shown = models.JSONField(default=dict, blank=True)
 
-    taste_profile_version = models.PositiveIntegerField()
+    #: Nullable from Phase 7: a verdict on a *rule proposal* is not judged
+    #: against a taste profile version, and inventing one to satisfy a NOT NULL
+    #: would put a number in the attribution columns that means nothing.
+    taste_profile_version = models.PositiveIntegerField(null=True, blank=True)
     ruleset_version = models.PositiveIntegerField(null=True, blank=True)
     prompt_context = models.JSONField(default=dict, blank=True)
     model_identity = models.CharField(max_length=120, blank=True)
@@ -409,10 +453,25 @@ class Decision(AppendOnly):
         ordering: ClassVar[list[str]] = ["-created_at", "-id"]
         indexes: ClassVar[list[models.Index]] = [
             models.Index(fields=["candidate", "-created_at"]),
+            models.Index(fields=["rule", "-created_at"]),
             # "Why are we rejecting things this month" — the aggregation the
             # reason vocabulary exists for.
             models.Index(fields=["verdict", "reason_code"]),
         ]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            # In the database, not in a serializer. A decision about neither a
+            # candidate nor a rule is about nothing, and one about both cannot
+            # be aggregated as either — both are unrecoverable in an
+            # append-only table, so neither is allowed to be written at all.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(candidate__isnull=False, rule__isnull=True)
+                    | models.Q(candidate__isnull=True, rule__isnull=False)
+                ),
+                name="decision_is_about_exactly_one_subject",
+            ),
+        ]
 
     def __str__(self) -> str:
-        return f"{self.verdict} on candidate {self.candidate_id}"
+        subject = f"candidate {self.candidate_id}" if self.candidate_id else f"rule {self.rule_id}"
+        return f"{self.verdict} on {subject}"

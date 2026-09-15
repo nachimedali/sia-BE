@@ -78,6 +78,7 @@ from content.views import (
     PostViewSet,
     RecurrenceRuleViewSet,
 )
+from learn.views import DigestViewSet, ProposedRuleViewSet
 from notifications.views import NotificationListView, NotificationPreferenceView
 from onboarding.views import OnboardingCompleteView, OnboardingView
 from planning.views import (
@@ -139,6 +140,8 @@ router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
 router.register("reminders", ReminderViewSet, basename="reminder")
 router.register("reports", ReportViewSet, basename="report")
+router.register("digests", DigestViewSet, basename="digest")
+router.register("rule-proposals", ProposedRuleViewSet, basename="rule-proposal")
 router.register("channels", SocialAccountViewSet, basename="social-account")
 router.register("workspaces/members", MembershipViewSet, basename="membership")
 
