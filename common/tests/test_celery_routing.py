@@ -41,6 +41,9 @@ def test_every_queue_is_declared() -> None:
         # a queue anything time-critical shares.
         ("learn.tasks.run_learn", "analyze_q"),
         ("learn.tasks.close_due_campaigns", "analyze_q"),
+        # Cohort benchmarks (P8) read a whole window of every contributor's
+        # posts: the same batch posture as Learn, so the same pool.
+        ("benchmarks.tasks.refresh_benchmarks", "analyze_q"),
         # Periodic content bookkeeping shares the pool the billing sweeps use;
         # what matters is that it is *declared*, not that it is alone (P1-08,
         # P1-10).

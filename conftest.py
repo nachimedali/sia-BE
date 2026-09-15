@@ -19,6 +19,11 @@ from common.mail import _fake_sender
 from common.redis import get_redis
 from workspaces.services import approvals as approvals_service
 
+#: Phase 8's fixtures live with the app, and are registered here because
+#: pytest only lets the root conftest load a plugin: `tests/test_phase8_gates.py`
+#: sits outside `benchmarks/` and needs the same cohort-building fixtures.
+pytest_plugins = ["benchmarks.tests.fixtures"]
+
 PASSWORD = "correct-horse-battery-staple"
 
 

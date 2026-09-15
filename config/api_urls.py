@@ -49,6 +49,12 @@ from analytics.views import (
     SharedReportView,
     ZernioCommentWebhookView,
 )
+from benchmarks.views import (
+    BenchmarkGrantView,
+    BenchmarkListView,
+    BenchmarkParticipationView,
+    BenchmarkRevokeView,
+)
 from billing.views import (
     BillingPortalView,
     CreditLedgerView,
@@ -290,6 +296,24 @@ urlpatterns = [
     # same corpus (D11) — so there is no workspace-scoped object for the
     # tenancy sweep (A52) to walk.
     path("trends/", TrendListView.as_view(), name="trends"),
+    # Phase 8. Not ViewSets: each answers for the caller's own workspace, and
+    # the cohort rows behind them belong to no workspace at all.
+    path("benchmarks/", BenchmarkListView.as_view(), name="benchmarks"),
+    path(
+        "benchmarks/participation/",
+        BenchmarkParticipationView.as_view(),
+        name="benchmark-participation",
+    ),
+    path(
+        "benchmarks/participation/grant/",
+        BenchmarkGrantView.as_view(),
+        name="benchmark-participation-grant",
+    ),
+    path(
+        "benchmarks/participation/revoke/",
+        BenchmarkRevokeView.as_view(),
+        name="benchmark-participation-revoke",
+    ),
     path("trends/refresh/", TrendRefreshView.as_view(), name="trends-refresh"),
     # --- workspaces: collaboration & roles (design.md §8.8) ---
     # Plain paths: both answer for the caller's own workspace rather than an

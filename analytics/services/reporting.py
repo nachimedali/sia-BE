@@ -71,7 +71,7 @@ def ensure_within_horizon(
         )
 
 
-def _latest_per_target(workspace: Workspace, *, starts_at: Any, ends_at: Any) -> Any:
+def latest_per_target(workspace: Workspace, *, starts_at: Any, ends_at: Any) -> Any:
     """The newest analysable capture for each target in the window.
 
     Two queries rather than a window function: the ids come back first, then
@@ -107,7 +107,7 @@ def channel_totals(
     facts, and a zero row states the first while meaning the second.
     """
     rows = (
-        _latest_per_target(workspace, starts_at=starts_at, ends_at=ends_at)
+        latest_per_target(workspace, starts_at=starts_at, ends_at=ends_at)
         .values("post_target__platform")
         .annotate(
             # `distinct=True` because one target can contribute only one row

@@ -70,6 +70,7 @@ LOCAL_APPS = [
     "tools",
     "analytics",
     "learn",
+    "benchmarks",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -313,6 +314,14 @@ CELERY_BEAT_SCHEDULE = {
     "learn-close-due-campaigns": {
         "task": "learn.tasks.close_due_campaigns",
         "schedule": crontab(hour="*", minute=10),
+    },
+    # P8. Nightly, after the account snapshot (01:30) that sizes each post's
+    # cohort and after the overnight metric rungs, so a benchmark is never
+    # computed over a window it had only half measured. Projection and
+    # aggregation run as one task so their order cannot drift.
+    "benchmarks-refresh": {
+        "task": "benchmarks.tasks.refresh_benchmarks",
+        "schedule": crontab(hour=4, minute=40),
     },
     # Every minute, for the same reason the reminder scan is: "a post
     # scheduled for 09:00 goes at 09:00" (design.md §5.1) is not a promise a

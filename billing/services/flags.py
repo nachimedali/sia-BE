@@ -76,6 +76,14 @@ ANALYTICS_V6 = "analytics_v6"
 #: has already acted on would be a second surprise, not a recovery.
 LEARN_V7 = "learn_v7"
 
+#: Phase 8 — cohort benchmarks: consent, the projection, aggregation and the
+#: benchmark read. Off restores pre-phase behaviour: the benchmark surfaces
+#: answer 404, and the nightly job projects nothing for the organization — and
+#: purges what it had projected, so a flag switched off stops contribution the
+#: same night rather than leaving rows behind for the next aggregate. Consent
+#: records stay; they are the evidence of what was agreed and when.
+COHORT_V8 = "cohort_v8"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
@@ -87,6 +95,13 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     TASTE_V5: True,
     ANALYTICS_V6: True,
     LEARN_V7: True,
+    # **Off, and the one exception to the pre-launch default above.** Phase 8's
+    # entry gate (P8-01) is a legal review of data-ownership terms, and none is
+    # recorded. The code is built and tested dark; switching it on is a
+    # decision for whoever signs those terms, not a deploy side effect. The
+    # consent flow independently refuses until a `ConsentPolicy` is published,
+    # so even a flag flipped early collects nothing.
+    COHORT_V8: False,
 }
 
 

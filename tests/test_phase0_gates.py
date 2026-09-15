@@ -174,7 +174,13 @@ def test_a_pre_migration_user_keeps_their_balances(pre_contract_schema: Any) -> 
     _, legacy = _legacy_workspace(
         pre_contract_schema, email="legacy@example.com", plan=plans["pro"]
     )
-    ledger.grant_credits(Workspace.objects.get(pk=legacy.pk), 42, note="before the migration")
+    # `only("id")`: the schema is rewound but `Workspace` is the live model, and
+    # any column added since the contract step (`market`, P8-02) does not exist
+    # yet. Selecting every field would fail on the newest one, not on anything
+    # this test is about.
+    ledger.grant_credits(
+        Workspace.objects.only("id").get(pk=legacy.pk), 42, note="before the migration"
+    )
 
     _migrate_fully_forward()
 

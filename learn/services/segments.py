@@ -50,14 +50,14 @@ LENGTH_BANDS: tuple[tuple[str, int], ...] = (
 )
 
 
-def _resolve_zone(tz_name: str) -> dt.tzinfo:
+def resolve_zone(tz_name: str) -> dt.tzinfo:
     try:
         return zoneinfo.ZoneInfo(tz_name)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
         return dt.UTC
 
 
-def _hour_bucket(moment: dt.datetime, zone: dt.tzinfo) -> str:
+def hour_bucket(moment: dt.datetime, zone: dt.tzinfo) -> str:
     """Local wall hour, not UTC.
 
     "Posts do better in the evening" is a claim about the audience's clock. A
@@ -104,7 +104,7 @@ def _latest_measured(target_ids: list[int]) -> dict[int, float]:
     latest row that actually has one, not merely the latest capture.
 
     Two queries rather than a window function, mirroring
-    `analytics.services.reporting._latest_per_target`: the ids of the latest
+    `analytics.services.reporting.latest_per_target`: the ids of the latest
     rows come back first, then the rows themselves.
     """
     scoped = PostMetric.objects.analysable().filter(
@@ -204,7 +204,7 @@ def observations(
         if dimensions:
             provenance[post_id] = dimensions
 
-    zone = _resolve_zone(timezone_name)
+    zone = resolve_zone(timezone_name)
     rows: list[Observation] = []
     for target in targets:
         if target.published_at is None:
@@ -212,7 +212,7 @@ def observations(
         dimensions = {
             "platform": target.platform,
             "format": target.post_format or "",
-            "posting_hour": _hour_bucket(target.published_at, zone),
+            "posting_hour": hour_bucket(target.published_at, zone),
             "media_kind": _media_kind(media.get(target.post_id, [])),
             "length_band": _length_band(target.post.master_body or ""),
             **provenance.get(target.post_id, {}),
