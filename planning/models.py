@@ -71,6 +71,19 @@ class Campaign(models.Model):
     #: planned end would silently drop its last fortnight of posts.
     closed_at = models.DateTimeField(null=True, blank=True)
 
+    #: The digest this campaign's close produced (P7-02). One per campaign, so
+    #: "show me the read-out for this sprint" is a field access rather than an
+    #: ordered query that could disagree with itself. Learn writes it; re-running
+    #: repoints it at the newer `Digest` and leaves the older one readable,
+    #: because both are documents somebody may already have opened.
+    digest = models.OneToOneField(
+        "learn.Digest",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="campaign_of_record",
+    )
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

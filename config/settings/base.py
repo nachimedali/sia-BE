@@ -69,6 +69,7 @@ LOCAL_APPS = [
     "trends",
     "tools",
     "analytics",
+    "learn",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -299,6 +300,19 @@ CELERY_BEAT_SCHEDULE = {
     "reminders-expire-stale": {
         "task": "reminders.tasks.expire_stale_reminders",
         "schedule": crontab(hour=4, minute=0),
+    },
+    # P7-02. Hourly rather than daily: "ends_at has passed" arrives at a
+    # different instant in every timezone we serve, and a campaign that ended
+    # at 23:00 local should not wait most of a day for its read-out. The scan
+    # asks which campaigns are *due* rather than each campaign scheduling its
+    # own close, so a worker down overnight catches up on the next tick.
+    #
+    # 05:10, deliberately after the metric ladder's overnight rungs: a digest
+    # computed before the night's captures landed would grade segments on a
+    # window it had only half measured.
+    "learn-close-due-campaigns": {
+        "task": "learn.tasks.close_due_campaigns",
+        "schedule": crontab(hour="*", minute=10),
     },
     # Every minute, for the same reason the reminder scan is: "a post
     # scheduled for 09:00 goes at 09:00" (design.md §5.1) is not a promise a

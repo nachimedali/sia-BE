@@ -18,10 +18,11 @@ from content.models import PostTemplate, RecurrenceRule
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post
+from learn.models import Digest
 from planning.models import BulkOperation, Campaign, Label, SavedView, Timetable
 from products.services.products import create_product
 from reminders.models import Reminder
-from taste.models import ContentCandidate, RuleSet, TasteProfile
+from taste.models import ContentCandidate, Rule, RuleKind, RuleSet, TasteProfile
 from workspaces.models import Membership
 from workspaces.services.provisioning import provision_workspace
 
@@ -225,7 +226,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 20
+    assert len(router.registry) == 22
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -306,6 +307,26 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         # --- Phase 6 reporting ---
         "report": Report.objects.create(
             workspace=other_workspace, name="Not yours either", created_by=other_owner
+        ),
+        # --- Phase 7 learn ---
+        "digest": Digest.objects.create(
+            workspace=other_workspace,
+            window_start=timezone.now() - dt.timedelta(days=7),
+            window_end=timezone.now(),
+        ),
+        # Scoped through its ruleset rather than a workspace column of its own,
+        # which is exactly why it belongs in this sweep: the join is the guard.
+        "rule-proposal": Rule.objects.create(
+            ruleset=RuleSet.objects.create(
+                workspace=other_workspace,
+                version=2,
+                derived_from=Digest.objects.create(
+                    workspace=other_workspace,
+                    window_start=timezone.now() - dt.timedelta(days=7),
+                    window_end=timezone.now(),
+                ),
+            ),
+            kind=RuleKind.FORMAT,
         ),
     }
 

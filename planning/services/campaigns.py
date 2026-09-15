@@ -116,7 +116,33 @@ def advance(campaign: Campaign, status: str, *, actor: User) -> Campaign:
         campaign.closed_at = timezone.now()
         fields.append("closed_at")
     campaign.save(update_fields=fields)
+
+    if status == CampaignStatus.CLOSED:
+        _learn_from(campaign)
+
     return campaign
+
+
+def _learn_from(campaign: Campaign) -> None:
+    """Queue the campaign's read-out (P7-02).
+
+    **An explicit call, not a signal** (Part 7 rule 8): closing a campaign
+    producing a digest is a fact about this code path, and a reader of
+    `advance` should be able to see it without going looking for a receiver.
+
+    Queued rather than run inline. Learn reads a whole trailing window and may
+    sit on a provider for the narration — a close request that waited for it
+    would be a request that times out, and the user would close the campaign
+    again.
+
+    Deferred import because `learn` imports `planning.models`; at module scope
+    this is a cycle. The narrow seam is the price of the dependency running
+    that way round, and it runs that way round because Learn knowing about
+    campaigns is right while campaigns knowing how to analyse themselves is not.
+    """
+    from learn.tasks import run_learn_for_campaign
+
+    run_learn_for_campaign.delay(campaign.pk)
 
 
 def add_post(campaign: Campaign, post: Post, *, actor: User) -> CampaignItem:

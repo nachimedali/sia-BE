@@ -23,8 +23,10 @@ def test_every_queue_is_declared() -> None:
         "trends_q",
         # P2-12.
         "notify_q",
+        # P7-01.
+        "analyze_q",
     }
-    assert len(QUEUE_NAMES) == 7
+    assert len(QUEUE_NAMES) == 8
 
 
 @pytest.mark.parametrize(
@@ -35,6 +37,10 @@ def test_every_queue_is_declared() -> None:
         ("reminders.tasks.send_reminder", "remind_q"),
         ("scheduling.tasks.remind_due", "remind_q"),
         ("content.tasks.media_ingest", "media_q"),
+        # Learn's own pool (P7-01): minutes-to-hours batch work must not sit in
+        # a queue anything time-critical shares.
+        ("learn.tasks.run_learn", "analyze_q"),
+        ("learn.tasks.close_due_campaigns", "analyze_q"),
         # Periodic content bookkeeping shares the pool the billing sweeps use;
         # what matters is that it is *declared*, not that it is alone (P1-08,
         # P1-10).

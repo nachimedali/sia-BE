@@ -69,6 +69,13 @@ TASTE_V5 = "taste_v5"
 #: on the way down would not be a rollback, it would be a data loss.
 ANALYTICS_V6 = "analytics_v6"
 
+#: Phase 7 — Learn, digests, findings and rule proposals. Off restores
+#: pre-phase behaviour: the digest surfaces answer 404, closing a campaign
+#: closes it and nothing else runs, and no rule proposal is created. Digests
+#: already generated stay readable — a rollback that hid a document somebody
+#: has already acted on would be a second surprise, not a recovery.
+LEARN_V7 = "learn_v7"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
@@ -79,6 +86,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     PLANNING_V3: True,
     TASTE_V5: True,
     ANALYTICS_V6: True,
+    LEARN_V7: True,
 }
 
 
