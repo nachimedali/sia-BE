@@ -42,4 +42,8 @@ USE_FAKE_PLATFORM_ADAPTER = False
 USE_FAKE_AI_PROVIDERS = False
 USE_FAKE_MEDIA_EDITOR = False
 USE_FAKE_TREND_VENDORS = False
+# The filesystem fake is served without auth (config/urls.py). A deploy that
+# lost AWS_S3_ENDPOINT_URL must fail at upload, not serve media publicly.
+USE_FAKE_STORAGE = False
+STORAGES = {**STORAGES, "default": {"BACKEND": "storages.backends.s3.S3Storage"}}  # noqa: F405
 ZERNIO_API_KEY = env("ZERNIO_API_KEY")

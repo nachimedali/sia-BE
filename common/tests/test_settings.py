@@ -65,3 +65,11 @@ def test_prod_cannot_run_on_fakes(prod_settings) -> None:
 def test_dev_settings_import_cleanly() -> None:
     dev = importlib.import_module("config.settings.dev")
     assert dev.DEBUG is True
+
+
+def test_prod_cannot_store_media_on_the_filesystem(prod_settings) -> None:
+    """The filesystem fake is served without auth (see `test_media_serving`);
+    a deploy that lost its S3 endpoint must fail at upload, not start serving
+    workspace-private media publicly."""
+    assert prod_settings.USE_FAKE_STORAGE is False
+    assert prod_settings.STORAGES["default"]["BACKEND"] == "storages.backends.s3.S3Storage"

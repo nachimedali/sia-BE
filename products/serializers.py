@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from content.models import Platform
+from content.models import Platform, PostStatus
 from content.serializers import MediaAssetSerializer
 from products.models import AutopilotConfig, AutopilotDraft, Product, ProductFormat
 from taste.models import REASON_CODES
@@ -31,6 +31,9 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
     )
     moods = serializers.ListField(child=serializers.CharField(max_length=100), required=False)
     ctas = serializers.ListField(child=serializers.CharField(max_length=100), required=False)
+    post_count = serializers.SerializerMethodField()
+    published_count = serializers.SerializerMethodField()
+    autopilot_enabled = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -51,6 +54,9 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
             "ctas",
             "completeness_score",
             "is_generation_ready",
+            "post_count",
+            "published_count",
+            "autopilot_enabled",
             "created_at",
             "updated_at",
         )
@@ -62,6 +68,25 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
             "created_at",
             "updated_at",
         )
+
+    # The list/retrieve queryset annotates these. Create and update hand back
+    # the service's own instance, which has no annotation, so count directly.
+    def get_post_count(self, obj: Product) -> int:
+        annotated = getattr(obj, "post_count", None)
+        return annotated if annotated is not None else obj.posts.count()
+
+    def get_published_count(self, obj: Product) -> int:
+        annotated = getattr(obj, "published_count", None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.posts.filter(status=PostStatus.PUBLISHED).count()
+
+    def get_autopilot_enabled(self, obj: Product) -> bool:
+        # No config row is autopilot never switched on — off, not unknown.
+        try:
+            return obj.autopilot.enabled
+        except AutopilotConfig.DoesNotExist:
+            return False
 
 
 class ProductReferenceImagesUploadSerializer(serializers.Serializer[object]):
