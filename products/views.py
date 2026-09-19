@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from drf_spectacular.utils import extend_schema
+from django.db.models import Count, Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import get_object_or_404
@@ -30,6 +31,7 @@ from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
+from content.models import Platform, PostStatus
 from products.models import AutopilotConfig, AutopilotDraft, AutopilotDraftStatus, Product
 from products.serializers import (
     AutopilotConfigSerializer,
@@ -44,9 +46,25 @@ from products.serializers import (
 # `/products/{id}/autopilot/`, and it would otherwise shadow the module.
 from products.services import autopilot as autopilot_service
 from products.services.completeness import completeness_payload
-from products.services.products import attach_reference_images, create_product, update_product
+from products.services.products import (
+    attach_reference_images,
+    create_product,
+    detach_reference_image,
+    update_product,
+)
 
 AUTOPILOT_FEATURE = "autopilot"
+
+# The products page's "high completeness" filter. A display threshold, not a
+# gate: nothing is allowed or refused on it.
+HIGH_COMPLETENESS = 80
+
+PRODUCT_STATUS_FILTERS: dict[str, Q] = {
+    "ready": Q(is_generation_ready=True),
+    "needs_reference": Q(is_generation_ready=False),
+    "high_completeness": Q(completeness_score__gte=HIGH_COMPLETENESS),
+    "autopilot_on": Q(autopilot__enabled=True),
+}
 
 
 class ProductViewSet(
@@ -60,7 +78,65 @@ class ProductViewSet(
     serializer_class = ProductSerializer
     permission_classes: list[Any] = [IsAuthenticated]
     pagination_class = DefaultPagination
-    queryset = Product.objects.select_related("category").prefetch_related("reference_images")
+    queryset = (
+        Product.objects.select_related("category", "autopilot")
+        .prefetch_related("reference_images")
+        .annotate(
+            post_count=Count("posts", distinct=True),
+            published_count=Count(
+                "posts", filter=Q(posts__status=PostStatus.PUBLISHED), distinct=True
+            ),
+        )
+    )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("q", str, description="Matches name or description."),
+            OpenApiParameter(
+                "status",
+                str,
+                enum=list(PRODUCT_STATUS_FILTERS),
+                description="An unknown value is a 400 rather than a silently full page.",
+            ),
+            OpenApiParameter("platform", str, enum=Platform.values),
+        ]
+    )
+    def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return super().list(request, *args, **kwargs)
+
+    def get_queryset(self) -> Any:
+        """Filters run here, not in the browser: the list paginates, so
+        filtering the loaded page would miss every match past it."""
+        queryset = super().get_queryset()
+        if self.action != "list":
+            return queryset
+        params = self.request.query_params
+
+        q = params.get("q", "").strip()
+        if q:
+            queryset = queryset.filter(Q(name__icontains=q) | Q(description__icontains=q))
+
+        status = params.get("status")
+        if status:
+            if status not in PRODUCT_STATUS_FILTERS:
+                raise OCCSError(
+                    f"Unknown product status: {status}.",
+                    code="invalid_status",
+                    detail={"status": [status]},
+                )
+            queryset = queryset.filter(PRODUCT_STATUS_FILTERS[status])
+
+        platform = params.get("platform")
+        if platform:
+            if platform not in Platform.values:
+                raise OCCSError(
+                    f"Unknown platform: {platform}.",
+                    code="invalid_platform",
+                    detail={"platform": [platform]},
+                )
+            queryset = queryset.filter(platforms__contains=[platform])
+
+        return queryset
 
     def perform_create(self, serializer: BaseSerializer[Product]) -> None:
         assert isinstance(serializer, ProductSerializer)  # always this view's own serializer_class
@@ -88,6 +164,28 @@ class ProductViewSet(
         attach_reference_images(product=product, uploads=uploads)
         product.refresh_from_db()
         return Response(self.get_serializer(product).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: ProductSerializer},
+        summary="Detach a reference image",
+        description="Unlinks the asset from this product and recomputes readiness. The "
+        "MediaAsset itself is immutable and is kept.",
+    )
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"reference-images/(?P<asset_id>\d+)",
+    )
+    def detach_reference(
+        self, request: Request, pk: str | None = None, asset_id: str | None = None
+    ) -> Response:
+        product = self.get_object()
+        # Through the product's own relation: an asset that is not attached
+        # here, or belongs to another tenant, is the same 404.
+        asset = get_object_or_404(product.reference_images.all(), pk=asset_id)
+        detach_reference_image(product=product, media_asset=asset)
+        return Response(self.get_serializer(self.get_queryset().get(pk=product.pk)).data)
 
     @extend_schema(responses={200: ProductCompletenessSerializer})
     @action(detail=True, methods=["get"])
