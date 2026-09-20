@@ -97,6 +97,7 @@ from planning.views import (
 from products.views import (
     AutopilotApproveView,
     AutopilotQueueView,
+    AutopilotReadinessView,
     AutopilotRejectView,
     ProductViewSet,
 )
@@ -112,7 +113,7 @@ from taste.views import (
     RuleSetViewSet,
     TasteProfileViewSet,
 )
-from tools.views import ToolListView, ToolRunView
+from tools.views import ToolListView, ToolReadinessView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
 from workspaces.views import (
     ApiKeyView,
@@ -187,6 +188,9 @@ urlpatterns = [
     # exists. `POST` is the one endpoint that calls a provider in-request; see
     # `tools/views.py` for why that exception is scoped rather than general.
     path("tools/", ToolListView.as_view(), name="tools"),
+    # **Before the slug route, not after it**: `<str:slug>` would happily match
+    # "readiness" and answer with a 404 from the runner instead.
+    path("tools/readiness/", ToolReadinessView.as_view(), name="tools-readiness"),
     path("tools/<str:slug>/", ToolRunView.as_view(), name="tool-run"),
     # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
     path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
@@ -287,6 +291,9 @@ urlpatterns = [
     # queryset — the same guarantee the tenancy sweep (A52) checks, applied
     # where the sweep does not reach. The config itself is an action on
     # `ProductViewSet`, which the sweep does walk.
+    # Ungated on purpose (X-08): the plan is the first row of the answer, not
+    # a 402 in place of one.
+    path("autopilot/readiness/", AutopilotReadinessView.as_view(), name="autopilot-readiness"),
     path("autopilot/queue/", AutopilotQueueView.as_view(), name="autopilot-queue"),
     path("autopilot/<int:pk>/approve/", AutopilotApproveView.as_view(), name="autopilot-approve"),
     path("autopilot/<int:pk>/reject/", AutopilotRejectView.as_view(), name="autopilot-reject"),

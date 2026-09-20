@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from common.setup import RequirementSerializer
 from content.models import Platform, PostStatus
 from content.serializers import MediaAssetSerializer
 from products.models import AutopilotConfig, AutopilotDraft, Product, ProductFormat
@@ -192,3 +193,16 @@ class DraftRejectRequestSerializer(serializers.Serializer[Any]):
     """
 
     reason_code = serializers.ChoiceField(choices=REASON_CODES, default="other")
+
+
+class AutopilotReadinessSerializer(serializers.Serializer[object]):
+    """`/autopilot/readiness/`'s envelope (X-08).
+
+    `next_slots` rather than a "next run" timestamp: the daily scan time is an
+    operational detail that would read as a promise, while the slots are what
+    the user actually asked about — the dates their calendar is about to fill.
+    """
+
+    ready = serializers.BooleanField()
+    requirements = RequirementSerializer(many=True)
+    next_slots = serializers.ListField(child=serializers.DateTimeField())

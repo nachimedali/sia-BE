@@ -18,9 +18,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.workspaces import authenticated_user, request_workspace
+from tools import readiness as readiness_service
 from tools import services
 from tools.models import ToolConfig
-from tools.serializers import ToolConfigSerializer, ToolRunSerializer, ToolUsageSerializer
+from tools.serializers import (
+    ToolConfigSerializer,
+    ToolReadinessSerializer,
+    ToolRunSerializer,
+    ToolUsageSerializer,
+)
 
 
 class ToolListView(APIView):
@@ -34,6 +40,25 @@ class ToolListView(APIView):
     )
     def get(self, request: Request) -> Response:
         return Response(ToolConfigSerializer(ToolConfig.objects.all(), many=True).data)
+
+
+class ToolReadinessView(APIView):
+    """Which tools can run for *this* workspace, and why the rest cannot.
+
+    Separate from `ToolListView` rather than folded into it: that endpoint is
+    reference data — six rows, identical for everybody, cacheable — and adding
+    a workspace-dependent field to it would quietly make it neither.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: ToolReadinessSerializer},
+        summary="Tool setup state, and each tool's own blockers",
+    )
+    def get(self, request: Request) -> Response:
+        payload = readiness_service.tools_readiness(request_workspace(request))
+        return Response(ToolReadinessSerializer(payload).data)
 
 
 class ToolRunView(APIView):
