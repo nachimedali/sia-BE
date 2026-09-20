@@ -6,6 +6,7 @@ from typing import ClassVar
 
 from rest_framework import serializers
 
+from common.setup import RequirementSerializer
 from tools.models import ToolConfig, ToolUsage
 
 
@@ -42,3 +43,19 @@ class ToolUsageSerializer(serializers.ModelSerializer[ToolUsage]):
             "created_at",
         )
         read_only_fields = fields
+
+
+class ToolStateSerializer(serializers.Serializer[object]):
+    """One tool's own verdict. `reason` is a key (`no_corpus`, `no_captures`),
+    blank when the tool is ready — the wording belongs to whoever renders the
+    card, like `display_name`'s absence of a `description` beside it."""
+
+    slug = serializers.CharField()
+    status = serializers.ChoiceField(choices=["ready", "blocked"])
+    reason = serializers.CharField(allow_blank=True)
+
+
+class ToolReadinessSerializer(serializers.Serializer[object]):
+    ready = serializers.BooleanField()
+    requirements = RequirementSerializer(many=True)
+    tools = ToolStateSerializer(many=True)

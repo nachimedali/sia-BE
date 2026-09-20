@@ -36,6 +36,7 @@ from products.models import AutopilotConfig, AutopilotDraft, AutopilotDraftStatu
 from products.serializers import (
     AutopilotConfigSerializer,
     AutopilotDraftSerializer,
+    AutopilotReadinessSerializer,
     DraftRejectRequestSerializer,
     ProductCompletenessSerializer,
     ProductReferenceImagesUploadSerializer,
@@ -45,6 +46,7 @@ from products.serializers import (
 # Aliased: `ProductViewSet.autopilot` is a route name fixed by design.md §7's
 # `/products/{id}/autopilot/`, and it would otherwise shadow the module.
 from products.services import autopilot as autopilot_service
+from products.services import readiness as readiness_service
 from products.services.completeness import completeness_payload
 from products.services.products import (
     attach_reference_images,
@@ -228,6 +230,27 @@ class _AutopilotView(APIView):
         return get_object_or_404(
             AutopilotDraft.objects.filter(product__workspace=request_workspace(request)), pk=pk
         )
+
+
+class AutopilotReadinessView(APIView):
+    """What is still missing before autopilot can draft (X-08).
+
+    **Deliberately not `HasFeature("autopilot")`.** Every other autopilot view
+    carries the gate, because there is nothing to say to a workspace that has
+    not bought the feature. This one is the exception that makes the others
+    usable: a 402 here would answer "which six things do I need?" with "pay",
+    and the plan is the first row of the answer rather than the door to it.
+    """
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: AutopilotReadinessSerializer},
+        summary="Autopilot setup state: what is done, what is missing",
+    )
+    def get(self, request: Request) -> Response:
+        payload = readiness_service.autopilot_readiness(request_workspace(request))
+        return Response(AutopilotReadinessSerializer(payload).data)
 
 
 class AutopilotQueueView(_AutopilotView):
