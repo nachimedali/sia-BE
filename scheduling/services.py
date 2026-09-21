@@ -22,7 +22,7 @@ single, testable statement.
 from __future__ import annotations
 
 import datetime as dt
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from billing.services import trial
 from billing.services.entitlements import entitlements_for
@@ -59,6 +59,19 @@ def _gate_approval(post: Post, *, actor: User) -> Post:
         return post
 
     return approvals.approve_implicitly(post, actor=actor)
+
+
+def default_delivery_mode(workspace: Any, *, entitlements: Any = None) -> str:
+    """Auto-publish where the plan allows it, reminders otherwise.
+
+    One copy, because there are two callers — autopilot's approval path and
+    Studio's commit — and D4's reminders-only fallback is one plan edit away.
+    Two copies of "which tier is which" is exactly the drift rule 10 exists to
+    prevent (I8). `entitlements` is an optional override for a caller that has
+    already resolved them, so a loop does not re-resolve per item.
+    """
+    resolved = entitlements or entitlements_for(workspace)
+    return DeliveryMode.AUTO_PUBLISH if resolved.feature("auto_publish") else DeliveryMode.REMINDER
 
 
 def schedule_post(

@@ -30,15 +30,19 @@ from ai.serializers import (
     GenerationSerializer,
     HashtagSuggestionSerializer,
     ReviseRequestSerializer,
+    VariantCommitSerializer,
+    VariantSelectionSerializer,
     VoiceProfileSerializer,
 )
 from ai.services import hashtags
+from ai.services import variants as variant_service
 from ai.services.pipeline import create_generation
 from ai.services.revisions import create_revision
 from ai.tasks import run_generation_task
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
+from content.serializers import PostSerializer
 
 
 class GenerateView(APIView):
@@ -78,6 +82,7 @@ class GenerateView(APIView):
             scene=data["scene"],
             is_batch=data["is_batch"],
             source_media=data.get("source_media"),
+            paid_slots=data.get("paid_slots"),
         )
         run_generation_task.delay(generation_id=generation.id, n=data["n"])
         # A no-op in production (the task runs on a worker, asynchronously,
@@ -119,6 +124,82 @@ class GenerationViewSet(
         run_generation_task.delay(generation_id=child.id, n=data["n"])
         child.refresh_from_db()  # see GenerateView.post
         return Response(GenerationSerializer(child).data, status=status.HTTP_201_CREATED)
+
+    # ---- variant economics (X-09) -------------------------------------
+    #
+    # Two verbs on the generation rather than a `/variants/{id}/` resource:
+    # the allowance is a property of the *generation*, and a per-variant
+    # endpoint would have to re-derive it on every call, which is how the
+    # number the user sees and the number that enforces drift apart.
+
+    def _variant_action(self, request: Request, act: Any) -> Response:
+        """The shared half of `select` and `unlock`.
+
+        Both take the same body, act on the same object and answer with the
+        same shape; only the verb differs. Written once so the next parameter
+        one of them gains does not have to be remembered for the other.
+        """
+        generation = self.get_object()
+        payload = VariantSelectionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        act(
+            generation,
+            variant_ids=payload.validated_data["variant_ids"],
+            actor=authenticated_user(request),
+        )
+        # Re-read **through the viewset's own queryset**, not
+        # `refresh_from_db()`. The bulk updates in the service bypass Python's
+        # object cache so something must be re-read, but a bare refresh drops
+        # the `variants__media_asset` prefetch and the serializer then issues
+        # one query per variant — an N+1 on every click of the dock.
+        fresh = self.get_queryset().get(pk=generation.pk)
+        return Response(GenerationSerializer(fresh).data)
+
+    @extend_schema(
+        request=VariantSelectionSerializer,
+        responses={200: GenerationSerializer},
+        summary="Choose which variants to keep",
+        description=(
+            "Replaces the selection with exactly these variants. Answers 402 "
+            "`variant_allowance_exceeded` past the paid slots, carrying the "
+            "unlock price and how many need buying."
+        ),
+    )
+    @action(detail=True, methods=["post"])
+    def select(self, request: Request, pk: str | None = None) -> Response:
+        return self._variant_action(request, variant_service.select)
+
+    @extend_schema(
+        request=VariantSelectionSerializer,
+        responses={200: GenerationSerializer},
+        summary="Buy surplus variants at the unlock price",
+    )
+    @action(detail=True, methods=["post"])
+    def unlock(self, request: Request, pk: str | None = None) -> Response:
+        return self._variant_action(request, variant_service.unlock)
+
+    @extend_schema(
+        request=VariantCommitSerializer,
+        responses={201: PostSerializer(many=True)},
+        summary="Send the selection to the calendar as drafts",
+        description=(
+            "One draft post per selected variant. With `scheduled_at` it goes "
+            "through the schedule service, so the horizon, quota and approval "
+            "gates apply exactly as they would to a hand-typed post. Nothing "
+            "here publishes (L-2)."
+        ),
+    )
+    @action(detail=True, methods=["post"])
+    def commit(self, request: Request, pk: str | None = None) -> Response:
+        generation = self.get_object()
+        payload = VariantCommitSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        posts = variant_service.commit(
+            generation,
+            actor=authenticated_user(request),
+            scheduled_at=payload.validated_data.get("scheduled_at"),
+        )
+        return Response(PostSerializer(posts, many=True).data, status=status.HTTP_201_CREATED)
 
 
 class VoiceProfileViewSet(

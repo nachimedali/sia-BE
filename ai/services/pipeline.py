@@ -26,14 +26,21 @@ on exhaustion there is nothing to literally reverse; the "then_refunds" test
 asserts the regeneration loop actually runs `max_regeneration_attempts` times
 and nets to a zero balance change (design.md §15.8 A72).
 
-**On cost and `n`.** design.md's §4.2 table prices a kind/mode pair (e.g.
-"Studio image: 3 credits") without saying whether requesting `n` variants in
-one call multiplies that cost by `n`. This implementation charges the
-resolved cost once per generation *action*, covering every variant it
-produces — "one Studio generation costs 3 credits" reads more naturally than
-a per-variant multiplier the spec never states, and it is what
-`test_passed_quality_gate_debits_exactly_generation_cost` asserts literally
-(design.md §15.8 A73).
+**On cost and `n` — superseded by X-09.** design.md's §4.2 table prices a
+kind/mode pair ("Studio image: 3 credits") without saying whether requesting
+`n` variants multiplies it. This originally charged once per generation
+*action* whatever `n` was (design.md §15.8 A73). It still does for every
+caller that does not ask otherwise — autopilot, revisions, captions and
+suggestions all leave `paid_slots` unset and are priced and rendered exactly
+as before.
+
+Studio now buys **slots**. `paid_slots` is how many variants the user may
+keep, priced at `credits` each; the engine renders `GenerationCost.
+variant_pool` around that, and the surplus is locked until bought at
+`unlock_percent` (see `ai.services.variants`). A73's terms remain reachable
+with `STUDIO_VARIANTS_V2` off, which is asserted rather than remembered —
+the flag exists because this is the one change here that could overcharge
+somebody if it were wrong.
 """
 
 from __future__ import annotations
@@ -59,9 +66,10 @@ from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
 from ai.services import prompting, quality
-from ai.services.costing import resolve_cost
+from ai.services.costing import resolve_pricing
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
+from billing.services.flags import STUDIO_VARIANTS_V2, flag_enabled
 from common.exceptions import InsufficientCredits, OCCSError
 from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
@@ -117,6 +125,7 @@ def create_generation(
     scene: str = "",
     is_batch: bool = False,
     source_media: MediaAsset | None = None,
+    paid_slots: int | None = None,
 ) -> Generation:
     """Validates and persists the `PENDING` row. No provider call — that is
     `run_generation`'s job (design.md §11)."""
@@ -150,8 +159,26 @@ def create_generation(
 
     # Preflight only (I5) — the authoritative check is inside the debit's own
     # transaction in `run_generation`, once the gate has passed.
-    cost = resolve_cost(kind=kind, mode=mode)
-    entitlements.require_credits(cost)
+    #
+    # **Priced per slot since X-09.** `paid_slots` is how many variants the
+    # buyer may keep; the engine renders more than that and locks the rest.
+    # Under flag-off the multiplier is 1 whatever was asked for, which is
+    # design.md A73's original "one action, one charge" exactly.
+    #
+    # **`paid_slots=None` is the whole compatibility story.** Autopilot,
+    # revisions, captions and suggestions pass nothing and are priced and
+    # rendered exactly as they were before X-09 — one charge, no surplus,
+    # because none of them has a human looking at a dock to sell one to.
+    # Studio passes a number, and that is what opts a generation into slot
+    # pricing and a pool. The flag collapses the opt-in back to the old terms.
+    pricing = resolve_pricing(kind=kind, mode=mode)
+    if paid_slots is not None and flag_enabled(workspace.organization, STUDIO_VARIANTS_V2):
+        slots = paid_slots
+        pool = max(pricing.variant_pool, slots)
+    else:
+        slots = 1
+        pool = 0
+    entitlements.require_credits(pricing.credits * slots)
 
     return Generation.objects.create(
         workspace=workspace,
@@ -167,6 +194,8 @@ def create_generation(
         scene=scene,
         is_batch=is_batch,
         source_media=source_media,
+        paid_slots=slots,
+        variant_pool=pool,
     )
 
 
@@ -324,7 +353,19 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
     workspace = generation.workspace
     entitlements = entitlements_for(workspace)
     config = QualityGateConfig.get_solo()
-    cost = resolve_cost(kind=generation.kind, mode=generation.mode)
+    pricing = resolve_pricing(kind=generation.kind, mode=generation.mode)
+
+    # **The pool is what gets rendered; the slots are what got paid for**
+    # (X-09). Rendering more than was bought is the whole upsell: there is
+    # nothing to offer at half price unless it already exists. The pool never
+    # shrinks below the slots — a buyer who paid for four must be able to
+    # choose four — and under flag-off it collapses to exactly the `n` the
+    # caller asked for, which is the pre-change behaviour.
+    # Zero means the caller wanted no surplus, so `n` stands as asked.
+    n = generation.variant_pool or n
+    # Legacy rows carry `paid_slots=1`, so this is the old single charge for
+    # every caller that never opted in.
+    cost = pricing.credits * generation.paid_slots
     reference_images = (
         _reference_image_bytes(generation.product)
         if generation.kind == GenerationKind.IMAGE
