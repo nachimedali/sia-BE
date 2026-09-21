@@ -91,6 +91,7 @@ class GenerationSerializer(serializers.ModelSerializer[Generation]):
             "model",
             "credits_charged",
             "paid_slots",
+            "variant_pool",
             "video_units_charged",
             "latency_ms",
             "status",

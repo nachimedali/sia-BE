@@ -14,7 +14,6 @@ import pytest
 from django.urls import reverse
 
 from ai.models import GenerationKind, GenerationMode
-from ai.services.costing import resolve_pricing, unlock_price
 from ai.services.pipeline import create_generation, run_generation
 from billing.services.ledger import grant_credits
 
@@ -44,6 +43,18 @@ def generation(funded: Any, user: Any) -> Any:
 
 def url(generation: Any, name: str) -> str:
     return reverse(f"generation-{name}", args=[generation.pk])
+
+
+def test_the_generation_reports_the_pool_it_renders(auth_client: Any, generation: Any) -> None:
+    """The Studio draws one placeholder per variant while it waits, so the
+    pool size has to be the server's — the same rule as every other number on
+    the dock."""
+    response = auth_client.get(reverse("generation-detail", args=[generation.pk]))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["variant_pool"] == generation.variant_pool
+    assert body["variant_pool"] > body["paid_slots"]
 
 
 def test_selecting_within_the_allowance_returns_the_generation(
