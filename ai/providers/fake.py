@@ -70,6 +70,37 @@ def _gradient(width: int, height: int, seed: int) -> Image.Image:
     return image
 
 
+# (chroma scale, Cb shift, Cr shift) per variant: as-shot, warm, cool, muted,
+# vivid, rose. Chroma only — the Y channel is left alone.
+_GRADES: tuple[tuple[float, int, int], ...] = (
+    (1.0, 0, 0),
+    (1.0, -14, 18),
+    (1.0, 18, -12),
+    (0.35, 0, 0),
+    (1.6, 0, 0),
+    (1.0, 8, 16),
+)
+
+
+def _grade(image: Image.Image, variant_index: int) -> Image.Image:
+    """A per-variant colour grade, so the dock shows a pool worth choosing from.
+
+    Only chroma moves; luma (Y) is untouched. The quality gate's dHash reads
+    the `L` channel, which is the same luma, so every variant hashes like the
+    reference and the identity check scores it exactly as it did before —
+    while the variants stop being the same picture four times over.
+    """
+    chroma, d_cb, d_cr = _GRADES[variant_index % len(_GRADES)]
+    if (chroma, d_cb, d_cr) == (1.0, 0, 0):
+        return image
+    y, cb, cr = image.convert("YCbCr").split()
+
+    def shift(delta: int) -> Any:
+        return lambda v: max(0, min(255, round(128 + (v - 128) * chroma + delta)))
+
+    return Image.merge("YCbCr", (y, cb.point(shift(d_cb)), cr.point(shift(d_cr)))).convert("RGB")
+
+
 def _render(
     prompt: str, reference_images: list[bytes], width: int, height: int, *, variant_index: int
 ) -> bytes:
@@ -81,6 +112,7 @@ def _render(
         # distinct enough from any real reference to fail the identity check
         # on purpose when nothing is grounding this generation.
         base = _gradient(width, height, zlib.crc32(prompt.encode()))
+    base = _grade(base, variant_index)
 
     # A small per-variant stamp keeps variants distinguishable without moving
     # the perceptual hash enough to flip the identity check — dHash averages
