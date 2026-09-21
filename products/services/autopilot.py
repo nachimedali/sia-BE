@@ -50,7 +50,7 @@ from ai.services.costing import resolve_cost
 from billing.models import UNLIMITED
 from billing.services.entitlements import Entitlements, entitlements_for
 from common.exceptions import InsufficientCredits, OCCSError
-from content.models import DeliveryMode, Platform, PostSource
+from content.models import Platform, PostSource
 from content.services.posts import update_post
 from products.models import (
     AutopilotConfig,
@@ -62,7 +62,7 @@ from products.models import (
     AutopilotStrategy,
 )
 from products.services.guards import ensure_generation_ready
-from scheduling.services import schedule_post
+from scheduling.services import default_delivery_mode, schedule_post
 from taste.models import TasteProfile
 from taste.services import candidates as candidate_service
 from taste.services import profiles as profile_service
@@ -569,9 +569,7 @@ def approve_draft(
     if variant is not None and variant.media_asset is not None:
         update_post(post, reason="autopilot", media_asset_ids=[variant.media_asset])
 
-    mode = (
-        DeliveryMode.AUTO_PUBLISH if entitlements.feature("auto_publish") else DeliveryMode.REMINDER
-    )
+    mode = default_delivery_mode(workspace, entitlements=entitlements)
     # The human who pressed approve is the approver of record (L-2): on an
     # open chain `schedule_post` writes their `APPROVE` action, and on a
     # blocking one it refuses, because a draft nobody reviewed must not

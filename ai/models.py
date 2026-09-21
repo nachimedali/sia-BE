@@ -149,6 +149,21 @@ class Generation(models.Model):
     tokens_in = models.PositiveIntegerField(default=0)
     tokens_out = models.PositiveIntegerField(default=0)
     credits_charged = models.PositiveIntegerField(default=0)
+    #: How many variants this generation's buyer paid to keep (X-09). The
+    #: engine renders `GenerationCost.variant_pool`, which is larger; the
+    #: surplus is locked until bought. Stored on the row rather than derived
+    #: from the ledger because it is what the *selection* rule reads on every
+    #: click, and a rule that re-derives its own limit from money already
+    #: spent gets the answer wrong the moment a refund exists.
+    paid_slots = models.PositiveSmallIntegerField(default=1)
+    #: How many variants the engine was told to render (X-09). **Zero means
+    #: "no surplus"** — render exactly what the caller asked for, which is
+    #: what autopilot, revisions, captions and suggestions all want: none of
+    #: them has a human looking at a dock, so a pool would be provider spend
+    #: with nobody to sell it to. Only Studio sets it, and it is stored rather
+    #: than re-resolved so a retuned pool column never changes what an old
+    #: generation is understood to have offered.
+    variant_pool = models.PositiveSmallIntegerField(default=0)
     video_units_charged = models.PositiveIntegerField(default=0)
     latency_ms = models.PositiveIntegerField(default=0)
     status = models.CharField(
@@ -202,6 +217,18 @@ class GenerationVariant(models.Model):
     rationale = models.CharField(max_length=300, blank=True)
     was_selected = models.BooleanField(default=False)
 
+    #: **Bought beyond the paid slots** (X-09). A generation renders a pool
+    #: larger than the slots the user paid for; selecting one of the extras
+    #: costs `GenerationCost.unlock_percent` of the per-variant price. An
+    #: unlocked variant stops counting against the free allowance, which is
+    #: what lets the two rules — "only N free" and "the rest are buyable" —
+    #: coexist without either needing to know about the other.
+    is_unlocked = models.BooleanField(default=False)
+    #: What was actually charged to unlock it, not what the table says today.
+    #: A price retuned in admin must not rewrite what a customer already paid,
+    #: and an audit that recomputes the figure would do exactly that.
+    unlock_charged = models.PositiveIntegerField(default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -226,6 +253,16 @@ class GenerationCost(models.Model):
     provider = models.CharField(max_length=64, blank=True)
     model = models.CharField(max_length=64, blank=True)
     credits = models.PositiveIntegerField()
+    #: How many variants the engine renders for this pair, regardless of how
+    #: many the user paid for (X-09). Larger than the usual purchase on
+    #: purpose: the surplus is what there is to upsell. A commercial number,
+    #: so it is a column an operator retunes and never a constant (rule 10).
+    variant_pool = models.PositiveSmallIntegerField(default=4)
+    #: What one surplus variant costs, as a percentage of `credits`, rounded
+    #: **up** — half of a 3-credit image is 2, never 1. Also a commercial
+    #: number, also admin-editable, and deliberately a percentage rather than
+    #: a second price so retuning `credits` carries the upsell with it.
+    unlock_percent = models.PositiveSmallIntegerField(default=50)
     is_active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

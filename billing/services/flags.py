@@ -84,6 +84,16 @@ LEARN_V7 = "learn_v7"
 #: records stay; they are the evidence of what was agreed and when.
 COHORT_V8 = "cohort_v8"
 
+#: X-09 — Studio variant economics: a generation renders a pool larger than
+#: the slots bought, the surplus is locked, and selecting one of the extras
+#: costs half. Off restores pre-change behaviour exactly: one debit per
+#: generation *action* whatever `n` was asked for (design.md A73), a pool of
+#: exactly `n`, and no variant locked or selectable-for-a-fee. **This flag
+#: gates a price change**, which is why it exists at all — every other X task
+#: shipped without one, and none of them could overcharge a customer if it
+#: were wrong.
+STUDIO_VARIANTS_V2 = "studio_variants_v2"
+
 #: Every flag the application reads, with the default that applies when no row
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
@@ -95,6 +105,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     TASTE_V5: True,
     ANALYTICS_V6: True,
     LEARN_V7: True,
+    STUDIO_VARIANTS_V2: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

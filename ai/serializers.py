@@ -60,6 +60,8 @@ class GenerationVariantSerializer(serializers.ModelSerializer[GenerationVariant]
             "rank",
             "rationale",
             "was_selected",
+            "is_unlocked",
+            "unlock_charged",
         )
         read_only_fields = fields
 
@@ -88,6 +90,7 @@ class GenerationSerializer(serializers.ModelSerializer[Generation]):
             "provider",
             "model",
             "credits_charged",
+            "paid_slots",
             "video_units_charged",
             "latency_ms",
             "status",
@@ -120,6 +123,12 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
     scene = serializers.CharField(allow_blank=True, default="")
     is_batch = serializers.BooleanField(default=False)
     n = serializers.IntegerField(default=3, min_value=1, max_value=6)
+    #: **How many variants the buyer keeps** (X-09). Absent means the caller
+    #: wants pre-X-09 terms — one charge, no surplus, no dock — which is what
+    #: every non-Studio caller wants and what the flag collapses to. Present
+    #: means slot pricing: `paid_slots` x the per-variant price, a pool
+    #: rendered around it, and the rest buyable at `unlock_percent`.
+    paid_slots = serializers.IntegerField(required=False, min_value=1, max_value=6)
     #: `CAPTION` only — the image to read (P1-13). Scoped to the caller's own
     #: workspace like every other reference on this serializer.
     source_media = serializers.PrimaryKeyRelatedField(
@@ -165,3 +174,24 @@ class RankedHashtagSerializer(serializers.Serializer[Any]):
 
 class HashtagSuggestionSerializer(serializers.Serializer[Any]):
     hashtags = RankedHashtagSerializer(many=True)
+
+
+class VariantSelectionSerializer(serializers.Serializer[object]):
+    """The dock's whole answer, not one click (X-09).
+
+    A replace rather than a toggle: sending the complete set removes any
+    question about what happened to a click that did not arrive.
+    """
+
+    variant_ids = serializers.ListField(
+        child=serializers.IntegerField(), allow_empty=True, max_length=12
+    )
+
+
+class VariantCommitSerializer(serializers.Serializer[object]):
+    """`scheduled_at` optional: a selection with no time lands as a draft on
+    the calendar, which is where a user who has not decided when wants it.
+    Given a time, `schedule_post` applies the horizon, quota and approval
+    gates exactly as a hand-typed post's would be."""
+
+    scheduled_at = serializers.DateTimeField(required=False, allow_null=True)
