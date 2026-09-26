@@ -40,14 +40,14 @@ NEEDS_CAPTURES = frozenset({Tool.BEST_TIME})
 
 
 def _corpus_items(workspace: Workspace) -> int:
-    from trends.models import TrendItem
+    from integrations.trendfeed import get_trend_feed
 
     if workspace.category_id is None:
         return 0
     since = timezone.now() - dt.timedelta(days=HASHTAG_WINDOW_DAYS)
-    return TrendItem.objects.filter(
-        source__category_id=workspace.category_id, posted_at__gte=since, excluded_reason=""
-    ).count()
+    return get_trend_feed(workspace.organization).corpus_size(
+        category_id=int(workspace.category_id), since=since
+    )
 
 
 def _published_targets(workspace: Workspace) -> int:

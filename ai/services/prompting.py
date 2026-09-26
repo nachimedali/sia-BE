@@ -61,15 +61,17 @@ def _category_signal(workspace: Workspace) -> str | None:
     *working* in the category, not handed something to copy, which is the same
     line design.md §8.4's synthesis rule draws for recipes.
     """
-    from trends.services import top_cluster
+    from integrations.trendfeed import get_trend_feed
 
     if workspace.category_id is None or not workspace.platforms:
         return None
-    cluster = top_cluster(int(workspace.category_id), str(workspace.platforms[0]))
+    cluster = get_trend_feed(workspace.organization).top_cluster(
+        category_id=int(workspace.category_id), platform=str(workspace.platforms[0])
+    )
     if cluster is None:
         return None
     return (
-        f"Currently working in this category on {cluster.get_platform_display()}: "
+        f"Currently working in this category on {cluster.platform_display}: "
         f"{cluster.label} (observed across {cluster.item_count} independent posts). "
         "Take the approach, not the wording."
     )

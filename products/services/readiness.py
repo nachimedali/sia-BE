@@ -25,10 +25,11 @@ from typing import Any
 from django.utils import timezone
 
 from ai.models import GenerationKind, GenerationMode
-from ai.services.costing import GenerationCostNotConfiguredError, resolve_cost
 from billing.services.entitlements import entitlements_for
 from channels.services import active_accounts
 from common.setup import Requirement, done, is_ready, missing
+from integrations.generation import get_generation
+from integrations.ports import CostNotConfiguredError
 from products.models import AutopilotConfig, Product
 from products.services import autopilot
 from taste.models import TasteProfile
@@ -125,7 +126,7 @@ def _autopilot_row(workspace: Workspace) -> Requirement:
     )
 
 
-def _per_slot_cost() -> int | None:
+def _per_slot_cost(workspace: Workspace) -> int | None:
     """What one drafted slot costs — an image plus a caption — or `None` when
     the cost table has not been seeded.
 
@@ -133,21 +134,22 @@ def _per_slot_cost() -> int | None:
     both numbers in a row an operator can edit. **The `None` is the point:**
     this endpoint exists so an unconfigured workspace gets guidance instead of
     an error, and an environment missing `seed_generation_costs` is exactly
-    such a workspace — letting `resolve_cost` raise here would answer the
+    such a workspace — letting the port's cost lookup raise here would answer the
     setup screen with a 400 and tell the user nothing at all. Null rather than
     zero, for the reason rule 12 gives about metrics: a price we do not know
     is not a slot that is free.
     """
     try:
-        image = resolve_cost(kind=GenerationKind.IMAGE, mode=GenerationMode.AUTOPILOT)
-        caption = resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.AUTOPILOT)
-    except GenerationCostNotConfiguredError:
+        generator = get_generation(workspace.organization)
+        image = generator.resolve_cost(kind=GenerationKind.IMAGE, mode=GenerationMode.AUTOPILOT)
+        caption = generator.resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.AUTOPILOT)
+    except CostNotConfiguredError:
         return None
     return image + caption
 
 
 def _credits_row(workspace: Workspace) -> Requirement:
-    per_slot = _per_slot_cost()
+    per_slot = _per_slot_cost(workspace)
     balance = entitlements_for(workspace).credits_remaining()
     facts: dict[str, Any] = {"balance": balance, "per_slot": per_slot}
 

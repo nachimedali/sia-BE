@@ -98,6 +98,19 @@ STUDIO_VARIANTS_V2 = "studio_variants_v2"
 #: exists. A flag absent from here is a typo, not a feature — `flag_enabled`
 #: raises rather than quietly answering `False`, which is the failure mode that
 #: leaves a phase switched off in production and nobody able to say why.
+#: M0 - the trendgen seam. Trend collection and creative generation are moving
+#: to a standalone multi-tenant service (BUILD-PLAN L11-L12). **Off means the
+#: in-process adapter**, which is today's behaviour byte for byte; on selects
+#: the HTTP adapter against trendgen, which ships in Phase 12.
+#:
+#: These two are the exception to the pre-launch "default on" reasoning above,
+#: and for a different reason than COHORT_V8's. There is nothing to roll back
+#: to *and* nothing on the other side yet: the remote service is being built.
+#: Turning one on before Phase 12 raises `NotImplementedError` by design, so a
+#: premature flip fails loudly at the seam rather than silently degrading.
+TRENDGEN_FEED = "trendgen_feed"
+TRENDGEN_GENERATION = "trendgen_generation"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -113,6 +126,9 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     # consent flow independently refuses until a `ConsentPolicy` is published,
     # so even a flag flipped early collects nothing.
     COHORT_V8: False,
+    # Off until trendgen serves them; see the declarations above.
+    TRENDGEN_FEED: False,
+    TRENDGEN_GENERATION: False,
 }
 
 

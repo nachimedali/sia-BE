@@ -26,8 +26,8 @@ from typing import TYPE_CHECKING
 from django.utils import timezone
 
 from common.text import HASHTAG_RE
-from trends.models import TrendItem
-from trends.services.extraction import WINDOW_DAYS
+from integrations.ports import CORPUS_WINDOW_DAYS as WINDOW_DAYS
+from integrations.trendfeed import get_trend_feed
 
 if TYPE_CHECKING:
     from workspaces.models import Workspace
@@ -58,11 +58,9 @@ def rank_for_workspace(
         return []
 
     since = (now or timezone.now()) - dt.timedelta(days=WINDOW_DAYS)
-    bodies = TrendItem.objects.filter(
-        source__category_id=workspace.category_id,
-        posted_at__gte=since,
-        excluded_reason="",
-    ).values_list("body", flat=True)
+    bodies = get_trend_feed(workspace.organization).corpus_bodies(
+        category_id=int(workspace.category_id), since=since
+    )
 
     # Counted per *item*, not per occurrence: a post that says #ceramics four
     # times is one post using it, and counting mentions would let a single

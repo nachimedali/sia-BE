@@ -24,6 +24,7 @@ from django.db import transaction
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
 from common.exceptions import OCCSError
+from integrations.ports import CORPUS_WINDOW_DAYS
 from tools.models import Tool, ToolConfig, ToolUsage
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,8 @@ VARIANTS = 3
 #: The corpus window `hashtag` ranks within. Matches the trend engine's own
 #: 14-day window rather than inventing a second one — a tag that is hot this
 #: fortnight is the question either way.
-HASHTAG_WINDOW_DAYS = 14
+#: The corpus is the seam's now, and so is the window it is read over.
+HASHTAG_WINDOW_DAYS = CORPUS_WINDOW_DAYS
 HASHTAG_LIMIT = 12
 
 _HASHTAG = re.compile(r"#(\w{2,50})")
@@ -146,15 +148,15 @@ def _hashtags(workspace: Any, _payload: dict[str, Any]) -> ToolResult:
 
     from django.utils import timezone
 
-    from trends.models import TrendItem
+    from integrations.trendfeed import get_trend_feed
 
     if workspace.category_id is None:
         return ToolResult(output={"hashtags": []}, chargeable=False)
 
     since = timezone.now() - dt.timedelta(days=HASHTAG_WINDOW_DAYS)
-    bodies = TrendItem.objects.filter(
-        source__category_id=workspace.category_id, posted_at__gte=since, excluded_reason=""
-    ).values_list("body", flat=True)[:2000]
+    bodies = get_trend_feed(workspace.organization).corpus_bodies(
+        category_id=int(workspace.category_id), since=since, limit=2000
+    )
 
     counts: dict[str, int] = {}
     for body in bodies:

@@ -138,6 +138,43 @@ def metrics_provider() -> Any:
     return fake_provider()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_trendgen_ports() -> Iterator[None]:
+    """Reset the trendgen seam between tests (M0).
+
+    Every port resolves to its in-process adapter by default, so a test that
+    installs no fake sees exactly pre-M0 behaviour. The fixture resets the seam
+    registry rather than naming each port, so adding a third costs nothing here
+    — the ports themselves stay separate, and `integrations/tests/test_seam.py`
+    asserts that.
+    """
+    from integrations import seam
+
+    seam.reset_all()
+    yield
+    seam.reset_all()
+
+
+@pytest.fixture
+def trend_feed() -> Any:
+    """Install the recording trend-feed fake for this test."""
+    from integrations import trendfeed
+
+    fake = trendfeed.FakeTrendFeed()
+    trendfeed.set_override(fake)
+    return fake
+
+
+@pytest.fixture
+def generation_port() -> Any:
+    """Install the recording generation fake for this test."""
+    from integrations import generation
+
+    fake = generation.FakeGeneration()
+    generation.set_override(fake)
+    return fake
+
+
 @pytest.fixture
 def organization(workspace: Any) -> Any:
     """The org `provision_workspace` created alongside the workspace (P0-45).

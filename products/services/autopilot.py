@@ -45,13 +45,13 @@ from django.utils import timezone
 
 from accounts.models import User
 from ai.models import Generation, GenerationKind, GenerationMode, GenerationStatus
-from ai.services import pipeline
-from ai.services.costing import resolve_cost
 from billing.models import UNLIMITED
 from billing.services.entitlements import Entitlements, entitlements_for
 from common.exceptions import InsufficientCredits, OCCSError
 from content.models import Platform, PostSource
 from content.services.posts import update_post
+from integrations.generation import get_generation
+from integrations.ports import GenerationPort
 from products.models import (
     AutopilotConfig,
     AutopilotDraft,
@@ -202,6 +202,7 @@ def due_configs(*, now: dt.datetime) -> list[AutopilotConfig]:
 def _generate(
     config: AutopilotConfig,
     *,
+    generator: GenerationPort,
     kind: str,
     cost: int,
     brief: str,
@@ -216,9 +217,11 @@ def _generate(
     workspace can afford the cost (I5's preflight — the debit inside
     `run_generation` is still the authoritative check).
 
-    `cost` is resolved once per run by the caller rather than here: every slot
-    in a run prices the same two `(kind, AUTOPILOT)` pairs, so re-resolving per
-    generation would be the same `GenerationCost` lookup repeated for nothing.
+    `cost` and `generator` are both resolved once per run by the caller rather
+    than here: every slot in a run prices the same two `(kind, AUTOPILOT)` pairs
+    and resolves the same port, so doing either per generation would be the same
+    lookup — a `GenerationCost` row and a `FeatureFlag` row — repeated twice per
+    slot for nothing.
 
     `is_batch=True` on both: D8 puts autopilot on the image Batch API, which is
     half the price and asynchronous, and autopilot is inherently asynchronous.
@@ -226,7 +229,7 @@ def _generate(
     product = config.product
     entitlements.require_credits(cost)
 
-    generation = Generation.objects.create(
+    return generator.generate(
         workspace=product.workspace,
         # The owner, not the operator: nobody pressed a button, and
         # `Generation.user` has to point at someone who still exists when the
@@ -244,13 +247,14 @@ def _generate(
         # and a reconstruction would be a guess dressed as a fact.
         taste_profile_version=profile.version if profile is not None else None,
         prompt_template_version=PROMPT_TEMPLATE_VERSION,
+        n=1,
     )
-    return pipeline.run_generation(generation, n=1)
 
 
 def _draft_slot(
     config: AutopilotConfig,
     *,
+    generator: GenerationPort,
     slot: dt.datetime,
     strategy: str,
     platform: str,
@@ -277,6 +281,7 @@ def _draft_slot(
 
     visual = _generate(
         config,
+        generator=generator,
         kind=GenerationKind.IMAGE,
         cost=image_cost,
         brief=brief,
@@ -288,6 +293,7 @@ def _draft_slot(
 
     caption = _generate(
         config,
+        generator=generator,
         kind=GenerationKind.TEXT,
         cost=text_cost,
         brief=brief,
@@ -362,8 +368,9 @@ def run_config(config: AutopilotConfig, *, now: dt.datetime | None = None) -> Au
     # Resolved once: every slot in this run prices the same two `(kind,
     # AUTOPILOT)` pairs, so re-resolving per generation would repeat the same
     # `GenerationCost` lookup for nothing.
-    image_cost = resolve_cost(kind=GenerationKind.IMAGE, mode=GenerationMode.AUTOPILOT)
-    text_cost = resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.AUTOPILOT)
+    generator = get_generation(config.product.workspace.organization)
+    image_cost = generator.resolve_cost(kind=GenerationKind.IMAGE, mode=GenerationMode.AUTOPILOT)
+    text_cost = generator.resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.AUTOPILOT)
 
     drafts: list[AutopilotDraft] = []
     videos_deferred = 0
@@ -396,6 +403,7 @@ def run_config(config: AutopilotConfig, *, now: dt.datetime | None = None) -> Au
         try:
             draft = _draft_slot(
                 config,
+                generator=generator,
                 slot=slot,
                 strategy=strategy,
                 platform=platforms[index % len(platforms)],

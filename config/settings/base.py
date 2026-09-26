@@ -71,6 +71,10 @@ LOCAL_APPS = [
     "analytics",
     "learn",
     "benchmarks",
+    # The seam to the trendgen service (BUILD-PLAN L11-L12). No models; it
+    # holds the ports that `trends/` and the creative half of `ai/` move
+    # behind, so Phase 12 swaps an adapter rather than editing call sites.
+    "integrations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
