@@ -21,6 +21,7 @@ from ai.models import (
     GenerationVariant,
     VoiceProfile,
 )
+from ai.services.costing import resolve_pricing, unlock_price
 from common.workspaces import scope_related_field_to_workspace
 from content.models import MediaAsset
 from content.serializers import MediaAssetSerializer
@@ -68,6 +69,19 @@ class GenerationVariantSerializer(serializers.ModelSerializer[GenerationVariant]
 
 class GenerationSerializer(serializers.ModelSerializer[Generation]):
     variants = GenerationVariantSerializer(many=True, read_only=True)
+    #: What one surplus variant costs to keep (X-09). Exposed because the
+    #: Studio's retention panel offers the unclaimed variants *before* the
+    #: user asks for them, so it needs the price without first provoking the
+    #: 402 that used to be the only place it appeared. Resolved off the same
+    #: `GenerationCost` row the charge used, never computed by the client —
+    #: a panel quoting a figure nothing enforces is Part 7 rule 10's exact
+    #: failure, one deploy away from advertising a price the purchase refuses.
+    unlock_price = serializers.SerializerMethodField()
+
+    def get_unlock_price(self, obj: Generation) -> int:
+        return unlock_price(
+            resolve_pricing(kind=obj.kind, mode=obj.mode, provider=obj.provider, model=obj.model)
+        )
 
     class Meta:
         model = Generation
@@ -92,6 +106,7 @@ class GenerationSerializer(serializers.ModelSerializer[Generation]):
             "credits_charged",
             "paid_slots",
             "variant_pool",
+            "unlock_price",
             "video_units_charged",
             "latency_ms",
             "status",
