@@ -26,7 +26,7 @@ def test_create_product_assigns_workspace_and_defaults(auth_client: Any, workspa
     assert body["name"] == "Aurora Ceramic Mug"
     assert body["is_generation_ready"] is False
     assert body["reference_images"] == []
-    assert body["completeness_score"] > 0  # motion_reference is trivially satisfied
+    assert body["completeness_score"] > 0  # nothing to prove yet counts as proven
 
 
 def test_list_products_is_workspace_scoped(auth_client: Any, product: Any) -> None:
@@ -48,11 +48,13 @@ def test_patch_product_updates_fields_and_recomputes_completeness(
     before = auth_client.get(_detail_url(product.id)).json()["completeness_score"]
 
     response = auth_client.patch(
-        _detail_url(product.id), {"description": "Hand-glazed 12oz mug."}, format="json"
+        _detail_url(product.id),
+        {"short_description": "Hand-glazed 12oz mug, matte finish, six colourways."},
+        format="json",
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["description"] == "Hand-glazed 12oz mug."
+    assert body["short_description"].startswith("Hand-glazed 12oz mug")
     assert body["completeness_score"] > before
 
 

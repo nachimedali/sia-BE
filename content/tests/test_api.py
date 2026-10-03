@@ -14,7 +14,13 @@ from analytics.models import Report
 from channels.models import SocialAccount
 from collaboration.services import open_thread
 from config.api_urls import router
-from content.models import PostTemplate, RecurrenceRule
+from content.models import (
+    Platform,
+    PostTarget,
+    PostTargetState,
+    PostTemplate,
+    RecurrenceRule,
+)
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post
@@ -76,12 +82,82 @@ def test_post_list_does_not_n_plus_one_media(
     for _ in range(5):
         create_post(workspace=workspace, author=user, master_body="x", media_assets=[media_asset])
 
-    # Auth, count, the page of posts, and one prefetch for their attachments —
-    # flat regardless of how many posts are on the page.
-    with django_assert_max_num_queries(4):
+    # Auth, count, the page of posts, one prefetch for their attachments and one
+    # for their targets — flat regardless of how many posts are on the page.
+    with django_assert_max_num_queries(5):
         response = auth_client.get(POSTS_URL)
     assert response.status_code == 200
     assert len(response.json()["results"]) == 5
+
+
+def test_post_exposes_its_targets_for_the_dashboard_score(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    """The workspace home draws a platform x weekday grid, and a `Post` row
+    alone says nothing about *where* it goes. Targets travel with the post
+    because the alternative is one request per post to find out."""
+    post = create_post(workspace=workspace, author=user, master_body="x")
+    published_at = timezone.now()
+    PostTarget.objects.create(
+        post=post,
+        platform=Platform.INSTAGRAM,
+        state=PostTargetState.PUBLISHED,
+        published_at=published_at,
+    )
+    PostTarget.objects.create(post=post, platform=Platform.LINKEDIN)
+
+    body = auth_client.get(f"{POSTS_URL}{post.id}/").json()
+
+    by_platform = {t["platform"]: t for t in body["targets"]}
+    assert set(by_platform) == {Platform.INSTAGRAM, Platform.LINKEDIN}
+    assert by_platform[Platform.INSTAGRAM]["state"] == "PUBLISHED"
+    assert by_platform[Platform.INSTAGRAM]["published_at"] is not None
+    # Unpublished is null, not an epoch and not an empty string.
+    assert by_platform[Platform.LINKEDIN]["published_at"] is None
+    # Only what the grid needs: no rendered payload, no provider ids, no
+    # error detail — those are the publish pipeline's, not a dashboard's.
+    assert set(by_platform[Platform.LINKEDIN]) == {
+        "platform",
+        "post_format",
+        "state",
+        "published_at",
+    }
+
+
+def test_post_targets_are_not_client_writable(auth_client: Any, workspace: Any) -> None:
+    response = auth_client.post(
+        POSTS_URL,
+        {"master_body": "hi", "targets": [{"platform": "instagram"}]},
+        format="json",
+    )
+    assert response.status_code == 201
+    assert response.json()["targets"] == []
+
+
+def test_a_post_with_no_targets_serialises_an_empty_list(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="draft")
+    assert auth_client.get(f"{POSTS_URL}{post.id}/").json()["targets"] == []
+
+
+def test_post_list_does_not_n_plus_one_targets(
+    auth_client: Any,
+    workspace: Any,
+    user: Any,
+    django_assert_max_num_queries: Any,
+) -> None:
+    for _ in range(5):
+        post = create_post(workspace=workspace, author=user, master_body="x")
+        PostTarget.objects.create(post=post, platform=Platform.INSTAGRAM)
+        PostTarget.objects.create(post=post, platform=Platform.LINKEDIN)
+
+    # Auth, count, the page, the attachments prefetch and the targets
+    # prefetch — flat in the number of posts.
+    with django_assert_max_num_queries(5):
+        response = auth_client.get(POSTS_URL)
+    assert response.status_code == 200
+    assert all(len(row["targets"]) == 2 for row in response.json()["results"])
 
 
 def test_status_delivery_mode_and_scheduled_at_are_not_client_writable(

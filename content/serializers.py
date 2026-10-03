@@ -8,6 +8,7 @@ system-controlled until the phases that own their transitions — scheduling
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any, ClassVar
 
 from django.utils import timezone
@@ -23,10 +24,12 @@ from content.models import (
     Post,
     PostMediaAttachment,
     PostRevision,
+    PostTarget,
     PostTemplate,
     RecurrenceRule,
 )
 from content.services import recurrence, templates
+from products.models import Product
 
 
 def _scope_media_field(field: Any, request: Request | None) -> None:
@@ -117,8 +120,26 @@ class PlatformOptionsRequestSerializer(serializers.Serializer[Any]):
     options = serializers.DictField(required=False, default=dict)
 
 
+class PostTargetSummarySerializer(serializers.ModelSerializer[PostTarget]):
+    """Where a post goes and how far it has got — and nothing else.
+
+    A summary, not the target: `rendered_payload`, the provider's ids and
+    `error_detail` belong to the publish pipeline and have no business in a
+    list response. The workspace home draws a platform x weekday grid from
+    this, and the fields it needs are exactly these four.
+    """
+
+    class Meta:
+        model = PostTarget
+        fields: ClassVar[tuple[str, ...]] = ("platform", "post_format", "state", "published_at")
+        read_only_fields = fields
+
+
 class PostSerializer(serializers.ModelSerializer[Post]):
     media = PostMediaSerializer(source="ordered_attachments", many=True, read_only=True)
+    # Reads the `targets` prefetch on `PostViewSet`; a serializer built outside
+    # that view still works, it just pays one query per post for this field.
+    targets = PostTargetSummarySerializer(many=True, read_only=True)
     media_asset_ids = serializers.PrimaryKeyRelatedField(
         queryset=MediaAsset.objects.none(), many=True, write_only=True, required=False
     )
@@ -127,6 +148,25 @@ class PostSerializer(serializers.ModelSerializer[Post]):
     # against the roster. Same `<relation>_email` shape the collaboration
     # serializers already use for actors and comment authors.
     author_email = serializers.EmailField(source="author.email", read_only=True)
+    # The calendar draws from these four. `product` is read-only like `source`
+    # and `generation` (A49): the services that own them write them.
+    product_name = serializers.CharField(source="product.name", read_only=True, default=None)
+    effective_at = serializers.SerializerMethodField()
+    open_thread_count = serializers.SerializerMethodField()
+    planned_platforms = serializers.ListField(
+        child=serializers.ChoiceField(choices=Platform.choices), required=False
+    )
+
+    def get_effective_at(self, obj: Post) -> dt.datetime | None:
+        """The time the calendar places this post at: the schedule once it has
+        one, the author's proposal until then."""
+        return obj.scheduled_at or obj.proposed_scheduled_at
+
+    def get_open_thread_count(self, obj: Post) -> int:
+        annotated = getattr(obj, "open_threads", None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.threads.filter(status="OPEN").count()
 
     class Meta:
         model = Post
@@ -137,12 +177,18 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "master_body",
             "media",
             "media_asset_ids",
+            "targets",
             "author_email",
             "status",
             "visibility",
             "delivery_mode",
             "scheduled_at",
             "source",
+            "product",
+            "product_name",
+            "planned_platforms",
+            "effective_at",
+            "open_thread_count",
             "category",
             "origin_post",
             # The review surface needs all three to render a chain honestly:
@@ -162,6 +208,7 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "delivery_mode",
             "scheduled_at",
             "source",
+            "product",
             "origin_post",
             # Written by the approval service alone, for the same reason
             # `scheduled_at` is written by the schedule service alone (A49):
@@ -178,6 +225,81 @@ class PostSerializer(serializers.ModelSerializer[Post]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         _scope_media_field(self.fields["media_asset_ids"], self.context.get("request"))
+
+
+class PostProposeTimeSerializer(serializers.Serializer[Any]):
+    """`POST /posts/{id}/propose-time/` — placing a post on the calendar.
+
+    A *proposal*, never a schedule: it is parked on the post and consumed by
+    the final approval through the ordinary schedule service. `null` takes the
+    post off the calendar again.
+    """
+
+    scheduled_at = serializers.DateTimeField(allow_null=True)
+    delivery_mode = serializers.ChoiceField(
+        choices=DeliveryMode.choices, required=False, allow_blank=True, default=""
+    )
+
+    def validate_scheduled_at(self, value: Any) -> Any:
+        if value is not None and value <= timezone.now():
+            raise serializers.ValidationError("scheduled_at must be in the future.")
+        return value
+
+
+class PostUploadSerializer(serializers.Serializer[Any]):
+    """`POST /posts/upload/` — a finished piece the team brought in.
+
+    The file itself is read from `request.FILES` by the view (like the media
+    upload: a `FileField` here has nowhere to attach the workspace before
+    `ingest_media` needs it); this documents and validates the rest.
+    """
+
+    file = serializers.FileField(write_only=True)
+    caption = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    product = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.none(), required=False, allow_null=True
+    )
+    platform = serializers.ChoiceField(choices=Platform.choices, required=False, allow_blank=True)
+    scheduled_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    delivery_mode = serializers.ChoiceField(
+        choices=DeliveryMode.choices, required=False, allow_blank=True, default=""
+    )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Another workspace's product reads as missing, never as forbidden.
+        scope_related_field_to_workspace(
+            self.fields["product"], self.context.get("request"), Product
+        )
+
+    def validate_scheduled_at(self, value: Any) -> Any:
+        if value is not None and value <= timezone.now():
+            raise serializers.ValidationError("scheduled_at must be in the future.")
+        return value
+
+
+class PostSummarySerializer(serializers.Serializer[Any]):
+    total = serializers.IntegerField()
+    by_status = serializers.DictField(child=serializers.IntegerField())
+    open_threads = serializers.IntegerField()
+    in_window = serializers.IntegerField(allow_null=True)
+
+
+class AutoScheduleRequestSerializer(serializers.Serializer[Any]):
+    post_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
+
+
+class AutoScheduleOutcomeSerializer(serializers.Serializer[Any]):
+    post = serializers.IntegerField()
+    scheduled_at = serializers.DateTimeField(allow_null=True)
+    reason = serializers.CharField(
+        allow_blank=True,
+        help_text="Empty when placed; else no_platform, no_best_time, no_free_slot, refused.",
+    )
+
+
+class AutoScheduleResponseSerializer(serializers.Serializer[Any]):
+    results = AutoScheduleOutcomeSerializer(many=True)
 
 
 class PostPreviewRequestSerializer(serializers.Serializer[Any]):

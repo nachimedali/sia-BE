@@ -13,9 +13,11 @@ what's reachable" shape `PostStatus` used in Phase 4 (A47).
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -128,6 +130,16 @@ class Generation(models.Model):
     scene = models.CharField(max_length=200, blank=True)
     motion = models.CharField(max_length=64, blank=True)
     duration = models.PositiveIntegerField(null=True, blank=True)
+    #: **Every Studio control, as the user set it** — scene, light, camera,
+    #: who is in the frame, moods, palette, language, call to action, format,
+    #: the three sliders, the toggles, what to keep out, which platforms.
+    #: Option *keys* (validated against `CreativeOption` before they get here),
+    #: never labels, so renaming "Golden hour" in admin does not rewrite what an
+    #: old generation was asked for. `{}` for every caller that is not the
+    #: Studio — autopilot, revisions, captions — which is what keeps them
+    #: priced and rendered exactly as before. `scene`/`render_style`/`aspect`
+    #: above stay populated for the same compatibility reason.
+    creative = models.JSONField(default=dict, blank=True)
 
     is_batch = models.BooleanField(default=False)
     provider = models.CharField(max_length=64, blank=True)
@@ -212,6 +224,17 @@ class GenerationVariant(models.Model):
         on_delete=models.SET_NULL,
         related_name="generation_variants",
     )
+    #: The line set over the picture. Studio image variants only; `body` is
+    #: their caption. Both are editable before the variant is sent, which is
+    #: why they are columns and not read back out of the provider's reply.
+    headline = models.CharField(max_length=200, blank=True)
+    #: Observed tags from the category corpus (counted, never invented — see
+    #: `ai.services.hashtags`). Empty when the toggle was off or no corpus exists.
+    hashtags = models.JSONField(default=list, blank=True)
+    #: How closely the render matches the product's reference photo, 0-1, as
+    #: the quality gate measured it. **Null** for text variants and for rows
+    #: from before this was kept — unknown is not a low score.
+    identity_score = models.FloatField(null=True, blank=True)
     platform = models.CharField(max_length=16, blank=True)
     rank = models.PositiveSmallIntegerField(default=0)
     rationale = models.CharField(max_length=300, blank=True)
@@ -334,3 +357,109 @@ class QualityGateConfig(models.Model):
     def get_solo(cls) -> QualityGateConfig:
         instance, _ = cls.objects.get_or_create(pk=1)
         return instance
+
+
+# -----------------------------------------------------------------------------
+# The Studio's controls, as rows
+# -----------------------------------------------------------------------------
+class CreativeKind(models.TextChoices):
+    """Which control a `CreativeOption` row belongs to.
+
+    A new *kind* is a new control and costs code; a new *row* in an existing
+    kind is a new choice and costs nothing — an operator adds a scene in admin
+    and it is on every workspace's Studio the next time it loads.
+    """
+
+    SCENE = "scene", "Scene"
+    LIGHT = "light", "Light"
+    CAMERA = "camera", "Camera angle"
+    CAST = "cast", "Who is in the frame"
+    VIBE = "vibe", "Cast vibe"
+    MOOD = "mood", "Mood"
+    PALETTE = "palette", "Palette"
+    LANGUAGE = "language", "Content language"
+    CTA = "cta", "Call to action"
+    FORMAT = "format", "Format"
+    TEMPO = "tempo", "Tempo (creativity)"
+    DYNAMICS = "dynamics", "Dynamics (colour intensity)"
+    TONE = "tone", "Voice"
+    TOGGLE = "toggle", "On/off option"
+    PRESET = "preset", "Preset"
+    QUICK_TAG = "quick_tag", "Brief quick tag"
+    # The product form's choice lists (`/app/products/new`): rows for the same
+    # reason the Studio's are — a new audience or claim is an admin edit.
+    AUDIENCE = "audience", "Product audience"
+    TONE_PRESET = "tone_preset", "Voice preset"
+    CLAIM = "claim", "Claim that needs proof"
+    SHOT_TAG = "shot_tag", "Photo shot type"
+    ASPECT = "aspect", "Image aspect"
+    SUGGESTION = "suggestion", "Suggested entry"
+
+
+#: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
+#: else — these strings are rendered from the database into the page, so the
+#: only safe icon is one that cannot be anything but a path.
+_PATH_DATA = re.compile(r"^[MmLlHhVvCcSsQqTtAaZz0-9eE.,+\-\s]+$")
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _validate_icon_paths(value: object) -> None:
+    if not isinstance(value, list) or not all(isinstance(p, str) for p in value):
+        raise ValidationError("icon_paths must be a list of SVG path strings.")
+    bad = [p for p in value if len(p) > 600 or not _PATH_DATA.match(p)]
+    if bad:
+        raise ValidationError("icon_paths may only contain SVG path data.")
+
+
+def _validate_colors(value: object) -> None:
+    if not isinstance(value, list) or not all(isinstance(c, str) and _HEX.match(c) for c in value):
+        raise ValidationError("colors must be a list of #RRGGBB values.")
+
+
+class CreativeOption(models.Model):
+    """One choice on one Studio control (scene, light, camera angle, …).
+
+    Global, not per-workspace: the catalog is the product's own, edited by an
+    operator in admin, and every workspace reads the same one. Per-brand
+    taste lives in `TasteProfile`; this is the vocabulary a brief is written
+    in.
+
+    **A row carries everything a control needs to draw itself and to be
+    understood by a model:**
+
+    * `label` / `description` — the text on the tile and its sub-line
+    * `icon_paths` — SVG path data, drawn client-side; validated to be nothing
+      but path data
+    * `colors` — the swatch or backdrop, as hex
+    * `prompt_fragment` — what the generation prompt says when this is chosen
+    * `metadata` — per-kind extras, documented where each is read: a light's
+      colour `grade`, a format's `aspect`, a preset's `values`, a toggle's
+      default
+
+    Selections are stored on `Generation.creative` by **key**, so editing a
+    label never rewrites history.
+    """
+
+    kind = models.CharField(max_length=16, choices=CreativeKind.choices)
+    key = models.SlugField(max_length=40)
+    label = models.CharField(max_length=80)
+    description = models.CharField(max_length=160, blank=True)
+    icon_paths = models.JSONField(default=list, blank=True, validators=[_validate_icon_paths])
+    colors = models.JSONField(default=list, blank=True, validators=[_validate_colors])
+    prompt_fragment = models.CharField(max_length=300, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["kind", "sort_order", "id"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["kind", "key"], name="unique_creative_option_key")
+        ]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["kind", "is_active"])]
+
+    def __str__(self) -> str:
+        return f"{self.kind}/{self.key}"

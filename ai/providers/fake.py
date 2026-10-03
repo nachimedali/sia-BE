@@ -72,7 +72,7 @@ def _gradient(width: int, height: int, seed: int) -> Image.Image:
 
 # (chroma scale, Cb shift, Cr shift) per variant: as-shot, warm, cool, muted,
 # vivid, rose. Chroma only — the Y channel is left alone.
-_GRADES: tuple[tuple[float, int, int], ...] = (
+_GRADES: tuple[tuple[float, float, float], ...] = (
     (1.0, 0, 0),
     (1.0, -14, 18),
     (1.0, 18, -12),
@@ -82,7 +82,9 @@ _GRADES: tuple[tuple[float, int, int], ...] = (
 )
 
 
-def _grade(image: Image.Image, variant_index: int) -> Image.Image:
+def _grade(
+    image: Image.Image, variant_index: int, style: dict[str, float] | None = None
+) -> Image.Image:
     """A per-variant colour grade, so the dock shows a pool worth choosing from.
 
     Only chroma moves; luma (Y) is untouched. The quality gate's dHash reads
@@ -91,18 +93,30 @@ def _grade(image: Image.Image, variant_index: int) -> Image.Image:
     while the variants stop being the same picture four times over.
     """
     chroma, d_cb, d_cr = _GRADES[variant_index % len(_GRADES)]
+    if style:
+        # What the brief chose — light, mood, palette, intensity — on top of
+        # the per-variant grade, so the pool is both *of this brief* and varied.
+        chroma *= style.get("chroma", 1.0)
+        d_cb += style.get("cb", 0)
+        d_cr += style.get("cr", 0)
     if (chroma, d_cb, d_cr) == (1.0, 0, 0):
         return image
     y, cb, cr = image.convert("YCbCr").split()
 
-    def shift(delta: int) -> Any:
+    def shift(delta: float) -> Any:
         return lambda v: max(0, min(255, round(128 + (v - 128) * chroma + delta)))
 
     return Image.merge("YCbCr", (y, cb.point(shift(d_cb)), cr.point(shift(d_cr)))).convert("RGB")
 
 
 def _render(
-    prompt: str, reference_images: list[bytes], width: int, height: int, *, variant_index: int
+    prompt: str,
+    reference_images: list[bytes],
+    width: int,
+    height: int,
+    *,
+    variant_index: int,
+    style: dict[str, float] | None = None,
 ) -> bytes:
     use_reference = reference_images and FORCE_LOW_SIMILARITY_SENTINEL not in prompt.upper()
     if use_reference:
@@ -112,7 +126,7 @@ def _render(
         # distinct enough from any real reference to fail the identity check
         # on purpose when nothing is grounding this generation.
         base = _gradient(width, height, zlib.crc32(prompt.encode()))
-    base = _grade(base, variant_index)
+    base = _grade(base, variant_index, style)
 
     # A small per-variant stamp keeps variants distinguishable without moving
     # the perceptual hash enough to flip the identity check — dHash averages
@@ -139,12 +153,26 @@ class FakeTextProvider:
         self, *, system: str, prompt: str, n: int, model: str | None = None
     ) -> TextGenerationResult:
         self.calls.append({"system": system, "prompt": prompt, "n": n, "model": model})
-        variants = [
-            TextVariant(
-                body=f"{prompt.strip()} — variant {i + 1}", rationale=f"fake rationale {i + 1}"
-            )
-            for i in range(n)
-        ]
+        if "headline of at most eight words on the first line" in system:
+            # The Studio's copy request: a headline, then the caption. The idea
+            # is the prompt's first paragraph, which is what a real model would
+            # also build on.
+            idea = prompt.strip().split("\n")[0]
+            lead = " ".join(idea.split()[:6]).rstrip(".,;:").capitalize()
+            variants = [
+                TextVariant(
+                    body=f"{lead}, take {i + 1}.\n{idea} — variant {i + 1}",
+                    rationale=f"fake rationale {i + 1}",
+                )
+                for i in range(n)
+            ]
+        else:
+            variants = [
+                TextVariant(
+                    body=f"{prompt.strip()} — variant {i + 1}", rationale=f"fake rationale {i + 1}"
+                )
+                for i in range(n)
+            ]
         tokens_in = len(system.split()) + len(prompt.split())
         tokens_out = sum(len(v.body.split()) for v in variants)
         return TextGenerationResult(
@@ -205,14 +233,24 @@ class FakeImageProvider:
         n: int,
         batch: bool,
         model: str | None = None,
+        style: dict[str, float] | None = None,
     ) -> ImageGenerationResult:
         self.calls.append(
-            {"prompt": prompt, "n": n, "aspect": aspect, "batch": batch, "model": model}
+            {
+                "prompt": prompt,
+                "n": n,
+                "aspect": aspect,
+                "batch": batch,
+                "model": model,
+                "style": style,
+            }
         )
         width, height = _size_for_aspect(aspect)
         variants = [
             ImageVariant(
-                content=_render(prompt, reference_images, width, height, variant_index=i),
+                content=_render(
+                    prompt, reference_images, width, height, variant_index=i, style=style
+                ),
                 mime="image/png",
                 width=width,
                 height=height,

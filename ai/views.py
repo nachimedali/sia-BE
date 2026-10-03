@@ -26,6 +26,9 @@ from rest_framework.views import APIView
 from ai.models import Generation, VoiceProfile
 from ai.permissions import HasSufficientCredits
 from ai.serializers import (
+    CreativeCatalogSerializer,
+    CreativeOptionSerializer,
+    EditVariantRequestSerializer,
     GenerateRequestSerializer,
     GenerationSerializer,
     HashtagSuggestionSerializer,
@@ -34,6 +37,7 @@ from ai.serializers import (
     VariantSelectionSerializer,
     VoiceProfileSerializer,
 )
+from ai.services import creative as creative_service
 from ai.services import hashtags
 from ai.services import variants as variant_service
 from ai.services.pipeline import create_generation
@@ -80,6 +84,7 @@ class GenerateView(APIView):
             aspect=data["aspect"],
             render_style=data["render_style"],
             scene=data["scene"],
+            creative=data.get("creative") or {},
             is_batch=data["is_batch"],
             source_media=data.get("source_media"),
             paid_slots=data.get("paid_slots"),
@@ -201,6 +206,26 @@ class GenerationViewSet(
         )
         return Response(PostSerializer(posts, many=True).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        request=EditVariantRequestSerializer,
+        responses={200: GenerationSerializer},
+        summary="Edit a variant's headline or caption",
+        description="Changes the copy only; the picture is immutable.",
+    )
+    @action(detail=True, methods=["post"], url_path="edit-variant")
+    def edit_variant(self, request: Request, pk: str | None = None) -> Response:
+        generation = self.get_object()
+        payload = EditVariantRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        variant_service.edit_copy(
+            generation,
+            variant_id=payload.validated_data["variant"],
+            headline=payload.validated_data.get("headline"),
+            body=payload.validated_data.get("body"),
+        )
+        generation = self.get_queryset().get(pk=generation.pk)
+        return Response(GenerationSerializer(generation).data)
+
 
 class VoiceProfileViewSet(
     WorkspaceScopedQuerySetMixin,
@@ -237,3 +262,46 @@ class HashtagSuggestionView(APIView):
     def get(self, request: Request) -> Response:
         ranked = hashtags.rank_for_workspace(request_workspace(request))
         return Response({"hashtags": [{"tag": row.tag, "count": row.count} for row in ranked]})
+
+
+class CreativeOptionsView(APIView):
+    """The Studio's catalog: every control's choices, and the prices its
+    estimate reads. Read-only — the catalog is edited in admin, and a write
+    here would be a second place to do it."""
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: CreativeCatalogSerializer},
+        summary="The Studio's creative controls",
+        description=(
+            "Scenes, lights, camera angles, cast, moods, palettes, languages, "
+            "calls to action, formats, sliders, toggles, presets and quick tags "
+            "— as data — with the credit price of an image and of a text run."
+        ),
+    )
+    def get(self, request: Request) -> Response:
+        from ai.models import GenerationKind
+        from ai.services.costing import (
+            GenerationCostNotConfiguredError,
+            resolve_pricing,
+            unlock_price,
+        )
+
+        options = {
+            kind: CreativeOptionSerializer(rows, many=True).data
+            for kind, rows in creative_service.catalog().items()
+        }
+        pricing: dict[str, Any] = {}
+        for kind in (GenerationKind.IMAGE, GenerationKind.TEXT):
+            try:
+                row = resolve_pricing(kind=kind, mode="PRODUCT")
+            except GenerationCostNotConfiguredError:
+                pricing[kind] = None
+                continue
+            pricing[kind] = {
+                "credits": row.credits,
+                "variant_pool": row.variant_pool,
+                "unlock_price": unlock_price(row),
+            }
+        return Response({"options": options, "pricing": pricing})

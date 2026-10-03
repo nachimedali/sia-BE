@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 from ai.prompts.image_v1 import PROMPT_PREFIX as IMAGE_PROMPT_PREFIX
 from ai.prompts.text_v1 import SYSTEM_PROMPT as TEXT_SYSTEM_PROMPT
+from products import brief as product_brief
 
 if TYPE_CHECKING:
     from ai.models import VoiceProfile
@@ -127,10 +128,19 @@ def _voice_lines(workspace: Workspace, voice_profile: VoiceProfile | None) -> li
 
 
 def _restriction_lines(product: Product | None) -> list[str]:
-    if product is None or not product.restrictions:
+    """The product's hard rules, then its brief (`products.brief`): features,
+    audience, voice leaning, words, claims. Both are the product's own layer on
+    top of the workspace's taste, never a replacement for it."""
+    if product is None:
         return []
-    constraints = "\n".join(f"- {r}" for r in product.restrictions)
-    return [f"Hard constraints — must not be violated:\n{constraints}"]
+    lines: list[str] = []
+    if product.restrictions:
+        constraints = "\n".join(f"- {r}" for r in product.restrictions)
+        lines.append(f"Hard constraints — must not be violated:\n{constraints}")
+    brief_lines = product_brief.prompt_lines(product)
+    if brief_lines:
+        lines.append("About this product:\n" + "\n".join(f"- {line}" for line in brief_lines))
+    return lines
 
 
 #: Mode-specific framing, appended to the shared system prompt (P1-13).
@@ -148,6 +158,15 @@ MODE_INSTRUCTIONS: dict[str, str] = {
 }
 
 
+#: The reply shape for a Studio image's copy. Parsed by
+#: `ai.services.pipeline.split_copy`, which also copes with a model that ignores
+#: it — the instruction is a request, never something the pipeline depends on.
+HEADLINE_FORMAT = (
+    "Return each variant as a headline of at most eight words on the first line, "
+    "then the caption on the lines after it. No quotation marks, no labels."
+)
+
+
 def assemble_text_prompt(
     *,
     idea: str,
@@ -155,6 +174,8 @@ def assemble_text_prompt(
     product: Product | None = None,
     voice_profile: VoiceProfile | None = None,
     mode: str = "",
+    direction: list[str] | None = None,
+    headline_first: bool = False,
 ) -> GroundedPrompt:
     # Resolved once each. Both are real queries — the performance signal walks
     # every capture in the plan's horizon — so computing them a second time to
@@ -180,6 +201,11 @@ def assemble_text_prompt(
         user_lines.append(signal)
     if performance:
         user_lines.append(performance)
+    if direction:
+        # The Studio's brief: language, voice, the ask. After the grounding so
+        # the model reads *what is working* before *what to do with it*.
+        user_lines.append("\n".join(direction))
+        grounding["creative_direction"] = True
 
     mode_instruction = MODE_INSTRUCTIONS.get(mode)
     if mode_instruction:
@@ -189,6 +215,7 @@ def assemble_text_prompt(
             TEXT_SYSTEM_PROMPT,
             *_voice_lines(workspace, voice_profile),
             *filter(None, [mode_instruction]),
+            *([HEADLINE_FORMAT] if headline_first else []),
         ]
     )
     return GroundedPrompt(system=system, user="\n\n".join(user_lines), grounding=grounding)
@@ -201,6 +228,7 @@ def assemble_image_prompt(
     product: Product | None = None,
     render_style: str = "",
     scene: str = "",
+    direction: list[str] | None = None,
 ) -> GroundedPrompt:
     signal = _category_signal(workspace)
     grounding: dict[str, object] = {
@@ -213,6 +241,9 @@ def assemble_image_prompt(
         user_lines.append(f"Render style: {render_style}.")
     if scene:
         user_lines.append(f"Scene: {scene}.")
+    if direction:
+        user_lines.append("\n".join(direction))
+        grounding["creative_direction"] = True
     user_lines += _restriction_lines(product)
 
     if signal:

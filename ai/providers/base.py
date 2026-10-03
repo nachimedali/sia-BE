@@ -103,7 +103,13 @@ class ImageProvider(Protocol):
         n: int,
         batch: bool,
         model: str | None = None,
-    ) -> ImageGenerationResult: ...
+        style: dict[str, float] | None = None,
+    ) -> ImageGenerationResult:
+        """`style` is a colour-grade hint (`chroma`, `cb`, `cr`) derived from
+        the brief's light, mood, palette and intensity. A real provider takes
+        its direction from the prompt and may ignore it; the fake uses it to
+        make its mock-up visibly reflect what was chosen."""
+        ...
 
 
 @dataclass(frozen=True)

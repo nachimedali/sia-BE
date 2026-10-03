@@ -32,13 +32,13 @@ import datetime as dt
 from django.db import transaction
 
 from accounts.models import User
-from ai.models import Generation, GenerationKind, GenerationStatus, GenerationVariant
+from ai.models import Generation, GenerationStatus, GenerationVariant
 from ai.services.costing import resolve_pricing, unlock_price
 from billing.models import CreditReason
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
-from common.exceptions import OCCSError, Purchasable, StateConflict
-from content.models import Post
+from common.exceptions import NotFoundError, OCCSError, Purchasable, StateConflict
+from content.models import Post, PostSource
 from content.services.posts import create_post, update_post
 from scheduling.services import default_delivery_mode, schedule_post
 
@@ -179,6 +179,49 @@ def unlock(
     return chosen
 
 
+def edit_copy(
+    generation: Generation,
+    *,
+    variant_id: int,
+    headline: str | None = None,
+    body: str | None = None,
+) -> GenerationVariant:
+    """Change a variant's words before it goes anywhere.
+
+    Resolved through the generation like every other variant lookup, so a
+    variant from another workspace is a 404 rather than an edit. Only the copy
+    moves — the picture is immutable, and a "regenerate this image" is a
+    revision with its own price.
+    """
+    _require_succeeded(generation)
+    variant = generation.variants.filter(pk=variant_id).first()
+    if variant is None:
+        raise NotFoundError("No such variant on this generation.", detail={"variant": variant_id})
+    fields = []
+    if headline is not None:
+        variant.headline = headline.strip()
+        fields.append("headline")
+    if body is not None:
+        variant.body = body.strip()
+        fields.append("body")
+    variant.save(update_fields=fields)
+    return variant
+
+
+def post_body(variant: GenerationVariant) -> str:
+    """What a committed variant's draft says: its caption, then its tags.
+
+    The tags are appended here, at the moment a post is made, rather than being
+    baked into the caption at generation: the user edits the words, and the
+    tags are a separate fact they should still be able to read as one.
+    """
+    if not variant.body:
+        return ""
+    if variant.hashtags:
+        return f"{variant.body}\n\n{' '.join(variant.hashtags)}"
+    return variant.body
+
+
 @transaction.atomic
 def commit(
     generation: Generation, *, actor: User, scheduled_at: dt.datetime | None = None
@@ -209,7 +252,7 @@ def commit(
         post = create_post(
             workspace=generation.workspace,
             author=actor,
-            master_body=variant.body if variant.kind == GenerationKind.TEXT else "",
+            master_body=post_body(variant),
             category=generation.category,
             media_assets=[variant.media_asset] if variant.media_asset else [],
         )
@@ -220,6 +263,13 @@ def commit(
             reason="studio",
             product=generation.product,
             generation=generation,
+            # Marked as the product's own work so the calendar's Generated
+            # filter and the analytics' AI-vs-manual audit both read it right,
+            # and given the platforms the brief named: targets do not exist
+            # until the post is scheduled, so this is all the calendar has to
+            # draw a badge from in the meantime.
+            source=PostSource.AI,
+            planned_platforms=list(dict.fromkeys(generation.creative.get("platforms", []))),
         )
         if scheduled_at is not None:
             schedule_post(post=post, delivery_mode=mode, scheduled_at=scheduled_at, actor=actor)

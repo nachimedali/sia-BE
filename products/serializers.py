@@ -13,8 +13,10 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from common.setup import RequirementSerializer
+from common.workspaces import request_workspace
 from content.models import Platform, PostStatus
 from content.serializers import MediaAssetSerializer
+from products import brief
 from products.models import AutopilotConfig, AutopilotDraft, Product, ProductFormat
 from taste.models import REASON_CODES
 
@@ -32,9 +34,36 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
     )
     moods = serializers.ListField(child=serializers.CharField(max_length=100), required=False)
     ctas = serializers.ListField(child=serializers.CharField(max_length=100), required=False)
+    # The brief (`products.brief`). Typed here so the generated client gets real
+    # shapes rather than `unknown`; the catalog-key checks are `validate`'s.
+    price = serializers.DecimalField(
+        max_digits=12, decimal_places=3, min_value=0, required=False, allow_null=True
+    )
+    features = serializers.ListField(child=serializers.CharField(), required=False)
+    audience = serializers.ListField(child=serializers.CharField(), required=False)
+    languages = serializers.ListField(child=serializers.CharField(), required=False)
+    tone = serializers.DictField(child=serializers.IntegerField(), required=False)
+    use_words = serializers.ListField(child=serializers.CharField(), required=False)
+    avoid_words = serializers.ListField(child=serializers.CharField(), required=False)
+    scenes = serializers.ListField(child=serializers.CharField(), required=False)
+    lights = serializers.ListField(child=serializers.CharField(), required=False)
+    brand_colors = serializers.ListField(child=serializers.CharField(), required=False)
+    aspects = serializers.ListField(child=serializers.CharField(), required=False)
+    must_include = serializers.ListField(child=serializers.CharField(), required=False)
+    claims = serializers.ListField(child=serializers.DictField(), required=False)
+    photo_policy = serializers.DictField(child=serializers.BooleanField(), required=False)
+    reference_tags = serializers.DictField(child=serializers.CharField(), required=False)
+    platform_plan = serializers.DictField(child=serializers.DictField(), required=False)
+    brand_hashtags = serializers.ListField(child=serializers.CharField(), required=False)
+    rules_reviewed = serializers.BooleanField(write_only=True, required=False)
     post_count = serializers.SerializerMethodField()
     published_count = serializers.SerializerMethodField()
     autopilot_enabled = serializers.SerializerMethodField()
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        request = self.context.get("request")
+        workspace_id = request_workspace(request).pk if request is not None else None
+        return brief.validate(attrs, workspace_id=workspace_id, instance=self.instance)
 
     class Meta:
         model = Product
@@ -53,6 +82,40 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
             "hashtags_style",
             "emoji_style",
             "ctas",
+            "sku",
+            "price",
+            "price_currency",
+            "product_url",
+            "short_description",
+            "features",
+            "audience",
+            "languages",
+            "tone",
+            "tone_preset",
+            "use_words",
+            "avoid_words",
+            "caption_length",
+            "scenes",
+            "lights",
+            "people",
+            "brand_colors",
+            "aspects",
+            "must_include",
+            "claims",
+            "ramadan_quiet_hours",
+            "no_children",
+            "mention_price",
+            "approval_mode",
+            "legal_mention",
+            "rules_reviewed_at",
+            "rules_reviewed",
+            "photo_policy",
+            "reference_tags",
+            "platform_plan",
+            "campaign_goal",
+            "campaign_starts",
+            "campaign_ends",
+            "brand_hashtags",
             "completeness_score",
             "is_generation_ready",
             "post_count",
@@ -64,6 +127,7 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
         read_only_fields: ClassVar[tuple[str, ...]] = (
             "id",
             "reference_images",
+            "rules_reviewed_at",
             "completeness_score",
             "is_generation_ready",
             "created_at",
@@ -95,12 +159,27 @@ class ProductReferenceImagesUploadSerializer(serializers.Serializer[object]):
     `request.FILES` directly, same reasoning as `MediaAssetUploadSerializer`."""
 
     files = serializers.ListField(child=serializers.FileField())
+    #: Optional, aligned to `files`: the shot type of each (a `shot_tag` key).
+    tags = serializers.ListField(child=serializers.CharField(allow_blank=True), required=False)
 
 
 class ProductCompletenessMissingSerializer(serializers.Serializer[object]):
     key = serializers.CharField()
     message = serializers.CharField()
     impact = serializers.IntegerField()
+
+
+class CompletenessCheckSerializer(serializers.Serializer[object]):
+    """One row of the scorer's definition — what the form's live panel renders
+    its weights and required flags from (`GET /products/completeness-checks/`)."""
+
+    # `text` / `is_required`, not `label` / `required`: those are attributes of
+    # every DRF field, and declaring them shadows the framework's own.
+    key = serializers.CharField()
+    text = serializers.CharField()
+    weight = serializers.IntegerField()
+    is_required = serializers.BooleanField()
+    section = serializers.CharField()
 
 
 class ProductCompletenessSerializer(serializers.Serializer[object]):

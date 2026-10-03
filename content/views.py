@@ -15,6 +15,7 @@ from django.db.models import Prefetch
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -34,12 +35,15 @@ from content.models import (
     Platform,
     Post,
     PostMediaAttachment,
+    PostSource,
     PostStatus,
     PostTemplate,
     RecurrenceRule,
 )
 from content.serializers import (
     AltTextRequestSerializer,
+    AutoScheduleRequestSerializer,
+    AutoScheduleResponseSerializer,
     CropRequestSerializer,
     MediaAssetSerializer,
     MediaAssetUploadSerializer,
@@ -47,14 +51,18 @@ from content.serializers import (
     PlatformRuleListSerializer,
     PostPreviewRequestSerializer,
     PostPreviewResponseSerializer,
+    PostProposeTimeSerializer,
     PostRevisionSerializer,
     PostScheduleRequestSerializer,
     PostSerializer,
     PostSubmitRequestSerializer,
+    PostSummarySerializer,
     PostTemplateSerializer,
+    PostUploadSerializer,
     RecurrenceRuleSerializer,
     TrimRequestSerializer,
 )
+from content.services import calendar as calendar_service
 from content.services import revisions as revisions_service
 from content.services.adaptation import render_payloads
 from content.services.editing import crop_image, trim_video
@@ -103,7 +111,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     permission_classes: list[Any] = [IsAuthenticated]
     pagination_class = DefaultPagination
     queryset = Post.objects.select_related("category", "origin_post", "author").prefetch_related(
-        _ORDERED_MEDIA_ATTACHMENTS
+        _ORDERED_MEDIA_ATTACHMENTS, "targets"
     )
 
     @extend_schema(
@@ -130,6 +138,14 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         """
         queryset = super().get_queryset()
         queryset = self._filter_by_content_kind(queryset)
+        if self.action == "list":
+            # The calendar's filters, window and derived columns. Run here for
+            # the reason the status filter is: the list paginates, and a filter
+            # applied to one page misses every match after it.
+            queryset = calendar_service.annotate(queryset)
+            queryset = calendar_service.apply_filters(
+                queryset, self.request.query_params, request=self.request
+            )
         statuses = self.request.query_params.getlist("status")
         if not statuses:
             return queryset
@@ -182,6 +198,126 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             author=authenticated_user(self.request),
             **serializer.validated_data,
         )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("product", int, many=True, description="Repeatable product ids."),
+            OpenApiParameter("source", str, many=True, enum=PostSource.values),
+            OpenApiParameter("platform", str, many=True, enum=Platform.values),
+            OpenApiParameter("q", str, description="Caption, product name or a comment."),
+            OpenApiParameter("from", str, description="ISO date/datetime, inclusive."),
+            OpenApiParameter("to", str, description="ISO date/datetime, exclusive."),
+            OpenApiParameter("unscheduled", bool, description="Not on the calendar yet."),
+        ],
+        responses={200: PostSummarySerializer},
+        summary="Counts under the list's own filters",
+        description=(
+            "`in_window` is null unless `from`/`to` is given: a tile reading 0 for "
+            '"no window asked for" would be a figure the page invented.'
+        ),
+    )
+    @action(detail=False, methods=["get"])
+    def summary(self, request: Request) -> Response:
+        # The mixin's workspace-scoped base, not `self.get_queryset()`: that one
+        # also applies the list's own status filter, and a tile that counted only
+        # the status it was filtered to could never show the other five.
+        base = calendar_service.annotate(super().get_queryset())
+        return Response(calendar_service.summarise(base, request.query_params, request=request))
+
+    @extend_schema(
+        request=PostProposeTimeSerializer,
+        responses={200: PostSerializer},
+        summary="Place a post on the calendar (a proposal, not a schedule)",
+        description=(
+            "Writes `proposed_scheduled_at` only — `scheduled_at` has one writer, the "
+            "schedule service, behind the approval gate (L-2). Only while the post is "
+            "still in the author's hands (`DRAFT`, `CHANGES_REQUESTED`, "
+            "`PENDING_REVIEW`); anything later moves through `/schedule/`, which "
+            "applies the horizon and quota gates. `null` takes it off the calendar."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="propose-time",
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def propose_time(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PostProposeTimeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        post = calendar_service.propose_time(
+            post,
+            scheduled_at=payload.validated_data["scheduled_at"],
+            delivery_mode=payload.validated_data["delivery_mode"],
+            actor=authenticated_user(request),
+        )
+        return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)
+
+    @extend_schema(
+        request={"multipart/form-data": PostUploadSerializer},
+        responses={201: PostSerializer},
+        summary="Bring a finished piece onto the calendar",
+        description=(
+            "Ingests the file, creates a post marked `UPLOAD`, and — when a time is "
+            "given — submits it for review at that time. It lands in review, never "
+            "on a schedule: bringing your own media is not a way around approval."
+        ),
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        parser_classes=[MultiPartParser, FormParser],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def upload(self, request: Request) -> Response:
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise OCCSError("No file was uploaded.", code="missing_file")
+        payload = PostUploadSerializer(data=request.data, context={"request": request})
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        post = calendar_service.upload_post(
+            workspace=request_workspace(request),
+            actor=authenticated_user(request),
+            upload=upload,
+            caption=data["caption"],
+            product=data.get("product"),
+            platform=data.get("platform", ""),
+            scheduled_at=data.get("scheduled_at"),
+            delivery_mode=data.get("delivery_mode", ""),
+        )
+        return Response(
+            self.get_serializer(self.get_queryset().get(pk=post.pk)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        request=AutoScheduleRequestSerializer,
+        responses={200: AutoScheduleResponseSerializer},
+        summary="Place unplaced drafts at their platform's best hour",
+        description=(
+            "One outcome per draft. A draft with no platform, a platform with no "
+            "measured best hour, or no free slot inside the plan's horizon is left "
+            "as it was, with a `reason` — an unavailable best time is never replaced "
+            "by a typical one. Proposals only; nothing is scheduled."
+        ),
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="auto-schedule",
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def auto_schedule(self, request: Request) -> Response:
+        payload = AutoScheduleRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        results = calendar_service.auto_schedule(
+            request_workspace(request),
+            actor=authenticated_user(request),
+            post_ids=payload.validated_data.get("post_ids"),
+        )
+        return Response({"results": results})
 
     @extend_schema(
         request=PostPreviewRequestSerializer,

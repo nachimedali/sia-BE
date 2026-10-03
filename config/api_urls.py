@@ -24,6 +24,7 @@ from accounts.views import (
     VerifyEmailView,
 )
 from ai.views import (
+    CreativeOptionsView,
     GenerateView,
     GenerationViewSet,
     HashtagSuggestionView,
@@ -360,6 +361,7 @@ urlpatterns = [
     # A read, not a generation (P1-13): the corpus is category-shared, so
     # there is no workspace-scoped object here for the tenancy sweep to walk.
     path("ai/hashtags/", HashtagSuggestionView.as_view(), name="ai-hashtags"),
+    path("ai/creative-options/", CreativeOptionsView.as_view(), name="ai-creative-options"),
     # --- guest review: sharing a post with someone who has no account ---
     # `{pk}` is resolved through a workspace-filtered queryset inside the view,
     # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the

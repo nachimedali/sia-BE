@@ -14,6 +14,7 @@ from django.db import transaction
 from django.db.models import Max
 
 from accounts.models import User
+from products import brief as product_brief
 from taste.models import ProductTasteOverride, TasteProfile
 from taste.services.screening import validate_constraints
 from workspaces.models import Workspace
@@ -110,7 +111,14 @@ def constraints_for(workspace: Workspace, product: Any = None) -> dict[str, Any]
         return merged
 
     override = ProductTasteOverride.objects.filter(product=product).first()
-    for kind, value in (override.constraints if override else {}).items():
+    # The product's own brief contributes the checks a text screen can honestly
+    # decide (banned words, "no hashtags"); an explicit override row layers on
+    # top. Both only ever narrow.
+    contributed = {
+        **product_brief.constraints(product),
+        **(override.constraints if override else {}),
+    }
+    for kind, value in contributed.items():
         if kind not in merged:
             merged[kind] = value
         elif isinstance(value, list):

@@ -45,7 +45,9 @@ somebody if it were wrong.
 
 from __future__ import annotations
 
+import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -65,12 +67,14 @@ from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
+from ai.services import creative as creative_service
+from ai.services import hashtags as hashtag_service
 from ai.services import prompting, quality
 from ai.services.costing import resolve_pricing
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import STUDIO_VARIANTS_V2, flag_enabled
-from common.exceptions import InsufficientCredits, OCCSError
+from common.exceptions import InsufficientCredits, OCCSError, ProviderError
 from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
 from products.models import Product
@@ -84,6 +88,8 @@ from workspaces.models import Workspace
 # `ai.services.revisions.create_revision` and
 # `products.services.autopilot` — each of which validates its own precondition
 # in place of the mode check `create_generation` applies to a direct request.
+logger = logging.getLogger(__name__)
+
 ALLOWED_MODES = frozenset(
     {
         GenerationMode.IDEA,
@@ -123,6 +129,7 @@ def create_generation(
     aspect: str = "1:1",
     render_style: str = "",
     scene: str = "",
+    creative: dict[str, Any] | None = None,
     is_batch: bool = False,
     source_media: MediaAsset | None = None,
     paid_slots: int | None = None,
@@ -180,6 +187,7 @@ def create_generation(
         pool = 0
     entitlements.require_credits(pricing.credits * slots)
 
+    creative = creative or {}
     return Generation.objects.create(
         workspace=workspace,
         user=user,
@@ -190,8 +198,11 @@ def create_generation(
         category=workspace.category,
         voice_profile=voice_profile,
         aspect=aspect,
-        render_style=render_style,
-        scene=scene,
+        # The legacy columns stay populated from the brief, so everything that
+        # reads them — the eval harness, exports, old rows' readers — still can.
+        render_style=render_style or creative_service.render_style_label(creative),
+        scene=scene or creative_service.scene_label(creative),
+        creative=creative,
         is_batch=is_batch,
         source_media=source_media,
         paid_slots=slots,
@@ -241,6 +252,7 @@ def _attempt_text(
         product=generation.product,
         voice_profile=generation.voice_profile,
         mode=generation.mode,
+        direction=creative_service.caption_lines(generation.creative),
     )
     source_media = generation.source_media
     if generation.mode == GenerationMode.CAPTION and source_media is not None:
@@ -281,6 +293,7 @@ def _attempt_image(
         product=generation.product,
         render_style=generation.render_style,
         scene=generation.scene,
+        direction=creative_service.image_lines(generation.creative),
     )
     restrictions = generation.product.restrictions if generation.product else []
 
@@ -290,6 +303,7 @@ def _attempt_image(
         aspect=generation.aspect,
         n=n,
         batch=generation.is_batch,
+        style=creative_service.style_for(generation.creative),
     )
     checked = [
         (
@@ -322,10 +336,79 @@ def _persist_generated_image(generation: Generation, variant: ImageVariant) -> M
     return asset
 
 
+@dataclass(frozen=True)
+class VariantCopy:
+    headline: str
+    body: str
+    hashtags: list[str]
+
+
+def split_copy(text: str) -> tuple[str, str]:
+    """A model's reply as `(headline, caption)`.
+
+    The prompt asks for the headline on the first line; this honours that and
+    **copes when it is ignored** — a model that returns one paragraph gets its
+    first few words as a headline and the whole paragraph as the caption,
+    rather than a failed generation over formatting.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if len(lines) >= 2 and len(lines[0].split()) <= 12:
+        return lines[0].strip(" \"'*#"), "\n".join(lines[1:])
+    words = text.split()
+    return " ".join(words[:8]).strip(" \"'*#"), text.strip()
+
+
+def _write_copy(generation: Generation, *, count: int) -> list[VariantCopy]:
+    """A headline, a caption and tags for each image that passed the gate.
+
+    One text call for all of them, through the same port every caption goes
+    through, so it is grounded, voice-aware and quality-gated like any other
+    copy. **It degrades rather than fails:** by now the pictures have passed
+    and are about to be charged for, and discarding them because the copywriter
+    was briefly unavailable would punish the customer for a vendor's outage. The
+    variants arrive without copy, which the Studio lets the user write.
+    """
+    empty = [VariantCopy("", "", []) for _ in range(count)]
+    try:
+        grounded = prompting.assemble_text_prompt(
+            idea=generation.prompt,
+            workspace=generation.workspace,
+            product=generation.product,
+            voice_profile=generation.voice_profile,
+            direction=creative_service.caption_lines(generation.creative),
+            headline_first=True,
+        )
+        result = get_text_provider().generate(system=grounded.system, prompt=grounded.user, n=count)
+    except ProviderError:
+        logger.warning("copy for generation %s unavailable", generation.pk, exc_info=True)
+        return empty
+
+    banned = generation.voice_profile.banned_phrases if generation.voice_profile else []
+    toggles = generation.creative.get("toggles") or {}
+    tags: list[str] = []
+    if toggles.get("hashtags", True):
+        tags = [
+            f"#{r.tag.lstrip('#')}"
+            for r in hashtag_service.rank_for_workspace(generation.workspace, limit=4)
+        ]
+
+    copy: list[VariantCopy] = []
+    for variant in result.variants[:count]:
+        headline, caption = split_copy(variant.body)
+        # A caption that breaks a banned phrase is dropped, not shipped: the
+        # same text gate every other piece of copy passes.
+        if not quality.run_text_quality_gate(body=caption, banned_phrases=banned).passed:
+            headline, caption = "", ""
+        copy.append(VariantCopy(headline=headline, body=caption, hashtags=tags))
+    return (copy + empty)[:count]
+
+
 def _persist_variants(
-    generation: Generation, passing: list[tuple[Any, quality.QualityResult]]
+    generation: Generation,
+    passing: list[tuple[Any, quality.QualityResult]],
+    copy: list[VariantCopy] | None = None,
 ) -> None:
-    for rank, (candidate, _check) in enumerate(passing):
+    for rank, (candidate, check) in enumerate(passing):
         if generation.kind == GenerationKind.TEXT:
             GenerationVariant.objects.create(
                 generation=generation,
@@ -336,11 +419,16 @@ def _persist_variants(
             )
         else:
             media_asset = _persist_generated_image(generation, candidate)
+            words = copy[rank] if copy else None
             GenerationVariant.objects.create(
                 generation=generation,
                 kind=GenerationKind.IMAGE,
                 media_asset=media_asset,
                 rank=rank,
+                headline=words.headline if words else "",
+                body=words.body if words else "",
+                hashtags=words.hashtags if words else [],
+                identity_score=check.identity_score,
             )
 
 
@@ -418,6 +506,16 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         generation.save()
         return generation
 
+    # Written before the transaction, never inside it: it is a provider call,
+    # and holding the ledger's row lock across one is how a slow vendor stalls
+    # every other debit in the organization.
+    copy = (
+        _write_copy(generation, count=len(passing))
+        if generation.kind == GenerationKind.IMAGE
+        and creative_service.wants_copy(generation.creative)
+        else None
+    )
+
     try:
         with transaction.atomic():
             ledger.debit_credits(
@@ -430,7 +528,7 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
             generation.credits_charged = cost
             generation.status = GenerationStatus.SUCCEEDED
             generation.save()
-            _persist_variants(generation, passing)
+            _persist_variants(generation, passing, copy)
     except InsufficientCredits:
         # I5's task-preflight gate: `create_generation`'s own check ran
         # against the balance at request time, which can be stale by the

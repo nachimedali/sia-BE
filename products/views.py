@@ -26,6 +26,7 @@ from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
+from ai.models import CreativeKind, CreativeOption
 from billing.permissions import HasFeature
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
@@ -37,6 +38,7 @@ from products.serializers import (
     AutopilotConfigSerializer,
     AutopilotDraftSerializer,
     AutopilotReadinessSerializer,
+    CompletenessCheckSerializer,
     DraftRejectRequestSerializer,
     ProductCompletenessSerializer,
     ProductReferenceImagesUploadSerializer,
@@ -47,7 +49,7 @@ from products.serializers import (
 # `/products/{id}/autopilot/`, and it would otherwise shadow the module.
 from products.services import autopilot as autopilot_service
 from products.services import readiness as readiness_service
-from products.services.completeness import completeness_payload
+from products.services.completeness import check_definitions, completeness_payload
 from products.services.products import (
     attach_reference_images,
     create_product,
@@ -163,7 +165,15 @@ class ProductViewSet(
         uploads = request.FILES.getlist("files")
         if not uploads:
             raise OCCSError("No files were uploaded.", code="missing_file")
-        attach_reference_images(product=product, uploads=uploads)
+        shot_tags = request.data.getlist("tags") if hasattr(request.data, "getlist") else []
+        valid = {
+            *CreativeOption.objects.filter(kind=CreativeKind.SHOT_TAG, is_active=True).values_list(
+                "key", flat=True
+            )
+        }
+        if any(tag and tag not in valid for tag in shot_tags):
+            raise OCCSError("Unknown shot type.", code="invalid_shot_tag")
+        attach_reference_images(product=product, uploads=uploads, shot_tags=shot_tags)
         product.refresh_from_db()
         return Response(self.get_serializer(product).data)
 
@@ -188,6 +198,16 @@ class ProductViewSet(
         asset = get_object_or_404(product.reference_images.all(), pk=asset_id)
         detach_reference_image(product=product, media_asset=asset)
         return Response(self.get_serializer(self.get_queryset().get(pk=product.pk)).data)
+
+    @extend_schema(
+        responses={200: CompletenessCheckSerializer(many=True)},
+        summary="The completeness checks, as data",
+        description="Weights and required flags the new-product form's panel reads, so the "
+        "browser carries no second copy of them.",
+    )
+    @action(detail=False, methods=["get"], url_path="completeness-checks")
+    def completeness_checks(self, request: Request) -> Response:
+        return Response(check_definitions())
 
     @extend_schema(responses={200: ProductCompletenessSerializer})
     @action(detail=True, methods=["get"])

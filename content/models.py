@@ -111,6 +111,9 @@ class PostSource(models.TextChoices):
     AI = "AI", "AI"
     AUTOPILOT = "AUTOPILOT", "Autopilot"
     REPURPOSE = "REPURPOSE", "Repurpose"
+    #: A finished piece the team brought in rather than one the product made —
+    #: the calendar's "Uploaded" filter.
+    UPLOAD = "UPLOAD", "Uploaded"
 
 
 class Post(models.Model):
@@ -185,6 +188,11 @@ class Post(models.Model):
     locked_at = models.DateTimeField(null=True, blank=True)
 
     source = models.CharField(max_length=16, choices=PostSource.choices, default=PostSource.MANUAL)
+    #: Where this is *meant* to play, before any `PostTarget` exists. Targets are
+    #: built when the post is scheduled (`build_targets`), so until then the
+    #: calendar has nothing to show a platform badge from; this is the plan the
+    #: Studio or the uploader named. Never consulted to publish.
+    planned_platforms = models.JSONField(default=list, blank=True)
     category = models.ForeignKey(
         "categories.Category",
         null=True,
