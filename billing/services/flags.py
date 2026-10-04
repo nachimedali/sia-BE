@@ -111,6 +111,13 @@ STUDIO_VARIANTS_V2 = "studio_variants_v2"
 TRENDGEN_FEED = "trendgen_feed"
 TRENDGEN_GENERATION = "trendgen_generation"
 
+#: steps-plan S1 — the website import in onboarding (Import and Review steps)
+#: and the Brand Core it writes. Off restores the six-step wizard: the import
+#: endpoints answer 404 and the wizard skips the two steps. A Brand Core already
+#: written stays readable; turning the flag off hides a feature, it does not
+#: delete what somebody accepted.
+BRAND_IMPORT_S1 = "brand_import_s1"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -119,6 +126,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     ANALYTICS_V6: True,
     LEARN_V7: True,
     STUDIO_VARIANTS_V2: True,
+    BRAND_IMPORT_S1: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

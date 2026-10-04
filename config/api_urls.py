@@ -67,6 +67,15 @@ from billing.views import (
     SubscribeView,
     VideoLedgerView,
 )
+from brand.views import (
+    BrandCoreView,
+    BrandImportApplyView,
+    BrandImportDetailView,
+    BrandImportLatestView,
+    BrandImportListView,
+    BrandImportReviewView,
+    BrandImportSkipView,
+)
 from categories.views import CategoryListView
 from channels.views import ChannelConnectView, SocialAccountViewSet
 from collaboration.views import (
@@ -196,6 +205,20 @@ urlpatterns = [
     # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
     path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
     path("onboarding/", OnboardingView.as_view(), name="onboarding"),
+    # --- brand import (steps-plan S1) ---
+    path("brand/imports/", BrandImportListView.as_view(), name="brand-imports"),
+    path("brand/imports/latest/", BrandImportLatestView.as_view(), name="brand-import-latest"),
+    path("brand/imports/skip/", BrandImportSkipView.as_view(), name="brand-import-skip"),
+    path("brand/imports/<int:pk>/", BrandImportDetailView.as_view(), name="brand-import"),
+    path(
+        "brand/imports/<int:pk>/review/",
+        BrandImportReviewView.as_view(),
+        name="brand-import-review",
+    ),
+    path(
+        "brand/imports/<int:pk>/apply/", BrandImportApplyView.as_view(), name="brand-import-apply"
+    ),
+    path("brand/core/", BrandCoreView.as_view(), name="brand-core"),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     # --- billing ---
     path("billing/plans/", PlanListView.as_view(), name="billing-plans"),

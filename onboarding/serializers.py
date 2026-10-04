@@ -1,8 +1,9 @@
 """Onboarding wizard (design.md §10.4, implementation.md Phase 2.4).
 
-Six steps, resumable: each step PATCHes the fields it owns, and the resource
-reports which step the user should be on. Resumability is the point — a wizard
-that loses progress on a refresh is a wizard people abandon.
+Eight steps (six with the brand import off), resumable: each step PATCHes the
+fields it owns, and the resource reports which step the user should be on.
+Resumability is the point — a wizard that loses progress on a refresh is a
+wizard people abandon.
 
 What counts as done lives in `onboarding.services.wizard`; this renders it.
 """
@@ -43,7 +44,7 @@ class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
     plan_code = serializers.SerializerMethodField()
     #: Which steps this workspace actually has to answer, and whether that is
     #: the shortened per-brand re-run (P0-58). The FE routes on these rather
-    #: than assuming six, so a second brand does not land on a plan picker it
+    #: than assuming a count, so a second brand does not land on a plan picker it
     #: has no business seeing.
     applicable_steps = serializers.SerializerMethodField()
     is_shortened = serializers.SerializerMethodField()

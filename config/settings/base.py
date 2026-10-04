@@ -71,6 +71,9 @@ LOCAL_APPS = [
     "analytics",
     "learn",
     "benchmarks",
+    # The Brand Core (steps-plan S1): a website import, reviewed section by
+    # section, versioned into the brand kit every generation reads.
+    "brand",
     # The seam to the trendgen service (BUILD-PLAN L11-L12). No models; it
     # holds the ports that `trends/` and the creative half of `ai/` move
     # behind, so Phase 12 swaps an adapter rather than editing call sites.
@@ -562,3 +565,8 @@ LOGGING = {
 # controls. Off under test settings only: the suite builds its own rows and a
 # pre-filled table collides with them. Never a production switch.
 SEED_CATALOG_ON_MIGRATE = env.bool("SEED_CATALOG_ON_MIGRATE", default=True)
+
+# Website reading for the brand import (steps-plan S1). The fake serves fixture
+# sites from `brand/fixtures/sites/` so a fresh checkout needs no network; set
+# False to crawl real websites (the crawler only reads public addresses).
+USE_FAKE_SITE_FETCHER = env.bool("USE_FAKE_SITE_FETCHER", default=True)

@@ -12,7 +12,11 @@ from accounts.models import User
 from common.exceptions import OCCSError
 from workspaces.models import Workspace
 
-TOTAL_STEPS = 6
+TOTAL_STEPS = 8
+
+#: Import (2) and Review (3) — the website import (steps-plan S1). Shown only
+#: when `BRAND_IMPORT_S1` is on; off, the wizard is the original six screens.
+IMPORT_STEPS: frozenset[int] = frozenset({2, 3})
 
 # --- scope (BUILD-PLAN L-1, P0-58) -------------------------------------------
 #
@@ -24,8 +28,8 @@ TOTAL_STEPS = 6
 #
 # Brand, market and operating preferences belong to the **workspace**. Each new
 # brand genuinely needs them, and each has different answers.
-ORG_SCOPE_STEPS: frozenset[int] = frozenset({1, 5})
-WORKSPACE_SCOPE_STEPS: frozenset[int] = frozenset({2, 3, 4})
+ORG_SCOPE_STEPS: frozenset[int] = frozenset({1, 7})
+WORKSPACE_SCOPE_STEPS: frozenset[int] = frozenset({2, 3, 4, 5, 6})
 
 # design.md §10.4. What makes a step *done* — deliberately only the one thing
 # each step exists to collect, not every field on it.
@@ -34,18 +38,19 @@ WORKSPACE_SCOPE_STEPS: frozenset[int] = frozenset({2, 3, 4})
 # Continue advance the user while `current_step` stayed put, so resuming sent
 # them backwards.
 #
-# Steps 1, 5 and 6 are absent because no workspace field decides them: they are
-# satisfied by email verification, plan assignment and the flag itself.
+# Steps 1, 7 and 8 are absent because no workspace field decides them: they are
+# satisfied by email verification, plan assignment and the flag itself. Steps 2
+# and 3 are decided by the brand import (`_import_steps_done`).
 STEP_COMPLETION_FIELD: dict[int, str] = {
     # Not `name`: registration always derives a placeholder from the email, so
     # keying on it would mark the Brand step done before the user saw it.
     # `description` is the one thing here only the user can supply — and it is
     # what grounds every later generation.
-    2: "description",
-    3: "category",
+    4: "description",
+    5: "category",
     # timezone always carries a default, so it cannot signal engagement;
     # choosing where to post can only have come from the user.
-    4: "platforms",
+    6: "platforms",
 }
 
 # What `complete/` insists on. Deliberately short: D14 says nobody hits a
@@ -64,22 +69,44 @@ def is_filled(workspace: Workspace, field: str) -> bool:
     return value not in (None, "")
 
 
+def _imports_enabled(workspace: Workspace) -> bool:
+    from billing.services.flags import BRAND_IMPORT_S1, flag_enabled
+
+    return flag_enabled(workspace.organization, BRAND_IMPORT_S1)
+
+
+def _import_steps_done(workspace: Workspace) -> list[int]:
+    """Import is answered by a reading that finished (or a skip); Review by
+    an applied import (or a skip). A failed reading answers neither."""
+    from brand.models import BrandImport, ImportStatus
+
+    statuses = set(BrandImport.objects.filter(workspace=workspace).values_list("status", flat=True))
+    done = []
+    if statuses & {ImportStatus.SUCCEEDED, ImportStatus.APPLIED, ImportStatus.SKIPPED}:
+        done.append(2)
+    if statuses & {ImportStatus.APPLIED, ImportStatus.SKIPPED}:
+        done.append(3)
+    return done
+
+
 def completed_steps(workspace: Workspace, user: User) -> list[int]:
     done: list[int] = []
     if user.is_email_verified:
         done.append(1)
+    if _imports_enabled(workspace):
+        done.extend(_import_steps_done(workspace))
     done.extend(
         step for step, field in STEP_COMPLETION_FIELD.items() if is_filled(workspace, field)
     )
     if workspace.organization.plan_id:
-        done.append(5)
+        done.append(7)
     # A later brand inherits the org's answers rather than being asked again
     # (P0-58). Marking them done rather than hiding them keeps the rail honest:
     # they *are* satisfied, just not by this workspace.
     if is_shortened(workspace):
         done.extend(step for step in ORG_SCOPE_STEPS if step not in done)
     if workspace.onboarding_complete:
-        done.append(6)
+        done.append(8)
     return sorted(done)
 
 
@@ -108,18 +135,19 @@ def is_shortened(workspace: Workspace) -> bool:
 def steps_for(workspace: Workspace) -> list[int]:
     """Which steps this workspace actually has to answer.
 
-    The full six on a first run; the three brand steps plus the finish on every
-    later one.
+    The full run on a first brand; the brand steps plus the finish on every
+    later one. Import and Review only while `BRAND_IMPORT_S1` is on.
     """
+    hidden = frozenset() if _imports_enabled(workspace) else IMPORT_STEPS
     if not is_shortened(workspace):
-        return list(range(1, TOTAL_STEPS + 1))
-    return sorted(WORKSPACE_SCOPE_STEPS | {TOTAL_STEPS})
+        return [step for step in range(1, TOTAL_STEPS + 1) if step not in hidden]
+    return sorted((WORKSPACE_SCOPE_STEPS - hidden) | {TOTAL_STEPS})
 
 
 def current_step(workspace: Workspace, user: User) -> int:
     """The first step not yet satisfied — this is what makes it resumable.
 
-    Walks `steps_for`, not `range(1, 7)`: a shortened run must not park the
+    Walks `steps_for`, not `range(1, 9)`: a shortened run must not park the
     user on a step it never intends to show them.
     """
     done = set(completed_steps(workspace, user))

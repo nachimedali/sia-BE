@@ -11,6 +11,19 @@ from workspaces.services.provisioning import provision_workspace
 
 pytestmark = pytest.mark.django_db
 
+
+@pytest.fixture(autouse=True)
+def _classic_flow(db: None) -> None:
+    """This module is the wizard **without** the website import (the
+    `BRAND_IMPORT_S1` flag off): Account 1, Brand 4, Market 5, Operate 6,
+    Plan 7, Finish 8. The Import (2) and Review (3) steps are covered in
+    `brand/tests/test_wizard_import.py`."""
+    from billing.models import FeatureFlag
+    from billing.services.flags import BRAND_IMPORT_S1
+
+    FeatureFlag.objects.create(organization=None, key=BRAND_IMPORT_S1, enabled=False)
+
+
 User = get_user_model()
 ONBOARDING_URL = "/api/v1/onboarding/"
 COMPLETE_URL = "/api/v1/onboarding/complete/"
@@ -86,18 +99,18 @@ def test_current_step_advances_as_fields_are_filled(client, account, category) -
     user, _ = account
     verify(user)
 
-    assert client.get(ONBOARDING_URL).json()["current_step"] == 2
+    assert client.get(ONBOARDING_URL).json()["current_step"] == 4
 
     # Only the field the step exists to collect is required; website and
     # target audience are optional and must not hold the wizard back.
     client.patch(ONBOARDING_URL, {"description": "Hand-glazed ceramics."}, format="json")
-    assert client.get(ONBOARDING_URL).json()["current_step"] == 3
+    assert client.get(ONBOARDING_URL).json()["current_step"] == 5
 
     client.patch(ONBOARDING_URL, {"category": category.id}, format="json")
-    assert client.get(ONBOARDING_URL).json()["current_step"] == 4
+    assert client.get(ONBOARDING_URL).json()["current_step"] == 6
 
     client.patch(ONBOARDING_URL, {"platforms": ["instagram"]}, format="json")
-    assert client.get(ONBOARDING_URL).json()["current_step"] == 6
+    assert client.get(ONBOARDING_URL).json()["current_step"] == 8
 
 
 def test_optional_fields_do_not_block_progress(client, account, category) -> None:
@@ -112,7 +125,7 @@ def test_optional_fields_do_not_block_progress(client, account, category) -> Non
     state = client.get(ONBOARDING_URL).json()
     assert state["website"] == ""
     assert state["target_audience"] == ""
-    assert 2 in state["completed_steps"]
+    assert 4 in state["completed_steps"]
 
 
 def test_a_placeholder_workspace_name_does_not_skip_the_brand_step(client, account) -> None:
@@ -123,7 +136,7 @@ def test_a_placeholder_workspace_name_does_not_skip_the_brand_step(client, accou
 
     state = client.get(ONBOARDING_URL).json()
     assert state["name"] == "Acme Studio"
-    assert state["current_step"] == 2
+    assert state["current_step"] == 4
 
 
 def test_onboarding_is_resumable_across_sessions(client, account, category) -> None:
@@ -141,7 +154,7 @@ def test_onboarding_is_resumable_across_sessions(client, account, category) -> N
     assert state["name"] == "Acme Studio"
     assert state["description"] == "Ceramics."
     # Brand is answered, so resuming picks up at Market rather than replaying it.
-    assert state["current_step"] == 3
+    assert state["current_step"] == 5
 
 
 def test_patches_are_partial_and_do_not_clear_other_steps(client, account, category) -> None:
@@ -182,11 +195,11 @@ def test_complete_reports_exactly_what_is_missing(client, account) -> None:
     assert set(error["detail"]["missing"]) == {"name", "category"}
 
 
-def test_step_5_soft_defaults_to_free(client, account) -> None:
+def test_the_plan_step_soft_defaults_to_free(client, account) -> None:
     """D14: nobody hits a paywall before seeing the product."""
     state = client.get(ONBOARDING_URL).json()
     assert state["plan_code"] == "free"
-    assert 5 in state["completed_steps"]
+    assert 7 in state["completed_steps"]
 
 
 def test_timezone_must_be_a_real_iana_zone(client, account) -> None:
@@ -233,7 +246,7 @@ def test_a_first_workspace_runs_the_full_wizard(workspace, user) -> None:
     from onboarding.services import wizard
 
     assert wizard.is_shortened(workspace) is False
-    assert wizard.steps_for(workspace) == [1, 2, 3, 4, 5, 6]
+    assert wizard.steps_for(workspace) == [1, 4, 5, 6, 7, 8]
 
 
 def test_a_second_brand_runs_the_brand_steps_only(workspace, user, plans) -> None:
@@ -253,7 +266,7 @@ def test_a_second_brand_runs_the_brand_steps_only(workspace, user, plans) -> Non
     )
 
     assert wizard.is_shortened(second) is True
-    assert wizard.steps_for(second) == [2, 3, 4, 6]
+    assert wizard.steps_for(second) == [4, 5, 6, 8]
 
 
 def test_the_shortened_run_starts_on_a_brand_step(workspace, user, plans) -> None:
@@ -270,7 +283,7 @@ def test_the_shortened_run_starts_on_a_brand_step(workspace, user, plans) -> Non
         slug=Workspace.unique_slug("Second Brand"),
     )
 
-    assert wizard.current_step(second, user) == 2
+    assert wizard.current_step(second, user) == 4
 
 
 def test_org_scope_steps_read_as_done_on_a_second_brand(workspace, user, plans) -> None:
@@ -290,7 +303,7 @@ def test_org_scope_steps_read_as_done_on_a_second_brand(workspace, user, plans) 
     done = wizard.completed_steps(second, user)
 
     assert 1 in done
-    assert 5 in done
+    assert 7 in done
 
 
 def test_deleting_the_first_brand_makes_the_next_one_first_again(workspace, user, plans) -> None:
@@ -316,5 +329,5 @@ def test_deleting_the_first_brand_makes_the_next_one_first_again(workspace, user
 def test_the_api_reports_the_applicable_steps(auth_client, workspace) -> None:
     body = auth_client.get(ONBOARDING_URL).json()
 
-    assert body["applicable_steps"] == [1, 2, 3, 4, 5, 6]
+    assert body["applicable_steps"] == [1, 4, 5, 6, 7, 8]
     assert body["is_shortened"] is False
