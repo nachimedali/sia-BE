@@ -4,9 +4,10 @@ in serializers or views; a Celery task body is a call into this module too).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from accounts.models import User
@@ -50,7 +51,9 @@ class NoTargetForPlatformError(OCCSError):
     default_detail = "This post has no target on that platform."
 
 
-def _replace_media(post: Post, media_assets: Sequence[MediaAsset]) -> None:
+def _replace_media(
+    post: Post, media_assets: Sequence[MediaAsset], alt_texts: Mapping[int, str] | None = None
+) -> None:
     """Full replace, not a diff: a composer sends the whole ordered list on
     every save, so reconciling an add/remove/reorder delta would be solving a
     problem nobody has yet.
@@ -62,7 +65,12 @@ def _replace_media(post: Post, media_assets: Sequence[MediaAsset]) -> None:
     """
     PostMediaAttachment.objects.filter(post=post).delete()
     PostMediaAttachment.objects.bulk_create(
-        PostMediaAttachment(post=post, media_asset=asset, order=index)
+        PostMediaAttachment(
+            post=post,
+            media_asset=asset,
+            order=index,
+            alt_text=(alt_texts or {}).get(asset.pk, ""),
+        )
         for index, asset in enumerate(media_assets)
     )
 
@@ -76,6 +84,8 @@ def create_post(
     media_assets: Sequence[MediaAsset] = (),
     content_kind: str = ContentKind.SOCIAL,
     doc_body: Any | None = None,
+    planned_platforms: Sequence[str] = (),
+    alt_texts: Mapping[int, str] | None = None,
 ) -> Post:
     if doc_body is not None and content_kind != ContentKind.DOC:
         # Rejected rather than ignored. A `SOCIAL` post carrying a document
@@ -92,9 +102,10 @@ def create_post(
         category=category,
         content_kind=content_kind,
         doc_body=doc_body or [],
+        planned_platforms=list(planned_platforms),
     )
     if media_assets:
-        _replace_media(post, media_assets)
+        _replace_media(post, media_assets, alt_texts)
     # After the media, not before: revision 1 is the anchor every later diff is
     # measured against, and an anchor that omits the media the post was created
     # with would make the next save look like the media had just been added.
@@ -110,7 +121,13 @@ _CONTENT_FIELDS = frozenset({"master_body", "media_asset_ids", "doc_body"})
 
 
 def update_post(
-    post: Post, *, author: User | None = None, reason: str = "edited", **fields: Any
+    post: Post,
+    *,
+    author: User | None = None,
+    reason: str = "edited",
+    record: bool = True,
+    alt_texts: Mapping[int, str] | None = None,
+    **fields: Any,
 ) -> Post:
     """`fields` is exactly what the caller wants to change — a PATCH that
     omits `media_asset_ids` must not touch attachment order, so the view only
@@ -162,7 +179,7 @@ def update_post(
         post.save(update_fields=[*update_fields, "updated_at"])
 
     if media_assets is not None:
-        _replace_media(post, media_assets)
+        _replace_media(post, media_assets, alt_texts)
 
     if reverted:
         approvals.log(
@@ -180,8 +197,10 @@ def update_post(
 
     # One revision for the whole edit, recorded after every table it touched —
     # a body change and a media reorder submitted together are one version of
-    # the post, not two.
-    revisions.record(post, author=author, reason=reason)
+    # the post, not two. `record=False` is for `duplicate_post`, which writes
+    # more fields after this one and records once at the end.
+    if record:
+        revisions.record(post, author=author, reason=reason)
     return post
 
 
@@ -262,15 +281,134 @@ def set_platform_options(
     except option_rules.OptionError as exc:
         raise InvalidPlatformOptionsError(detail=exc.errors) from exc
 
+    target = _write_options(post, platform, cleaned)
+    revisions.record(post, author=author, reason=f"{platform} options")
+    return target
+
+
+def _write_options(post: Post, platform: str, cleaned: dict[str, Any]) -> PostTarget:
+    """Store already-validated settings on the platform's settings target
+    (`social_account` empty) — the one writer of that row."""
     target, _created = PostTarget.objects.get_or_create(
         post=post, platform=platform, social_account=None
     )
     target.platform_options = cleaned
     target.options_schema_version = OPTIONS_SCHEMA_VERSION
     target.save(update_fields=["platform_options", "options_schema_version", "updated_at"])
-
-    revisions.record(post, author=author, reason=f"{platform} options")
     return target
+
+
+def ensure_editable(post: Post) -> None:
+    """Content may change: not locked, not gone or going, not cancelled."""
+    approvals.ensure_unlocked(post)
+    if post.status in revisions.UNEDITABLE_STATUSES:
+        raise revisions.PostNotEditableError(detail={"post": post.pk, "status": post.status})
+
+
+def platform_options_of(post: Post) -> dict[str, dict[str, Any]]:
+    """The composer's stored settings, per platform — what the editor reads back.
+
+    From the option-only targets (`social_account` empty): those are the rows
+    `set_platform_options` writes. The per-account rows `build_targets` makes at
+    schedule time are delivery, not settings.
+    """
+    return {
+        target.platform: target.platform_options
+        for target in post.targets.all()
+        if target.social_account_id is None and target.platform_options
+    }
+
+
+@transaction.atomic
+def edit_post(
+    post: Post,
+    *,
+    author: User,
+    master_body: str | None = None,
+    media: Sequence[tuple[MediaAsset, str]] | None = None,
+    planned_platforms: Sequence[str] | None = None,
+    platform_options: dict[str, dict[str, Any]] | None = None,
+    reason: str = "edited",
+) -> Post:
+    """The post editor's save: everything staged, written as **one** revision.
+
+    Body, media order, alt text per use, which platforms the post goes to, and
+    each platform's settings — validated together and applied together, so a
+    bad option refuses the whole save rather than leaving the body half
+    written. Each image's description is written with the media list itself.
+    """
+    ensure_editable(post)
+
+    cleaned: dict[str, dict[str, Any]] = {}
+    errors: dict[str, Any] = {}
+    for platform, options in (platform_options or {}).items():
+        try:
+            cleaned[platform] = option_rules.validate(platform, options, workspace=post.workspace)
+        except option_rules.OptionError as exc:
+            errors[platform] = exc.errors
+    if errors:
+        raise InvalidPlatformOptionsError(detail=errors)
+
+    for platform, options in cleaned.items():
+        _write_options(post, platform, options)
+
+    fields: dict[str, Any] = {}
+    if master_body is not None:
+        fields["master_body"] = master_body
+    if planned_platforms is not None:
+        fields["planned_platforms"] = list(dict.fromkeys(planned_platforms))
+    if media is not None:
+        fields["media_asset_ids"] = [asset for asset, _alt in media]
+    # Last, because it records: one revision covering the options written above.
+    return update_post(
+        post,
+        author=author,
+        reason=reason,
+        alt_texts=None if media is None else {asset.pk: alt for asset, alt in media},
+        **fields,
+    )
+
+
+@transaction.atomic
+def duplicate_post(post: Post, *, author: User) -> Post:
+    """ "Reproduce as a new post": a draft carrying the same brief and media.
+
+    The content is copied — body, media in order with each use's description,
+    the planned platforms and their settings, the product it is about — and
+    nothing of the lifecycle: no schedule, no approval, no threads. Works on a
+    cancelled post too; that is how a cancellation is undone without unwinding
+    anybody's decision. `origin_post` records where it came from.
+    """
+    attachments = list(
+        post.media_attachments.filter(target_override__isnull=True)
+        .select_related("media_asset")
+        .order_by("order", "id")
+    )
+    copy = create_post(
+        workspace=post.workspace,
+        author=author,
+        master_body=post.master_body,
+        category=post.category,
+        media_assets=[attachment.media_asset for attachment in attachments],
+        content_kind=post.content_kind,
+        doc_body=post.doc_body if post.content_kind == ContentKind.DOC else None,
+        planned_platforms=post.planned_platforms,
+        alt_texts={a.media_asset_id: a.alt_text for a in attachments},
+    )
+    for platform, options in platform_options_of(post).items():
+        _write_options(copy, platform, options)
+    update_post(
+        copy,
+        author=author,
+        reason="reproduced",
+        record=False,
+        product=post.product,
+        generation=post.generation,
+        source=post.source,
+        origin_post=post,
+    )
+    revisions.record(copy, author=author, reason=f"reproduced from #{post.pk}", force=True)
+    return copy
 
 
 def mark_doc_published(post: Post, *, actor: User) -> Post:

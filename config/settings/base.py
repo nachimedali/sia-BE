@@ -556,3 +556,9 @@ LOGGING = {
         "django.db.backends": {"level": "WARNING", "propagate": True},
     },
 }
+
+# Whether the seed migrations (`*_seed_*`) write the catalogue. On everywhere a
+# human runs the app, so `migrate` alone yields plans, categories and Studio
+# controls. Off under test settings only: the suite builds its own rows and a
+# pre-filled table collides with them. Never a production switch.
+SEED_CATALOG_ON_MIGRATE = env.bool("SEED_CATALOG_ON_MIGRATE", default=True)

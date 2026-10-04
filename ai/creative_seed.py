@@ -635,6 +635,19 @@ QUICK_TAGS = [
     ]
 ]
 
+#: The post editor's "What should change?" chips (`content.services.regeneration`).
+REVISE_REASONS = [
+    _opt(key, label, [], fragment=fragment)
+    for key, label, fragment in [
+        ("wrong-scene", "Wrong scene", "put the product in a different scene"),
+        ("product-too-small", "Product too small", "make the product larger in the frame"),
+        ("off-brand-colours", "Off-brand colours", "keep to the brand's own colours"),
+        ("caption-tone", "Caption tone", "rework the tone of the caption"),
+        ("text-on-image", "Text on image", "keep text off the image"),
+        ("more-variety", "More variety", "make the images more varied from each other"),
+    ]
+]
+
 #: kind -> rows. Order within a kind is `sort_order`, assigned by position.
 
 # --- The product form's choice lists ---------------------------------------
@@ -803,4 +816,5 @@ CATALOG: dict[str, list[dict[str, Any]]] = {
     "shot_tag": SHOT_TAGS,
     "aspect": ASPECTS,
     "suggestion": SUGGESTIONS,
+    "revise_reason": REVISE_REASONS,
 }

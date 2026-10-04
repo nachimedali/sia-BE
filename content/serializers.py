@@ -15,6 +15,7 @@ from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.request import Request
 
+from ai.models import Generation
 from common.workspaces import request_workspace, scope_related_field_to_workspace
 from content.models import (
     ALT_TEXT_MAX_LENGTH,
@@ -29,6 +30,7 @@ from content.models import (
     RecurrenceRule,
 )
 from content.services import recurrence, templates
+from content.services.posts import platform_options_of
 from products.models import Product
 
 
@@ -120,6 +122,71 @@ class PlatformOptionsRequestSerializer(serializers.Serializer[Any]):
     options = serializers.DictField(required=False, default=dict)
 
 
+class PostEditMediaSerializer(serializers.Serializer[Any]):
+    media_asset = serializers.PrimaryKeyRelatedField(queryset=MediaAsset.objects.none())
+    alt_text = serializers.CharField(
+        allow_blank=True, max_length=ALT_TEXT_MAX_LENGTH, trim_whitespace=True, default=""
+    )
+
+
+class PostEditRequestSerializer(serializers.Serializer[Any]):
+    """`POST /posts/{id}/edit/` — the post editor's save. Every key optional;
+    an omitted one is left exactly as it is. `media` is the whole ordered list,
+    each entry carrying its description for this post."""
+
+    master_body = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    media = PostEditMediaSerializer(many=True, required=False)
+    planned_platforms = serializers.ListField(
+        child=serializers.ChoiceField(choices=Platform.choices), required=False
+    )
+    platform_options = serializers.DictField(child=serializers.DictField(), required=False)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=200, default="")
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Scoped here, not in the child: a nested serializer is not bound to
+        # its parent yet during its own `__init__`, so it cannot see the request.
+        media = self.fields["media"]
+        assert isinstance(media, serializers.ListSerializer)
+        child = media.child
+        assert isinstance(child, PostEditMediaSerializer)
+        _scope_media_field(child.fields["media_asset"], self.context.get("request"))
+
+    def validate_platform_options(self, value: dict[str, Any]) -> dict[str, Any]:
+        unknown = sorted(set(value) - set(Platform.values))
+        if unknown:
+            raise serializers.ValidationError(f"Unknown platform: {', '.join(unknown)}.")
+        return value
+
+
+class PostCancelRequestSerializer(serializers.Serializer[Any]):
+    reason = serializers.CharField(max_length=200)
+
+
+class PostRegenerateRequestSerializer(serializers.Serializer[Any]):
+    """Keys of `revise_reason` creative options, a free note, and any creative
+    settings changed since the post was performed — laid over the originals."""
+
+    reasons = serializers.ListField(child=serializers.SlugField(max_length=40), required=False)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    creative = serializers.DictField(required=False)
+
+
+class PostApplyGenerationRequestSerializer(serializers.Serializer[Any]):
+    generation = serializers.PrimaryKeyRelatedField(queryset=Generation.objects.none())
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        scope_related_field_to_workspace(
+            self.fields["generation"], self.context.get("request"), Generation
+        )
+
+
+class PostRevisionStateSerializer(serializers.Serializer[Any]):
+    sequence = serializers.IntegerField()
+    state = serializers.DictField()
+
+
 class PostTargetSummarySerializer(serializers.ModelSerializer[PostTarget]):
     """Where a post goes and how far it has got — and nothing else.
 
@@ -156,11 +223,22 @@ class PostSerializer(serializers.ModelSerializer[Post]):
     planned_platforms = serializers.ListField(
         child=serializers.ChoiceField(choices=Platform.choices), required=False
     )
+    # The post editor reads both: which generation the post was performed
+    # from (its settings are what "Regenerate" starts from), and the composer's
+    # stored per-platform settings, so the options form opens on what was saved
+    # rather than on the declared defaults.
+    generation: serializers.PrimaryKeyRelatedField[Generation] = serializers.PrimaryKeyRelatedField(
+        read_only=True
+    )
+    platform_options = serializers.SerializerMethodField()
 
     def get_effective_at(self, obj: Post) -> dt.datetime | None:
         """The time the calendar places this post at: the schedule once it has
         one, the author's proposal until then."""
         return obj.scheduled_at or obj.proposed_scheduled_at
+
+    def get_platform_options(self, obj: Post) -> dict[str, dict[str, Any]]:
+        return platform_options_of(obj)
 
     def get_open_thread_count(self, obj: Post) -> int:
         annotated = getattr(obj, "open_threads", None)
@@ -198,6 +276,8 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "locked_at",
             "proposed_delivery_mode",
             "proposed_scheduled_at",
+            "generation",
+            "platform_options",
             "created_at",
             "updated_at",
         )

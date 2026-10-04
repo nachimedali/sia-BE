@@ -323,6 +323,29 @@ def test_a_proposal_is_what_approval_later_schedules(
     assert post.proposed_scheduled_at == when  # a plain submit kept the placement
 
 
+# --- planned platforms on create ------------------------------------------------
+def test_a_draft_created_with_planned_platforms_keeps_them(auth_client: Any, pro: Any) -> None:
+    """The serializer accepted the field on POST and `perform_create` dropped it,
+    so the calendar's platform filter could never find a draft the author had
+    planned for a platform — an input accepted and silently ignored."""
+    response = auth_client.post(
+        POSTS, {"master_body": "Planned.", "planned_platforms": ["instagram"]}, format="json"
+    )
+
+    assert response.status_code == 201, response.json()
+    assert response.json()["planned_platforms"] == ["instagram"]
+    assert Post.objects.get(pk=response.json()["id"]).planned_platforms == ["instagram"]
+    found = auth_client.get(f"{POSTS}?platform=instagram").json()
+    assert [row["id"] for row in found["results"]] == [response.json()["id"]]
+
+
+def test_an_unknown_planned_platform_is_a_400_not_ignored(auth_client: Any, pro: Any) -> None:
+    response = auth_client.post(
+        POSTS, {"master_body": "x", "planned_platforms": ["myspace"]}, format="json"
+    )
+    assert response.status_code == 400
+
+
 # --- upload --------------------------------------------------------------------
 def test_an_upload_lands_in_review_at_the_chosen_time(
     auth_client: Any, pro: Any, user: Any, make_png_upload: Any
@@ -572,3 +595,19 @@ def test_studio_drafts_arrive_marked_generated_with_their_platforms(
     assert post.source == PostSource.AI
     assert post.planned_platforms == ["instagram", "facebook"]
     assert post.product_id == product.pk
+
+
+def test_listing_posts_does_not_query_a_product_per_row(
+    auth_client: Any, pro: Any, user: Any, django_assert_max_num_queries: Any
+) -> None:
+    """`product_name` reads `post.product`; without `select_related` that is one
+    query per post on the calendar's busiest endpoint."""
+    oil = create_product(workspace=pro, name="Olive oil")
+    for n in range(8):
+        _post(pro, user, f"post {n}", product=oil)
+
+    with django_assert_max_num_queries(25) as ctx:
+        response = auth_client.get(POSTS)
+    assert response.status_code == 200
+    assert len(response.json()["results"]) == 8
+    assert len([q for q in ctx.captured_queries if 'FROM "products_product"' in q["sql"]]) <= 1

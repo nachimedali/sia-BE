@@ -52,3 +52,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 
 # Hosts the throwaway models the encryption tests need (see common/tests/apps.py).
 INSTALLED_APPS = [*INSTALLED_APPS, "common.tests"]  # noqa: F405
+
+# The suite builds its own catalogue rows; migration-seeded ones would collide.
+# `common/tests/test_seed_migrations.py` turns it back on to test the seeds.
+SEED_CATALOG_ON_MIGRATE = False

@@ -394,6 +394,9 @@ class CreativeKind(models.TextChoices):
     SHOT_TAG = "shot_tag", "Photo shot type"
     ASPECT = "aspect", "Image aspect"
     SUGGESTION = "suggestion", "Suggested entry"
+    # The post editor's "What should change?" chips: why a post is being
+    # regenerated, each carrying the instruction the model reads.
+    REVISE_REASON = "revise_reason", "Why regenerate"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing

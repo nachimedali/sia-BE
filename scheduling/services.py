@@ -28,8 +28,17 @@ from billing.services import trial
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import StateConflict
-from content.models import ContentKind, DeliveryMode, Post, PostStatus
-from reminders.services import arm_reminder
+from content.models import (
+    SLOTTED_STATUSES,
+    ContentKind,
+    DeliveryMode,
+    Post,
+    PostStatus,
+    PostTarget,
+    PostTargetState,
+)
+from content.services.revisions import UNEDITABLE_STATUSES
+from reminders.services import arm_reminder, withdraw
 from scheduling.publishing import build_targets
 from workspaces.services import approvals
 
@@ -94,6 +103,12 @@ def schedule_post(
             detail={"content_kind": post.content_kind},
         )
 
+    if post.status == PostStatus.CANCELLED:
+        raise StateConflict(
+            "A cancelled post is never published. Reproduce it to schedule it again.",
+            detail={"post": post.pk, "status": post.status},
+        )
+
     entitlements = entitlements_for(post.workspace)
     entitlements.require_scheduling_horizon(scheduled_at)
 
@@ -129,4 +144,88 @@ def schedule_post(
         post.save(update_fields=["delivery_mode", "scheduled_at", "status", "updated_at"])
         arm_reminder(post, scheduled_at)
 
+    return post
+
+
+class NotScheduledError(StateConflict):
+    default_code = "not_scheduled"
+    default_detail = "This post has no slot to clear."
+
+
+class NotCancellableError(StateConflict):
+    default_code = "not_cancellable"
+    default_detail = "This post can no longer be cancelled."
+
+
+def _clear_slot(post: Post) -> None:
+    """Undo what `schedule_post` armed: the reminder and the delivery targets.
+
+    A reminder that has not gone out is `SKIPPED`, not deleted — the row is the
+    record that one was armed. The per-account targets `build_targets` made are
+    removed while still `PENDING`; the composer's option-only targets
+    (`social_account` empty) are settings, not delivery, and stay.
+    """
+    withdraw(post)
+    PostTarget.objects.filter(
+        post=post, social_account__isnull=False, state=PostTargetState.PENDING
+    ).delete()
+    post.delivery_mode = ""
+    post.scheduled_at = None
+
+
+def unschedule_post(post: Post, *, actor: User) -> Post:
+    """The slot cleared, the approval kept (`SCHEDULED`/`REMINDER_ARMED` →
+    `APPROVED`).
+
+    Approval attaches to content, and clearing a time changes no content, so
+    the post goes back to where scheduling found it: approved, waiting for a
+    time. 409 when there is no slot — a silent success would tell the user a
+    post was unscheduled that never was.
+    """
+    if post.status not in SLOTTED_STATUSES:
+        raise NotScheduledError(detail={"post": post.pk, "status": post.status})
+    _clear_slot(post)
+    post.status = PostStatus.APPROVED
+    post.save(update_fields=["delivery_mode", "scheduled_at", "status", "updated_at"])
+    approvals.log(
+        workspace=post.workspace,
+        actor=actor,
+        verb="post.unscheduled",
+        target_repr=str(post),
+        meta={"post": post.pk},
+    )
+    return post
+
+
+def cancel_post(post: Post, *, actor: User, reason: str) -> Post:
+    """`CANCELLED`: archived with its history and never published.
+
+    Refused once the post has gone or is going (`PUBLISHING`, `PUBLISHED`) —
+    what was sent cannot be un-sent by a status — and on a post already
+    cancelled. Any slot is cleared on the way, so nothing armed survives to
+    fire. The reason is written to the audit log, where the team reads it.
+    """
+    if post.status in UNEDITABLE_STATUSES:
+        raise NotCancellableError(detail={"post": post.pk, "status": post.status})
+    _clear_slot(post)
+    post.status = PostStatus.CANCELLED
+    post.proposed_delivery_mode = ""
+    post.proposed_scheduled_at = None
+    post.save(
+        update_fields=[
+            "delivery_mode",
+            "scheduled_at",
+            "status",
+            "proposed_delivery_mode",
+            "proposed_scheduled_at",
+            "updated_at",
+        ]
+    )
+    approvals.log(
+        workspace=post.workspace,
+        actor=actor,
+        verb="post.cancelled",
+        target_repr=str(post),
+        meta={"post": post.pk, "reason": reason},
+    )
     return post

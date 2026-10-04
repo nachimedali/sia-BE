@@ -62,6 +62,18 @@ class PostStatus(models.TextChoices):
     PUBLISHED = "PUBLISHED", "Published"
     FAILED = "FAILED", "Failed"
     PAUSED = "PAUSED", "Paused"
+    #: Terminal, by a person's decision (the post editor's "Cancel this post").
+    #: Archived with its revisions, threads and media — never deleted, never
+    #: publishable, and reproducible as a fresh draft. Distinct from `REJECTED`,
+    #: which is a reviewer's verdict on the content, not the team's decision
+    #: not to post it.
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+#: A post with a slot: an auto-publish time or an armed reminder. One set, read
+#: by the schedule service (unschedule) and by regeneration (which refuses to
+#: rewrite content that is already armed).
+SLOTTED_STATUSES = frozenset({PostStatus.SCHEDULED, PostStatus.REMINDER_ARMED})
 
 
 class DeliveryMode(models.TextChoices):

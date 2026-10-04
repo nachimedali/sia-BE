@@ -55,9 +55,7 @@ from workspaces.services import approvals
 PROPOSABLE = frozenset({PostStatus.DRAFT, PostStatus.CHANGES_REQUESTED, PostStatus.PENDING_REVIEW})
 
 #: Not yet on the calendar, and still something a person could place.
-UNPLACED = frozenset(
-    {PostStatus.DRAFT, PostStatus.CHANGES_REQUESTED, PostStatus.PENDING_REVIEW, PostStatus.APPROVED}
-)
+UNPLACED = PROPOSABLE | {PostStatus.APPROVED}
 
 #: How far ahead auto-schedule looks for a free slot, when the plan has no
 #: horizon of its own. A search bound, not a commercial number.

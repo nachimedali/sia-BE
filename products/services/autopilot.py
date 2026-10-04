@@ -622,12 +622,16 @@ def reject_draft(
 def update_config(config: AutopilotConfig, **fields: object) -> AutopilotConfig:
     """`PATCH /products/{id}/autopilot/`'s writer.
 
-    `auto_approve` is Advanced-only (§4.1) and gated here as well as at run
-    time, so it cannot be switched on and left looking active on a plan that
-    will never honour it.
+    **Automatic approval is refused, on every plan** (L-2). `auto_approve` and
+    the straight-to-calendar landing used to be accepted and then ignored at
+    run time — a control promising what the server would never do. Refusing the
+    write is the honest answer; the columns stay so existing rows read as off.
     """
-    if fields.get("auto_approve"):
-        entitlements_for(config.product.workspace).require_feature("autopilot_auto_approve")
+    if fields.get("auto_approve") or fields.get("landing") == "AUTO_CALENDAR":
+        raise OCCSError(
+            "Drafts always wait for a person's approval; automatic approval is not available.",
+            code="human_approval_required",
+        )
 
     for name, value in fields.items():
         setattr(config, name, value)

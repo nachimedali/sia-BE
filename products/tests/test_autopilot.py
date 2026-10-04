@@ -77,22 +77,29 @@ def test_autopilot_never_debits_prepaid_video_packs(
     assert ledger.video_balance(autopilot_workspace) == 10
 
 
-def test_auto_approve_gated_to_advanced_plan(
+def test_automatic_approval_is_refused_on_every_plan(
     auth_client: Any, autopilot_product: Any, plans: dict[str, Any], autopilot_workspace: Any
 ) -> None:
-    """§4.1 — `autopilot_auto_approve` is Advanced-only, and the gate is a 402
-    with an upgrade payload, not a 403."""
+    """L-2: nothing is approved without a person, so `auto_approve` and the
+    straight-to-calendar landing are refused outright — on Advanced too. A 400
+    with a stable code, never a silent acceptance of a setting that is ignored."""
     url = f"/api/v1/products/{autopilot_product.pk}/autopilot/"
 
-    response = auth_client.patch(url, {"auto_approve": True}, format="json")
+    for plan in (None, "advanced"):
+        if plan:
+            autopilot_workspace.organization.plan = plans[plan]
+            autopilot_workspace.organization.save(update_fields=["plan"])
+        for body in ({"auto_approve": True}, {"landing": "AUTO_CALENDAR"}):
+            response = auth_client.patch(url, body, format="json")
+            assert response.status_code == 400, (plan, body)
+            assert response.json()["error"]["code"] == "human_approval_required"
 
-    assert response.status_code == 402
-    assert response.json()["error"]["upgrade"]["suggested_plan"] == "advanced"
-
-    autopilot_workspace.organization.plan = plans["advanced"]
-    autopilot_workspace.organization.save(update_fields=["plan"])
-
-    assert auth_client.patch(url, {"auto_approve": True}, format="json").status_code == 200
+    stored = auth_client.get(url).json()
+    assert stored["auto_approve"] is False
+    assert stored["landing"] == "REVIEW_QUEUE"
+    # Switching it *off*, and choosing the review queue, stay allowed.
+    ok = auth_client.patch(url, {"auto_approve": False, "landing": "REVIEW_QUEUE"}, format="json")
+    assert ok.status_code == 200
 
 
 def test_cadence_generates_lookahead_days_ahead(autopilot_config: Any) -> None:

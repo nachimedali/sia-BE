@@ -49,10 +49,10 @@ class PostNotEditableError(OCCSError):
     default_detail = "This post cannot be edited in its current state."
 
 
-#: Statuses where the content is already on its way out. Restoring under one of
-#: these would either publish something nobody approved or rewrite the record
-#: of what was actually sent.
-UNEDITABLE_STATUSES = frozenset({"PUBLISHING", "PUBLISHED"})
+#: Statuses where the content is already on its way out, or never will be.
+#: Restoring under one of these would either publish something nobody approved,
+#: rewrite the record of what was actually sent, or edit an archived post.
+UNEDITABLE_STATUSES = frozenset({"PUBLISHING", "PUBLISHED", "CANCELLED"})
 
 
 def snapshot_of(post: Post) -> dict[str, Any]:

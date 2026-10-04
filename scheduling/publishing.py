@@ -73,6 +73,11 @@ def build_targets(post: Post) -> list[PostTarget]:
     attempt happens to run first.
     """
     accounts = list(channel_services.active_accounts(post.workspace))
+    # The editor's per-platform switch: a post planned for some platforms goes
+    # only to those. An empty plan is every connected account, as before — a
+    # post nobody narrowed was never meant to skip a channel.
+    if post.planned_platforms:
+        accounts = [account for account in accounts if account.platform in post.planned_platforms]
     if not accounts:
         raise NoConnectedAccountsError(detail={"workspace": post.workspace_id})
 

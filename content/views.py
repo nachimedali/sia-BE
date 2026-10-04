@@ -22,6 +22,7 @@ from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
+from ai.serializers import GenerationSerializer
 from billing.permissions import HasFlag
 from billing.services.flags import CONTENT_MODEL_V2
 from common.exceptions import OCCSError
@@ -49,10 +50,15 @@ from content.serializers import (
     MediaAssetUploadSerializer,
     PlatformOptionsRequestSerializer,
     PlatformRuleListSerializer,
+    PostApplyGenerationRequestSerializer,
+    PostCancelRequestSerializer,
+    PostEditRequestSerializer,
     PostPreviewRequestSerializer,
     PostPreviewResponseSerializer,
     PostProposeTimeSerializer,
+    PostRegenerateRequestSerializer,
     PostRevisionSerializer,
+    PostRevisionStateSerializer,
     PostScheduleRequestSerializer,
     PostSerializer,
     PostSubmitRequestSerializer,
@@ -63,12 +69,15 @@ from content.serializers import (
     TrimRequestSerializer,
 )
 from content.services import calendar as calendar_service
+from content.services import regeneration
 from content.services import revisions as revisions_service
 from content.services.adaptation import render_payloads
 from content.services.editing import crop_image, trim_video
 from content.services.media import ingest_media
 from content.services.posts import (
     create_post,
+    duplicate_post,
+    edit_post,
     set_alt_text,
     set_platform_options,
     target_for_platform,
@@ -76,7 +85,7 @@ from content.services.posts import (
 )
 from content.services.rules import PLATFORM_RULES
 from content.services.templates import apply_template
-from scheduling.services import schedule_post
+from scheduling.services import cancel_post, schedule_post, unschedule_post
 from workspaces.models import Permission
 from workspaces.permissions import HasPermission
 from workspaces.serializers import (
@@ -110,9 +119,9 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
     serializer_class = PostSerializer
     permission_classes: list[Any] = [IsAuthenticated]
     pagination_class = DefaultPagination
-    queryset = Post.objects.select_related("category", "origin_post", "author").prefetch_related(
-        _ORDERED_MEDIA_ATTACHMENTS, "targets"
-    )
+    queryset = Post.objects.select_related(
+        "category", "origin_post", "author", "product"
+    ).prefetch_related(_ORDERED_MEDIA_ATTACHMENTS, "targets")
 
     @extend_schema(
         parameters=[
@@ -188,6 +197,7 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             media_assets=data.get("media_asset_ids", []),
             content_kind=data.get("content_kind", ContentKind.SOCIAL),
             doc_body=data.get("doc_body"),
+            planned_platforms=data.get("planned_platforms", ()),
         )
 
     def perform_update(self, serializer: BaseSerializer[Post]) -> None:
@@ -473,6 +483,192 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
             self.get_object(), sequence=int(sequence or 0), author=authenticated_user(request)
         )
         return Response(PostSerializer(post, context={"request": request}).data)
+
+    @extend_schema(
+        responses={200: PostRevisionStateSerializer},
+        summary="The post's content as of one revision",
+        description=(
+            "Reconstructed from the nearest checkpoint, so the editor can compare "
+            "any version with the current one before restoring it. 404 for a "
+            "sequence this post has no revision for."
+        ),
+        parameters=[OpenApiParameter("sequence", int, OpenApiParameter.PATH)],
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"revisions/(?P<sequence>[0-9]+)",
+        permission_classes=[IsAuthenticated, HasFlag(CONTENT_MODEL_V2)],
+    )
+    def revision_state(
+        self, request: Request, pk: str | None = None, sequence: str | None = None
+    ) -> Response:
+        number = int(sequence or 0)
+        state = revisions_service.state_at(self.get_object(), number)
+        return Response(PostRevisionStateSerializer({"sequence": number, "state": state}).data)
+
+    @extend_schema(
+        request=PostEditRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Save the post editor's staged changes as one revision",
+        description=(
+            "Master body, the ordered media with each use's alt text, the "
+            "platforms the post goes to and each platform's settings — validated "
+            "together and written together, as **one** revision (none when "
+            "nothing changed). A bad platform option refuses the whole save, "
+            "with the errors keyed by platform. 409 on a locked, published, "
+            "publishing or cancelled post."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def edit(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PostEditRequestSerializer(data=request.data, context={"request": request})
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        media = data.get("media")
+        post = edit_post(
+            post,
+            author=authenticated_user(request),
+            master_body=data.get("master_body"),
+            media=None if media is None else [(m["media_asset"], m["alt_text"]) for m in media],
+            planned_platforms=data.get("planned_platforms"),
+            platform_options=data.get("platform_options"),
+            reason=data["reason"] or "edited",
+        )
+        return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)
+
+    @extend_schema(
+        request=None,
+        responses={201: PostSerializer},
+        summary="Reproduce as a new post",
+        description=(
+            "A new draft with the same body, media and descriptions, planned "
+            "platforms and their settings. Nothing of the lifecycle is copied — "
+            "no schedule, no approval. Works on a cancelled post."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def duplicate(self, request: Request, pk: str | None = None) -> Response:
+        copy = duplicate_post(self.get_object(), author=authenticated_user(request))
+        return Response(
+            self.get_serializer(self.get_queryset().get(pk=copy.pk)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        request=None,
+        responses={200: PostSerializer},
+        summary="Clear the post's slot and keep its approval",
+        description=(
+            "SCHEDULED or REMINDER_ARMED → APPROVED. An armed reminder is "
+            "skipped and pending delivery targets are removed; the composer's "
+            "platform settings stay. 409 `not_scheduled` when there is no slot."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.PUBLISH)],
+    )
+    def unschedule(self, request: Request, pk: str | None = None) -> Response:
+        post = unschedule_post(self.get_object(), actor=authenticated_user(request))
+        return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)
+
+    @extend_schema(
+        request=PostCancelRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Cancel the post",
+        description=(
+            "Terminal `CANCELLED`: archived with its revisions, threads and media, "
+            "never published. Any slot is cleared and the reason is audited. 409 "
+            "`not_cancellable` once the post is publishing, published or already "
+            "cancelled."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.PUBLISH)],
+    )
+    def cancel(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PostCancelRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        post = cancel_post(
+            post, actor=authenticated_user(request), reason=payload.validated_data["reason"]
+        )
+        return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)
+
+    @extend_schema(
+        request=PostRegenerateRequestSerializer,
+        responses={201: GenerationSerializer},
+        summary="Start a new generation from the post's own settings",
+        description=(
+            "Same product, kind and voice as the generation the post was "
+            "performed from, with changed creative settings laid over the "
+            "originals and the chosen `revise_reason` instructions appended. The "
+            "post is not touched; apply the finished generation with "
+            "`apply-generation`. 409 `not_generated` for a post with no "
+            "generation; 402 without the credits."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def regenerate(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PostRegenerateRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        generation = regeneration.regenerate_post(
+            post,
+            user=authenticated_user(request),
+            reasons=data.get("reasons") or [],
+            note=data["note"],
+            creative=data.get("creative"),
+        )
+        return Response(GenerationSerializer(generation).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request=PostApplyGenerationRequestSerializer,
+        responses={200: PostSerializer},
+        summary="Make a finished generation the post's content",
+        description=(
+            "Body from the top-ranked variant, media from every variant in rank "
+            "order — one revision. An approved post goes back to review. 409 "
+            "`generation_not_ready` before it has finished, `post_scheduled` on "
+            "a post with a slot."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="apply-generation",
+        permission_classes=[IsAuthenticated, HasPermission(Permission.EDIT)],
+    )
+    def apply_generation(self, request: Request, pk: str | None = None) -> Response:
+        post = self.get_object()
+        payload = PostApplyGenerationRequestSerializer(
+            data=request.data, context={"request": request}
+        )
+        payload.is_valid(raise_exception=True)
+        post = regeneration.apply_generation(
+            post,
+            generation=payload.validated_data["generation"],
+            author=authenticated_user(request),
+        )
+        return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)
 
     @extend_schema(
         request=PostScheduleRequestSerializer,

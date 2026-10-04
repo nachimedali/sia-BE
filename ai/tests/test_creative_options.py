@@ -45,6 +45,7 @@ PRODUCT_FORM_KINDS = {"audience", "tone_preset", "claim", "shot_tag", "aspect", 
 #: Every kind the template's controls need. A kind with no rows is a control
 #: with nothing in it, which the Studio would render as an empty box.
 ALL_KINDS = {
+    "revise_reason",
     "scene",
     "light",
     "camera",
@@ -130,9 +131,10 @@ def test_every_row_has_text_and_an_icon_to_draw(seeded: None) -> None:
     """The brief asks for icons *and* text on every control."""
     bare = [
         f"{row.kind}/{row.key}"
-        for row in CreativeOption.objects.exclude(kind=CreativeKind.QUICK_TAG).exclude(
-            kind__in=PRODUCT_FORM_KINDS
-        )
+        # Quick tags and regeneration reasons are text chips by design.
+        for row in CreativeOption.objects.exclude(
+            kind__in=[CreativeKind.QUICK_TAG, CreativeKind.REVISE_REASON]
+        ).exclude(kind__in=PRODUCT_FORM_KINDS)
         if not row.label or not row.icon_paths
     ]
     assert bare == []
