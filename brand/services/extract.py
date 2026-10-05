@@ -67,6 +67,7 @@ class Page:
     images: list[tuple[str, str]] = field(default_factory=list)  # (absolute src, hint text)
     blocks: list[str] = field(default_factory=list)  # visible text, one entry per block
     headings: list[str] = field(default_factory=list)
+    list_items: list[str] = field(default_factory=list)  # visible `<li>` text, in order
 
 
 class _Parser(HTMLParser):
@@ -83,6 +84,7 @@ class _Parser(HTMLParser):
         self._anchor: str | None = None
         self._anchor_text: list[str] = []
         self._heading = False
+        self._in_li = False
 
     def _abs(self, href: str) -> str:
         return urljoin(self.page.url, href.strip())
@@ -93,6 +95,8 @@ class _Parser(HTMLParser):
             self.page.blocks.append(text)
             if self._heading:
                 self.page.headings.append(text)
+            if self._in_li:
+                self.page.list_items.append(text)
         self._buf = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -137,6 +141,7 @@ class _Parser(HTMLParser):
         if tag in _BLOCK or tag == "br":
             self._flush()
             self._heading = tag in {"h1", "h2", "h3"}
+            self._in_li = tag == "li"
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "script" and self._in_jsonld:
@@ -159,6 +164,7 @@ class _Parser(HTMLParser):
         if tag in _BLOCK:
             self._flush()
             self._heading = False
+            self._in_li = False
 
     def handle_data(self, data: str) -> None:
         if self._in_jsonld:
@@ -481,6 +487,18 @@ def products_from_shopify(base_url: str, payload: Any, currency: str = "") -> li
     return out
 
 
+def woo_price(prices: dict[str, Any]) -> dict[str, str] | None:
+    """A WooCommerce Store API price: minor units with `currency_minor_unit`."""
+    if prices.get("price") in (None, ""):
+        return None
+    try:
+        minor = int(prices.get("currency_minor_unit", 2))
+        amount = Decimal(str(prices["price"])) / (Decimal(10) ** minor)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    return _price(amount, prices.get("currency_code", ""))
+
+
 def products_from_woocommerce(base_url: str, payload: Any) -> list[dict[str, Any]]:
     """WooCommerce Store API (`/wp-json/wc/store/v1/products`). Prices come in
     minor units with `currency_minor_unit`."""
@@ -491,15 +509,7 @@ def products_from_woocommerce(base_url: str, payload: Any) -> list[dict[str, Any
     for row in payload:
         if not isinstance(row, dict):
             continue
-        prices = row.get("prices") or {}
-        price = None
-        if prices.get("price") not in (None, ""):
-            try:
-                minor = int(prices.get("currency_minor_unit", 2))
-                amount = Decimal(str(prices["price"])) / (Decimal(10) ** minor)
-                price = _price(amount, prices.get("currency_code", ""))
-            except (InvalidOperation, ValueError, TypeError):
-                price = None
+        price = woo_price(row.get("prices") or {})
         images = row.get("images") or [{}]
         item = _product(
             row.get("name"),

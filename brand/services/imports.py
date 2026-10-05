@@ -17,8 +17,9 @@ placeholder registration put there.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import SplitResult, urljoin, urlsplit
 
 from django.db import transaction
 from django.utils import timezone
@@ -26,7 +27,15 @@ from django.utils import timezone
 from accounts.models import User
 from brand.fetching import FetchedPage, SiteFetcher, get_site_fetcher
 from brand.inference import get_brand_inference
-from brand.models import SECTIONS, BrandCore, BrandImport, ImportStage, ImportStatus, ReviewState
+from brand.models import (
+    SECTIONS,
+    BrandCore,
+    BrandImport,
+    ImportStage,
+    ImportStatus,
+    ProductImport,
+    ReviewState,
+)
 from brand.services import extract
 from categories.models import Category
 from common.exceptions import OCCSError, StateConflict
@@ -76,27 +85,34 @@ class InvalidSectionError(OCCSError):
 # --- start -------------------------------------------------------------------------
 
 
-def normalise_url(raw: str) -> tuple[str, str]:
-    """`(url, domain)` for what the user typed, or `InvalidWebsiteError`.
-
-    Syntactic only: the real fetcher re-checks, after DNS, that the address is
-    public (`brand.fetching.assert_public_url`)."""
+def url_parts(raw: str, error: type[OCCSError] = InvalidWebsiteError) -> SplitResult:
+    """What the user typed, as a syntactically safe http(s) address, or
+    `error`. Shared by the website and product-page imports so the host rules
+    are written once. Syntactic only: the real fetcher re-checks, after DNS,
+    that the address is public (`brand.fetching.assert_public_url`)."""
     value = (raw or "").strip()
     if not value:
-        raise InvalidWebsiteError()
+        raise error()
     if not re.match(r"^https?://", value, re.I):
         value = f"https://{value}"
     parts = urlsplit(value)
     host = (parts.hostname or "").lower()
     if (
-        parts.scheme not in {"http", "https"}
+        parts.scheme.lower() not in {"http", "https"}
         or not re.fullmatch(r"([a-z0-9-]+\.)+[a-z]{2,}", host)
         or host.endswith((".local", ".internal", ".localhost"))
         or parts.username
         or parts.password
     ):
-        raise InvalidWebsiteError()
-    return f"{parts.scheme}://{host}/", host.removeprefix("www.")
+        raise error()
+    return parts
+
+
+def normalise_url(raw: str) -> tuple[str, str]:
+    """`(site root, domain)` for what the user typed, or `InvalidWebsiteError`."""
+    parts = url_parts(raw)
+    host = (parts.hostname or "").lower()
+    return f"{parts.scheme.lower()}://{host}/", host.removeprefix("www.")
 
 
 def start_import(workspace: Workspace, *, user: User, url: str) -> BrandImport:
@@ -146,12 +162,20 @@ _STAGE_PROGRESS = {
 }
 
 
-def _advance(run: BrandImport, stage: str, **fields: Any) -> None:
+def advance(
+    run: BrandImport | ProductImport, stage: str, progress: Mapping[Any, int], **fields: Any
+) -> None:
+    """Move an import row (website or product page) to `stage`; progress
+    never goes backwards."""
     run.stage = stage
-    run.progress = max(run.progress, _STAGE_PROGRESS[ImportStage(stage)])
+    run.progress = max(run.progress, progress[stage])
     for name, value in fields.items():
         setattr(run, name, value)
     run.save(update_fields=["stage", "progress", *fields.keys(), "updated_at"])
+
+
+def _advance(run: BrandImport, stage: str, **fields: Any) -> None:
+    advance(run, stage, _STAGE_PROGRESS, **fields)
 
 
 def _same_site(url: str, domain: str) -> bool:
@@ -159,7 +183,7 @@ def _same_site(url: str, domain: str) -> bool:
     return host == domain
 
 
-def _json(page: FetchedPage | None) -> Any:
+def json_body(page: FetchedPage | None) -> Any:
     import json
 
     if page is None or not page.ok or not page.text.strip():
@@ -189,7 +213,7 @@ def run_import(run: BrandImport) -> BrandImport:
         _advance(run, ImportStage.RESOLVING)
         home_raw = _read(fetcher, run.url, read)
         if home_raw is None or not home_raw.ok or not home_raw.text.strip():
-            return _fail(run, _UNREACHABLE, read)
+            return fail(run, _UNREACHABLE, read)
         domain = (urlsplit(home_raw.url).hostname or run.domain).lower().removeprefix("www.")
         base = f"{urlsplit(home_raw.url).scheme}://{urlsplit(home_raw.url).netloc}/"
         home = extract.parse_page(home_raw.url, home_raw.text)
@@ -208,14 +232,16 @@ def run_import(run: BrandImport) -> BrandImport:
         identity = extract.extract_identity(pages, domain)
         currency = ""
         shopify = extract.products_from_shopify(
-            base, _json(_read(fetcher, urljoin(base, "/products.json?limit=24"), read)), currency
+            base,
+            json_body(_read(fetcher, urljoin(base, "/products.json?limit=24"), read)),
+            currency,
         )
         woo = (
             []
             if shopify
             else extract.products_from_woocommerce(
                 base,
-                _json(
+                json_body(
                     _read(fetcher, urljoin(base, "/wp-json/wc/store/v1/products?per_page=24"), read)
                 ),
             )
@@ -269,11 +295,12 @@ def run_import(run: BrandImport) -> BrandImport:
             finished_at=run.finished_at,
         )
     except Exception:  # any reading failure is a FAILED import, never a 500 in a task
-        return _fail(run, _BROKEN, read)
+        return fail(run, _BROKEN, read)
     return run
 
 
-def _fail(run: BrandImport, message: str, read: list[str]) -> BrandImport:
+def fail[R: (BrandImport, ProductImport)](run: R, message: str, read: list[str]) -> R:
+    """Record a failed reading on an import row (website or product page)."""
     run.status = ImportStatus.FAILED
     run.error = message
     run.pages = read

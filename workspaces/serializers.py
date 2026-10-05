@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import functools
+import zoneinfo
 from typing import Any, ClassVar
 
 from rest_framework import serializers
 
 from billing.models import OrganizationAddon
+from categories.models import Category
 from common.workspaces import scope_related_field_to_members
 from workspaces.models import (
     PERMISSIONS,
@@ -15,6 +18,8 @@ from workspaces.models import (
     ApprovalChain,
     ApprovalStage,
     AuditLog,
+    BrandVoice,
+    BusinessType,
     Invitation,
     Membership,
     Organization,
@@ -310,3 +315,70 @@ class ApiKeyIssuedSerializer(serializers.Serializer[object]):
     prefix = serializers.CharField()
     scopes = serializers.ListField(child=serializers.CharField())
     key = serializers.CharField()
+
+
+@functools.lru_cache(maxsize=1)
+def _known_timezones() -> frozenset[str]:
+    """`available_timezones()` walks TZPATH and rebuilds its set on every call —
+    ~6ms, which is not something to spend per save."""
+    return frozenset(zoneinfo.available_timezones())
+
+
+class WorkspaceProfileSerializer(serializers.ModelSerializer[Workspace]):
+    """The brand's own description of itself: what the setup wizard collects
+    and Settings edits. One set of rules for both, so a value the wizard
+    accepts is never one Settings refuses."""
+
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.filter(is_active=True), allow_null=True, required=False
+    )
+    business_type = serializers.ChoiceField(
+        choices=BusinessType.choices, required=False, allow_blank=True
+    )
+    brand_voice_default = serializers.ChoiceField(choices=BrandVoice.choices, required=False)
+
+    class Meta:
+        model = Workspace
+        fields: ClassVar[tuple[str, ...]] = (
+            "id",
+            "name",
+            "website",
+            "description",
+            "brand_voice_default",
+            "category",
+            "business_type",
+            "target_audience",
+            "timezone",
+            "regions",
+            "platforms",
+        )
+        read_only_fields: ClassVar[tuple[str, ...]] = ("id",)
+
+    def validate_timezone(self, value: str) -> str:
+        if value and value not in _known_timezones():
+            raise serializers.ValidationError(f"'{value}' is not a recognised IANA timezone.")
+        return value
+
+    def validate_regions(self, value: Any) -> list[str]:
+        return self._string_list("regions", value)
+
+    def validate_platforms(self, value: Any) -> list[str]:
+        return self._string_list("platforms", value)
+
+    @staticmethod
+    def _string_list(name: str, value: Any) -> list[str]:
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise serializers.ValidationError(f"{name} must be a list of strings.")
+        # Deduplicate while preserving order, so a double-tapped chip does not
+        # persist twice.
+        seen: dict[str, None] = {}
+        for item in value:
+            cleaned = item.strip()
+            if cleaned:
+                seen.setdefault(cleaned, None)
+        return list(seen)
+
+    def validate_name(self, value: str) -> str:
+        if not value.strip():
+            raise serializers.ValidationError("Business name cannot be blank.")
+        return value.strip()

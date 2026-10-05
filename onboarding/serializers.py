@@ -10,32 +10,17 @@ What counts as done lives in `onboarding.services.wizard`; this renders it.
 
 from __future__ import annotations
 
-import functools
-import zoneinfo
 from typing import Any, ClassVar
 
 from rest_framework import serializers
 
-from categories.models import Category
 from onboarding.services import wizard
-from workspaces.models import BrandVoice, BusinessType, Workspace
+from workspaces.models import Workspace
+from workspaces.serializers import WorkspaceProfileSerializer
 
 
-@functools.lru_cache(maxsize=1)
-def _known_timezones() -> frozenset[str]:
-    """`available_timezones()` walks TZPATH and rebuilds its set on every call —
-    ~6ms, which is not something to spend per save on the wizard's own path."""
-    return frozenset(zoneinfo.available_timezones())
-
-
-class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
-    category = serializers.PrimaryKeyRelatedField(
-        queryset=Category.objects.filter(is_active=True), allow_null=True, required=False
-    )
-    business_type = serializers.ChoiceField(
-        choices=BusinessType.choices, required=False, allow_blank=True
-    )
-    brand_voice_default = serializers.ChoiceField(choices=BrandVoice.choices, required=False)
+class OnboardingSerializer(WorkspaceProfileSerializer):
+    """The profile plus where the wizard stands. Validation is the profile's."""
 
     # Derived, read-only: the FE uses these to route and to render the rail.
     current_step = serializers.SerializerMethodField()
@@ -49,20 +34,9 @@ class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
     applicable_steps = serializers.SerializerMethodField()
     is_shortened = serializers.SerializerMethodField()
 
-    class Meta:
-        model = Workspace
+    class Meta(WorkspaceProfileSerializer.Meta):
         fields = (
-            "id",
-            "name",
-            "website",
-            "description",
-            "brand_voice_default",
-            "category",
-            "business_type",
-            "target_audience",
-            "timezone",
-            "regions",
-            "platforms",
+            *WorkspaceProfileSerializer.Meta.fields,
             "onboarding_complete",
             "current_step",
             "completed_steps",
@@ -96,33 +70,3 @@ class OnboardingSerializer(serializers.ModelSerializer[Workspace]):
     def get_current_step(self, obj: Workspace) -> int:
         """The first step not yet satisfied — this is what makes it resumable."""
         return wizard.current_step(obj, self._user())
-
-    # --- validation ------------------------------------------------------
-    def validate_timezone(self, value: str) -> str:
-        if value and value not in _known_timezones():
-            raise serializers.ValidationError(f"'{value}' is not a recognised IANA timezone.")
-        return value
-
-    def validate_regions(self, value: Any) -> list[str]:
-        return self._string_list("regions", value)
-
-    def validate_platforms(self, value: Any) -> list[str]:
-        return self._string_list("platforms", value)
-
-    @staticmethod
-    def _string_list(name: str, value: Any) -> list[str]:
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-            raise serializers.ValidationError(f"{name} must be a list of strings.")
-        # Deduplicate while preserving order, so a double-tapped chip in the
-        # wizard does not persist twice.
-        seen: dict[str, None] = {}
-        for item in value:
-            cleaned = item.strip()
-            if cleaned:
-                seen.setdefault(cleaned, None)
-        return list(seen)
-
-    def validate_name(self, value: str) -> str:
-        if not value.strip():
-            raise serializers.ValidationError("Business name cannot be blank.")
-        return value.strip()

@@ -56,6 +56,7 @@ from workspaces.serializers import (
     OrganizationAddonSerializer,
     OrganizationAddonWriteSerializer,
     OrganizationSerializer,
+    WorkspaceProfileSerializer,
     WorkspaceSerializer,
     WorkspaceSettingsSerializer,
 )
@@ -127,6 +128,58 @@ class WorkspaceSettingsView(APIView):
             meta={"value": chain.blocks_publish},
         )
         return Response(_settings_payload(workspace))
+
+
+class WorkspaceProfileView(APIView):
+    """The brand's profile, as Settings edits it. `GET` is any member's;
+    `PATCH` needs `admin` — this is the text every generation is grounded in,
+    so changing it is a workspace decision, not an editor's. Each change is
+    written to the audit log with the fields it touched."""
+
+    def get_permissions(self) -> list[Any]:
+        if self.request.method == "PATCH":
+            return [IsAuthenticated(), HasPermission(Permission.ADMIN)()]
+        return [IsAuthenticated(), HasPermission(Permission.VIEW)()]
+
+    @extend_schema(responses={200: WorkspaceProfileSerializer}, summary="Read the brand profile")
+    def get(self, request: Request) -> Response:
+        return Response(WorkspaceProfileSerializer(request_workspace(request)).data)
+
+    @extend_schema(
+        request=WorkspaceProfileSerializer,
+        responses={200: WorkspaceProfileSerializer},
+        summary="Update the brand profile",
+        description="Partial: send only the fields that changed.",
+    )
+    def patch(self, request: Request) -> Response:
+        workspace = request_workspace(request)
+        serializer = WorkspaceProfileSerializer(workspace, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        # Compared on the stored column, so a foreign key (category) is
+        # compared by id rather than loaded to be compared.
+        def stored(field: str) -> Any:
+            column = f"{field}_id"
+            return (
+                getattr(workspace, column)
+                if hasattr(workspace, column)
+                else getattr(workspace, field)
+            )
+
+        changed = sorted(
+            field
+            for field, value in serializer.validated_data.items()
+            if stored(field) != (value.pk if hasattr(value, "pk") else value)
+        )
+        serializer.save()
+        if changed:
+            approvals.log(
+                workspace=workspace,
+                actor=authenticated_user(request),
+                verb="workspace.profile_updated",
+                meta={"fields": changed},
+            )
+        return Response(serializer.data)
 
 
 class ApprovalChainStageView(APIView):

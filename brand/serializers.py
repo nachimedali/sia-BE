@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from rest_framework import serializers
 
-from brand.models import SECTIONS, BrandCore, BrandImport
+from brand.models import SECTIONS, BrandCore, BrandImport, ProductImport
 
 
 class BrandImportSerializer(serializers.ModelSerializer[BrandImport]):
@@ -64,3 +64,23 @@ class BrandApplyResponseSerializer(serializers.Serializer[Any]):
     core = BrandCoreSerializer()
     kept = serializers.ListField(child=serializers.CharField())
     filled = serializers.ListField(child=serializers.CharField())
+
+
+class ProductImportSerializer(serializers.ModelSerializer[ProductImport]):
+    class Meta:
+        model = ProductImport
+        fields: ClassVar[tuple[str, ...]] = (
+            "id",
+            "url",
+            "domain",
+            "status",
+            "stage",
+            "progress",
+            "pages",
+            "result",
+            "error",
+            "started_at",
+            "finished_at",
+            "created_at",
+        )
+        read_only_fields = fields

@@ -17,6 +17,7 @@ third-party account (Part 7 rule 6).
 from __future__ import annotations
 
 import ipaddress
+import mimetypes
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +34,10 @@ MAX_BYTES = 2_000_000
 MAX_REDIRECTS = 4
 TIMEOUT_SECONDS = 8.0
 ALLOWED_PORTS = frozenset({80, 443})
-#: What the import can use. Images, video and archives are never downloaded.
+#: Product photos (S1 product import). Read on demand, never stored by the fetcher.
+MAX_IMAGE_BYTES = 8_000_000
+IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+#: What a page read can use. Video and archives are never downloaded.
 READABLE_TYPES = (
     "text/html",
     "application/json",
@@ -56,6 +60,13 @@ class FetchedPage:
         return 200 <= self.status < 300
 
 
+@dataclass(frozen=True)
+class FetchedImage:
+    url: str
+    content_type: str
+    data: bytes
+
+
 class UnsafeUrlError(ValueError):
     """The URL is not a public http(s) address this crawler may read."""
 
@@ -64,6 +75,11 @@ class SiteFetcher(Protocol):
     def fetch(self, url: str) -> FetchedPage | None:
         """The page, or `None` when it could not be read at all (unreachable,
         too large, not text, refused by robots.txt)."""
+        ...
+
+    def fetch_image(self, url: str) -> FetchedImage | None:
+        """An image's bytes, or `None` for anything that is not a readable
+        image within `MAX_IMAGE_BYTES` — same address guards as a page."""
         ...
 
 
@@ -142,7 +158,50 @@ class HttpSiteFetcher:
             return None
         return self._get(url, check_robots=True)
 
+    def fetch_image(self, url: str) -> FetchedImage | None:
+        try:
+            assert_public_url(url)
+        except UnsafeUrlError:
+            return None
+        if not self._allowed(url):
+            return None
+        return self._get_image(url)
+
+    def _get_image(self, url: str) -> FetchedImage | None:
+        read = self._stream(url, check_robots=True, accept=IMAGE_TYPES, max_bytes=MAX_IMAGE_BYTES)
+        if read is None:
+            return None
+        final, status, content_type, body, _ = read
+        if status != 200 or body is None:
+            return None
+        return FetchedImage(final, content_type, body)
+
     def _get(self, url: str, *, check_robots: bool) -> FetchedPage | None:
+        read = self._stream(
+            url, check_robots=check_robots, accept=READABLE_TYPES, max_bytes=MAX_BYTES, lenient=True
+        )
+        if read is None:
+            return None
+        final, status, content_type, body, encoding = read
+        return FetchedPage(
+            final, status, content_type, (body or b"").decode(encoding, errors="replace")
+        )
+
+    def _stream(
+        self,
+        url: str,
+        *,
+        check_robots: bool,
+        accept: tuple[str, ...],
+        max_bytes: int,
+        lenient: bool = False,
+    ) -> tuple[str, int, str, bytes | None, str] | None:
+        """The one redirect-following read every fetch goes through:
+        `(final url, status, content type, body, encoding)`, or `None` when the
+        address, a redirect, robots.txt or the size cap refuses it. Every hop
+        is re-checked as a public address (and against robots.txt when asked).
+        A type outside `accept` has `body=None`; `lenient` also lets a response
+        with no stated type through."""
         import httpx
 
         current = url
@@ -162,20 +221,15 @@ class HttpSiteFetcher:
                         content_type = (
                             response.headers.get("content-type", "").split(";")[0].strip()
                         )
-                        if content_type and not content_type.startswith(READABLE_TYPES):
-                            return FetchedPage(current, response.status_code, content_type, "")
+                        encoding = response.encoding or "utf-8"
+                        if not (content_type.startswith(accept) or (lenient and not content_type)):
+                            return current, response.status_code, content_type, None, encoding
                         body = bytearray()
                         for chunk in response.iter_bytes():
                             body.extend(chunk)
-                            if len(body) > MAX_BYTES:
+                            if len(body) > max_bytes:
                                 return None
-                        encoding = response.encoding or "utf-8"
-                        return FetchedPage(
-                            current,
-                            response.status_code,
-                            content_type,
-                            bytes(body).decode(encoding, errors="replace"),
-                        )
+                        return current, response.status_code, content_type, bytes(body), encoding
         except (UnsafeUrlError, httpx.HTTPError, OSError):
             return None
         return None
@@ -229,6 +283,14 @@ class FakeSiteFetcher:
             ".xml": "application/xml",
         }.get(suffix, "text/html")
         return FetchedPage(url, 200, content_type, file.read_text(encoding="utf-8"))
+
+    def fetch_image(self, url: str) -> FetchedImage | None:
+        self.fetched.append(url)
+        file = self._file(url)
+        content_type = mimetypes.guess_type(file.name)[0] if file else None
+        if file is None or content_type not in IMAGE_TYPES:
+            return None
+        return FetchedImage(url, content_type, file.read_bytes())
 
 
 _override: SiteFetcher | None = None

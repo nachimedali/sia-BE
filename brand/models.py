@@ -124,3 +124,57 @@ class BrandCore(models.Model):
 
     def __str__(self) -> str:
         return f"Brand core v{self.version} ({self.workspace_id})"
+
+
+class ProductStage(models.TextChoices):
+    """Reading one product page, in the order the import overlay shows it."""
+
+    OPENING = "OPENING", "Opening the page"
+    DETAILS = "DETAILS", "Title, price and SKU"
+    PHOTOS = "PHOTOS", "Collecting photos"
+    DESCRIPTION = "DESCRIPTION", "Description and features"
+    CLAIMS = "CLAIMS", "Spotting claims"
+    DONE = "DONE", "Done"
+
+
+class ProductImport(models.Model):
+    """**One reading of one product page** (S1, the product half).
+
+    A proposal for the new-product form, never a product: the user reviews
+    every field before anything is created, and the product is created by the
+    ordinary create endpoint with the ordinary validation. Photos are not
+    stored here — `images` lists the URLs found, and the browser pulls each one
+    through `GET …/images/{n}/` into the form's normal upload, so an abandoned
+    import leaves no orphaned media behind.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="product_imports"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    url = models.URLField(max_length=500)
+    domain = models.CharField(max_length=253, blank=True)
+    status = models.CharField(
+        max_length=10, choices=ImportStatus.choices, default=ImportStatus.QUEUED
+    )
+    stage = models.CharField(
+        max_length=12, choices=ProductStage.choices, default=ProductStage.OPENING
+    )
+    progress = models.PositiveSmallIntegerField(default=0)
+    pages = models.JSONField(default=list, blank=True)
+    #: field → {"value": …, "source": url}; unknowns absent. See
+    #: `brand.services.product_page`.
+    result = models.JSONField(default=dict, blank=True)
+    error = models.CharField(max_length=300, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.url} ({self.status})"

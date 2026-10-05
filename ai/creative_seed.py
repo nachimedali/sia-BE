@@ -702,8 +702,38 @@ TONE_PRESETS = [
 ]
 
 #: A claim is only usable once proof is attached (see `products.brief`).
+#: `phrases` are what a product-page import looks for (S1), in English and
+#: French, matched case-insensitively. A phrase found on a page only *proposes*
+#: the claim: it still needs its proof before the orchestra may use it.
+CLAIM_PHRASES: dict[str, list[str]] = {
+    "organic": ["organic", "certified organic", "biologique", "agriculture biologique"],
+    "handmade": [
+        "handmade",
+        "hand-made",
+        "hand made",
+        "hand-painted",
+        "fait main",
+        "fait à la main",
+        "peint à la main",
+    ],
+    "natural": ["100% natural", "all natural", "100% naturel", "100% naturelle"],
+    "made-in-tunisia": [
+        "made in tunisia",
+        "produit de tunisie",
+        "fabriqué en tunisie",
+        "fait en tunisie",
+    ],
+    "award-winning": [
+        "award-winning",
+        "award winning",
+        "gold medal",
+        "médaille d'or",
+        "great taste",
+    ],
+}
+
 CLAIMS = [
-    _opt(key, label, [], description=proof)
+    _opt(key, label, [], description=proof, phrases=CLAIM_PHRASES[key])
     for key, label, proof in (
         ("organic", "Organic", "Needs a certificate"),
         ("handmade", "Hand-made", "Workshop photo or statement"),

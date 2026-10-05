@@ -75,6 +75,9 @@ from brand.views import (
     BrandImportListView,
     BrandImportReviewView,
     BrandImportSkipView,
+    ProductImportDetailView,
+    ProductImportImageView,
+    ProductImportListView,
 )
 from categories.views import CategoryListView
 from channels.views import ChannelConnectView, SocialAccountViewSet
@@ -135,6 +138,7 @@ from workspaces.views import (
     OrganizationListView,
     WorkspaceInviteView,
     WorkspaceListCreateView,
+    WorkspaceProfileView,
     WorkspaceSettingsView,
 )
 
@@ -219,6 +223,17 @@ urlpatterns = [
         "brand/imports/<int:pk>/apply/", BrandImportApplyView.as_view(), name="brand-import-apply"
     ),
     path("brand/core/", BrandCoreView.as_view(), name="brand-core"),
+    path("brand/product-imports/", ProductImportListView.as_view(), name="product-imports"),
+    path(
+        "brand/product-imports/<int:pk>/",
+        ProductImportDetailView.as_view(),
+        name="product-import",
+    ),
+    path(
+        "brand/product-imports/<int:pk>/images/<int:index>/",
+        ProductImportImageView.as_view(),
+        name="product-import-image",
+    ),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     # --- billing ---
     path("billing/plans/", PlanListView.as_view(), name="billing-plans"),
@@ -352,6 +367,7 @@ urlpatterns = [
     # walk. `MembershipViewSet`, which does return objects by pk, is
     # registered on `router` above instead.
     path("workspaces/settings/", WorkspaceSettingsView.as_view(), name="workspace-settings"),
+    path("workspaces/profile/", WorkspaceProfileView.as_view(), name="workspace-profile"),
     # The default chain and its stages. A plain path for the same reason as
     # the settings toggle above: it answers for the caller's own workspace
     # rather than an id in the URL, so the tenancy sweep (A52) has nothing
