@@ -31,6 +31,7 @@ SEEDS = [
     "billing.migrations.0018_seed_catalog",
     "ai.migrations.0008_seed_catalog",
     "ai.migrations.0009_revise_reason",
+    "ai.migrations.0011_catalog_v2",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",

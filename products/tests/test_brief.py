@@ -57,8 +57,8 @@ FULL: dict[str, Any] = {
     "avoid_words": ["cheap", "best ever"],
     "hashtags_style": "MODERATE",
     "caption_length": "medium",
-    "scenes": ["djerba", "studio"],
-    "lights": ["golden"],
+    "scenes": ["beach-shoreline", "seamless-studio"],
+    "lights": ["golden-hour"],
     "people": "hands",
     "brand_colors": ["#4a36a0", "#23918E"],
     "aspects": ["4-5"],
@@ -80,7 +80,7 @@ FULL: dict[str, Any] = {
     "campaign_starts": "2026-11-01",
     "campaign_ends": "2026-12-01",
     "brand_hashtags": ["#MadeInTunisia", "djerba"],
-    "ctas": ["shop"],
+    "ctas": ["shop-now"],
 }
 
 
@@ -187,8 +187,8 @@ def test_the_campaign_cannot_end_before_it_starts(auth_client: Any, product: Any
 def test_a_retired_catalog_row_is_refused_not_ignored(auth_client: Any, product: Any) -> None:
     from ai.models import CreativeOption
 
-    CreativeOption.objects.filter(kind="scene", key="dunes").update(is_active=False)
-    response = auth_client.patch(_detail(product.id), {"scenes": ["dunes"]}, format="json")
+    CreativeOption.objects.filter(kind="scene", key="desert-dunes").update(is_active=False)
+    response = auth_client.patch(_detail(product.id), {"scenes": ["desert-dunes"]}, format="json")
     assert response.status_code == 400
 
 

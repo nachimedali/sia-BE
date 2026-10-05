@@ -81,16 +81,16 @@ def studio_workspace(workspace: Any, plans: Any, generation_costs: None) -> Any:
 
 
 FULL = {
-    "scene": "djerba",
-    "light": "golden",
-    "camera": "low",
+    "scene": "beach-shoreline",
+    "light": "golden-hour",
+    "camera": "low-hero",
     "cast": "hands",
-    "vibe": "casual",
+    "vibe": "everyday",
     "moods": ["editorial", "warm"],
-    "palette": "sunset",
+    "palette": "terracotta",
     "language": "fr",
-    "cta": "shop",
-    "format": "single",
+    "cta": "shop-now",
+    "format": "feed-portrait",
     "tempo": "allegro",
     "dynamics": "forte",
     "tone": "warm",
@@ -112,13 +112,16 @@ def test_the_seed_covers_every_control_and_is_idempotent(seeded: None) -> None:
     assert CreativeOption.objects.count() == before
 
 
-def test_the_template_scenes_and_the_four_camera_angles_are_there(seeded: None) -> None:
-    scenes = CreativeOption.objects.filter(kind=CreativeKind.SCENE).values_list("key", flat=True)
-    assert set(scenes) == {"sidibou", "souk", "studio", "djerba", "dunes", "rooftop"}
+def test_the_catalog_offers_studio_home_outdoor_and_tunisian_scenes(seeded: None) -> None:
+    scenes = CreativeOption.objects.filter(kind=CreativeKind.SCENE)
+    assert {row.metadata["group"] for row in scenes} == {"studio", "home", "outdoor", "tunisia"}
+    assert {"seamless-studio", "beach-shoreline", "sidi-bou-said", "medina-souk"} <= {
+        row.key for row in scenes
+    }
     cameras = CreativeOption.objects.filter(kind=CreativeKind.CAMERA).values_list("key", flat=True)
-    assert list(cameras) == ["eye", "top", "low", "macro"]
+    assert list(cameras)[:3] == ["eye-level", "three-quarter", "flat-lay"]
     cast = CreativeOption.objects.filter(kind=CreativeKind.CAST).values_list("key", flat=True)
-    assert list(cast) == ["none", "hands", "one", "group"]
+    assert list(cast) == ["product-only", "hands", "model", "duo", "group", "creator"]
 
 
 def test_content_languages_are_french_and_english_only(seeded: None) -> None:
@@ -155,18 +158,18 @@ def test_presets_only_name_options_that_exist(seeded: None) -> None:
 def test_the_catalog_endpoint_groups_orders_and_hides_inactive(
     auth_client: Any, workspace: Any, seeded: None, generation_costs: None
 ) -> None:
-    CreativeOption.objects.filter(kind="scene", key="dunes").update(is_active=False)
-    CreativeOption.objects.filter(kind="scene", key="souk").update(sort_order=-5)
+    CreativeOption.objects.filter(kind="scene", key="desert-dunes").update(is_active=False)
+    CreativeOption.objects.filter(kind="scene", key="medina-souk").update(sort_order=-5)
 
     body = auth_client.get(URL).json()
 
     assert set(body["options"]) == ALL_KINDS
     scenes = [row["key"] for row in body["options"]["scene"]]
-    assert "dunes" not in scenes
-    assert scenes[0] == "souk"
+    assert "desert-dunes" not in scenes
+    assert scenes[0] == "medina-souk"
     first = body["options"]["camera"][0]
     assert set(first) >= {"key", "label", "description", "icon_paths", "colors", "metadata"}
-    assert first["label"] == "Eye level"
+    assert first["label"] == "Eye-level hero"
 
 
 def test_the_catalog_carries_the_prices_the_estimate_reads(
@@ -227,7 +230,7 @@ def test_an_empty_selection_is_allowed_and_stays_empty(seeded: None) -> None:
     "bad",
     [
         {"scene": "atlantis"},
-        {"light": "golden hour"},  # a label, not a key
+        {"light": "Golden hour"},  # a label, not a key
         {"moods": ["editorial", "nope"]},
         {"moods": "editorial"},  # must be a list
         {"toggles": {"confetti": True}},
@@ -235,7 +238,7 @@ def test_an_empty_selection_is_allowed_and_stays_empty(seeded: None) -> None:
         {"platforms": ["myspace"]},
         {"avoid": "x" * 201},
         {"warp_speed": 9},
-        {"scene": ["sidibou"]},
+        {"scene": ["sidi-bou-said"]},
     ],
 )
 def test_a_choice_the_catalog_does_not_hold_is_refused(seeded: None, bad: dict[str, Any]) -> None:
@@ -244,9 +247,9 @@ def test_a_choice_the_catalog_does_not_hold_is_refused(seeded: None, bad: dict[s
 
 
 def test_an_inactive_option_cannot_be_chosen(seeded: None) -> None:
-    CreativeOption.objects.filter(kind="scene", key="dunes").update(is_active=False)
+    CreativeOption.objects.filter(kind="scene", key="desert-dunes").update(is_active=False)
     with pytest.raises(ValidationError):
-        creative.normalize({"scene": "dunes"})
+        creative.normalize({"scene": "desert-dunes"})
 
 
 def test_a_new_row_is_immediately_choosable(seeded: None) -> None:
@@ -280,10 +283,10 @@ def test_the_choices_are_stored_on_the_generation(
     assert response.status_code == 201
     body = response.json()
     assert body["creative"] == FULL
-    # The format owns the aspect: "single" is 4:5 whatever else was sent.
+    # The format owns the aspect: "feed-portrait" is 4:5 whatever else was sent.
     assert body["aspect"] == "4:5"
     # The legacy columns stay readable for everything that predates the brief.
-    assert body["scene"] == "Djerba shoreline"
+    assert body["scene"] == "Beach shoreline"
     assert body["render_style"] == "Editorial, Warm"
 
 
@@ -292,7 +295,7 @@ def test_a_format_that_disagrees_with_the_kind_is_refused(
 ) -> None:
     """A "Reel 9:16" that quietly produced a text post would be a control that
     changed nothing."""
-    response = _generate(auth_client, kind="TEXT", creative={"format": "story"})
+    response = _generate(auth_client, kind="TEXT", creative={"format": "vertical"})
     assert response.status_code == 400
     assert "IMAGE" in str(response.json())
 
@@ -319,11 +322,11 @@ def test_an_unknown_choice_is_a_400_naming_the_field(
 def test_every_choice_is_in_the_image_prompt(seeded: None) -> None:
     lines = " ".join(creative.image_lines(FULL))
     for fragment in (
-        CreativeOption.objects.get(kind="scene", key="djerba").prompt_fragment,
-        CreativeOption.objects.get(kind="light", key="golden").prompt_fragment,
-        CreativeOption.objects.get(kind="camera", key="low").prompt_fragment,
+        CreativeOption.objects.get(kind="scene", key="beach-shoreline").prompt_fragment,
+        CreativeOption.objects.get(kind="light", key="golden-hour").prompt_fragment,
+        CreativeOption.objects.get(kind="camera", key="low-hero").prompt_fragment,
         CreativeOption.objects.get(kind="cast", key="hands").prompt_fragment,
-        CreativeOption.objects.get(kind="palette", key="sunset").prompt_fragment,
+        CreativeOption.objects.get(kind="palette", key="terracotta").prompt_fragment,
         CreativeOption.objects.get(kind="mood", key="editorial").prompt_fragment,
         CreativeOption.objects.get(kind="mood", key="warm").prompt_fragment,
     ):
@@ -337,7 +340,7 @@ def test_the_brief_for_the_copy_carries_language_tone_and_the_call_to_action(
     lines = " ".join(creative.caption_lines(FULL))
     assert "French" in lines
     assert CreativeOption.objects.get(kind="tone", key="warm").prompt_fragment in lines
-    assert CreativeOption.objects.get(kind="cta", key="shop").prompt_fragment in lines
+    assert CreativeOption.objects.get(kind="cta", key="shop-now").prompt_fragment in lines
 
 
 def test_a_run_hands_the_provider_the_prompt_and_the_grade(
@@ -377,7 +380,7 @@ def test_golden_and_blue_hour_render_differently_and_both_still_pass_the_gate(
     are visibly graded by what was chosen while the identity check, which reads
     luma, scores them as the product."""
     means = {}
-    for light in ("golden", "blue"):
+    for light in ("golden-hour", "blue-hour"):
         row = create_generation(
             workspace=studio_workspace,
             user=user,
@@ -394,10 +397,10 @@ def test_golden_and_blue_hour_render_differently_and_both_still_pass_the_gate(
         with variant.media_asset.file.open("rb") as handle:
             means[light] = _mean_chroma(handle.read())
 
-    assert means["golden"] != means["blue"]
+    assert means["golden-hour"] != means["blue-hour"]
     # Warm pushes red up and blue down relative to cool.
-    assert means["golden"][1] > means["blue"][1]
-    assert means["golden"][0] < means["blue"][0]
+    assert means["golden-hour"][1] > means["blue-hour"][1]
+    assert means["golden-hour"][0] < means["blue-hour"][0]
 
 
 # -----------------------------------------------------------------------------
