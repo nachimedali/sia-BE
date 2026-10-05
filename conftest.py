@@ -309,13 +309,19 @@ def _fake_ai_providers(settings: Any) -> None:
 
 @pytest.fixture(autouse=True)
 def _clear_fake_providers() -> Iterator[None]:
-    from ai.providers.fake import _fake_image_provider, _fake_text_provider
+    from ai.providers.fake import (
+        _fake_image_provider,
+        _fake_text_provider,
+        _fake_video_composer,
+        _fake_video_provider,
+    )
 
-    _fake_text_provider.clear()
-    _fake_image_provider.clear()
+    fakes = (_fake_text_provider, _fake_image_provider, _fake_video_provider, _fake_video_composer)
+    for fake in fakes:
+        fake.clear()
     yield
-    _fake_text_provider.clear()
-    _fake_image_provider.clear()
+    for fake in fakes:
+        fake.clear()
 
 
 # --- collaboration & roles (design.md §8.8) -----------------------------------

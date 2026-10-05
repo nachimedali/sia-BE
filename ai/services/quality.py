@@ -231,3 +231,41 @@ def run_text_quality_gate(*, body: str, banned_phrases: list[str]) -> QualityRes
     return QualityResult(
         passed=not reasons, checks=checks, identity_score=None, rejected_reason="; ".join(reasons)
     )
+
+
+# -----------------------------------------------------------------------------
+# Video (steps-plan S3)
+# -----------------------------------------------------------------------------
+#: What a social platform accepts as a video upload, and so what a render must
+#: come back as. A render in any other container cannot be published.
+_PUBLISHABLE_VIDEO_MIME = frozenset({"video/mp4"})
+#: How far a render's length may drift from what was bought, in seconds.
+VIDEO_DURATION_TOLERANCE_S = 0.5
+
+
+def run_video_quality_gate(
+    *, content: bytes, mime: str, duration_seconds: float, expected_seconds: float
+) -> QualityResult:
+    """Artifact checks on a rendered clip or reel, before anything is charged.
+
+    Structural, and honest about it: the container is an ISO-BMFF file (an
+    `ftyp` box where MP4 puts one), the type is one platforms take, and the
+    length is what the person paid for. **It does not look at the frames** —
+    nothing in this stack decodes video — so a warped label is not caught
+    here, and nothing claims it is. Brand policy is a separate layer (C-09).
+    """
+    checks = {
+        "container": len(content) > 12 and content[4:8] == b"ftyp",
+        "mime": mime in _PUBLISHABLE_VIDEO_MIME,
+        "duration": abs(duration_seconds - expected_seconds) <= VIDEO_DURATION_TOLERANCE_S,
+    }
+    reason = ""
+    if not (checks["container"] and checks["mime"]):
+        reason = "The render came back in a format that cannot be published."
+    elif not checks["duration"]:
+        reason = (
+            f"The render came back {duration_seconds:.1f} s long instead of {expected_seconds:g} s."
+        )
+    return QualityResult(
+        passed=not reason, checks=checks, identity_score=None, rejected_reason=reason
+    )

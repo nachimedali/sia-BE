@@ -41,6 +41,9 @@ URL = "/api/v1/ai/creative-options/"
 GENERATE_URL = "/api/v1/ai/generate/"
 
 PRODUCT_FORM_KINDS = {"audience", "tone_preset", "claim", "shot_tag", "aspect", "suggestion"}
+#: The Motion step's kinds: served by `/ai/video/catalogue/`, not here, and
+#: drawn as text tiles.
+VIDEO_KINDS = {"video_length", "motion", "video_aspect", "reel_style", "music", "video_extra"}
 
 #: Every kind the template's controls need. A kind with no rows is a control
 #: with nothing in it, which the Studio would render as an empty box.
@@ -105,7 +108,7 @@ FULL = {
 # -----------------------------------------------------------------------------
 def test_the_seed_covers_every_control_and_is_idempotent(seeded: None) -> None:
     kinds = set(CreativeOption.objects.values_list("kind", flat=True))
-    assert kinds == ALL_KINDS
+    assert kinds == ALL_KINDS | VIDEO_KINDS
 
     before = CreativeOption.objects.count()
     call_command("seed_creative_options", verbosity=0)
@@ -137,7 +140,7 @@ def test_every_row_has_text_and_an_icon_to_draw(seeded: None) -> None:
         # Quick tags and regeneration reasons are text chips by design.
         for row in CreativeOption.objects.exclude(
             kind__in=[CreativeKind.QUICK_TAG, CreativeKind.REVISE_REASON]
-        ).exclude(kind__in=PRODUCT_FORM_KINDS)
+        ).exclude(kind__in=PRODUCT_FORM_KINDS | VIDEO_KINDS)
         if not row.label or not row.icon_paths
     ]
     assert bare == []

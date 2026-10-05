@@ -361,17 +361,31 @@ class Entitlements:
             logger.warning("could not build purchase options", exc_info=True)
             return []
 
-    def require_credits(self, amount: int) -> None:
+    def require_credits(self, amount: int, *, held: int = 0) -> None:
         """Preflight only. The authoritative check is inside the debit's
         transaction — this one can be stale by the time the spend happens, and
-        exists so the UI and the task can fail early and cheaply."""
+        exists so the UI and the task can fail early and cheaply.
+
+        `held` is credits promised to work already in flight — a video render
+        holds its price until it passes (`ai.services.video`) — and is not free
+        to spend twice. The caller computes it; it is never cached."""
         if self.quota("monthly_ai_credits") == UNLIMITED:
             return
-        available = self.credits_remaining()
+        available = self.credits_remaining() - held
         if available < amount:
+            message = f"This action needs {amount} credits; {available} remaining."
+            if held:
+                message = (
+                    f"This needs {amount} credits; {max(available, 0)} are free "
+                    f"({held} are held by renders in progress)."
+                )
             raise InsufficientCredits(
-                f"This action needs {amount} credits; {available} remaining.",
-                detail={"required": amount, "available": available},
+                message,
+                detail={
+                    "required": amount,
+                    "available": max(available, 0),
+                    **({"held": held} if held else {}),
+                },
                 suggested_plan=self._suggested_plan(),
                 purchase=self._purchase_options(PackKind.CREDITS),
             )

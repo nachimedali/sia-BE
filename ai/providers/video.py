@@ -34,3 +34,18 @@ def get_video_provider() -> Any | None:
         "VIDEO_PROVIDER_API_KEY is set but no real video adapter is implemented yet. "
         "Add one in ai/providers/ and resolve it here."
     )
+
+
+def get_video_composer() -> Any | None:
+    """The reel composer (`ai.providers.base.VideoComposer`), or `None` when no
+    vendor is configured — the same contract as `get_video_provider`."""
+    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+        from ai.providers.fake import _fake_video_composer
+
+        return _fake_video_composer
+    if not getattr(settings, "VIDEO_COMPOSER_API_KEY", ""):
+        return None
+    raise NotImplementedError(
+        "VIDEO_COMPOSER_API_KEY is set but no real composer adapter is implemented yet. "
+        "Add one in ai/providers/ and resolve it here."
+    )

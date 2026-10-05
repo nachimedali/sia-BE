@@ -11,9 +11,10 @@ from django.core.exceptions import ValidationError
 from ai.creative_seed import CATALOG, SEED_VERSION
 from ai.models import CreativeKind, CreativeOption
 from ai.services.creative import MULTI, SINGLE
+from ai.video_seed import VIDEO_CATALOG
 from products.brief import TONE_KEYS
 
-ROWS = [(kind, row) for kind, rows in CATALOG.items() for row in rows]
+ROWS = [(kind, row) for kind, rows in {**CATALOG, **VIDEO_CATALOG}.items() for row in rows]
 
 
 def keys(kind: str) -> set[str]:
@@ -21,8 +22,10 @@ def keys(kind: str) -> set[str]:
 
 
 def test_every_kind_is_seeded_and_every_kind_seeded_exists() -> None:
-    assert set(CATALOG) == {kind.value for kind in CreativeKind}
-    assert all(CATALOG[kind] for kind in CATALOG)
+    seeded = {**CATALOG, **VIDEO_CATALOG}
+    assert not set(CATALOG) & set(VIDEO_CATALOG)
+    assert set(seeded) == {kind.value for kind in CreativeKind}
+    assert all(seeded[kind] for kind in seeded)
 
 
 @pytest.mark.parametrize(("kind", "row"), ROWS, ids=[f"{k}:{r['key']}" for k, r in ROWS])
@@ -147,9 +150,40 @@ def test_presets_only_name_choices_that_exist() -> None:
 
 @pytest.mark.django_db
 def test_a_seeded_row_still_passes_the_models_own_validation_when_saved() -> None:
-    for kind, rows in CATALOG.items():
+    for kind, rows in {**CATALOG, **VIDEO_CATALOG}.items():
         for position, row in enumerate(rows):
             CreativeOption.objects.create(kind=kind, sort_order=position, **row)
     assert CreativeOption.objects.count() == len(ROWS)
     with pytest.raises(ValidationError):
         CreativeOption(kind="scene", key="bad", label="x", icon_paths=["<script>"]).full_clean()
+
+
+def test_every_priced_video_row_carries_a_whole_credit_price() -> None:
+    for kind in ("video_length", "motion", "reel_style", "music", "video_extra"):
+        for row in VIDEO_CATALOG[kind]:
+            credits = row["metadata"]["credits"]
+            assert isinstance(credits, int) and credits >= 0, (kind, row["key"])
+
+
+def test_video_lengths_name_their_mode_seconds_and_render_time() -> None:
+    modes = {row["metadata"]["mode"] for row in VIDEO_CATALOG["video_length"]}
+    assert modes == {"clip", "reel"}
+    for row in VIDEO_CATALOG["video_length"]:
+        meta = row["metadata"]
+        assert meta["seconds"] > 0 and meta["render_s"] > 0, row["key"]
+        if meta["mode"] == "reel":
+            assert 1 <= meta["min_shots"] <= meta["max_shots"], row["key"]
+    # S3: clips are 5 or 10 seconds; reels are a vertical master.
+    assert {
+        r["metadata"]["seconds"]
+        for r in VIDEO_CATALOG["video_length"]
+        if r["metadata"]["mode"] == "clip"
+    } == {5, 10}
+    assert any(r["metadata"]["aspect"] == "9:16" for r in VIDEO_CATALOG["video_aspect"])
+
+
+def test_motion_fragments_direct_the_camera_and_never_the_product() -> None:
+    for row in VIDEO_CATALOG["motion"]:
+        fragment = row["prompt_fragment"]
+        assert fragment and not fragment.endswith("."), row["key"]
+        assert not re.search(r"\b(text|words|lettering|logo reading)\b", fragment), row["key"]

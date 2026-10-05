@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 import zlib
 from typing import Any
@@ -24,8 +25,11 @@ from typing import Any
 from PIL import Image
 
 from ai.providers.base import (
+    CaptionCue,
+    EndCard,
     ImageGenerationResult,
     ImageVariant,
+    ReelShot,
     TextGenerationResult,
     TextVariant,
     VideoResult,
@@ -357,8 +361,110 @@ class FakeVideoProvider:
             latency_ms=1,
         )
 
+    def animate(
+        self,
+        *,
+        image: bytes,
+        role: str,
+        prompt: str,
+        aspect: str,
+        duration_seconds: float,
+        model: str | None = None,
+    ) -> VideoResult:
+        self.calls.append(prompt)
+        manifest = {
+            "kind": "clip",
+            "role": role,
+            "aspect": aspect,
+            "seconds": duration_seconds,
+            "prompt": prompt,
+            "image": hashlib.sha256(image).hexdigest()[:16],
+        }
+        return VideoResult(
+            content=_fake_mp4(manifest),
+            mime="video/mp4",
+            duration_seconds=duration_seconds,
+            provider="fake",
+            model=model or "fake-video-1",
+            latency_ms=1,
+        )
+
+    def clear(self) -> None:
+        self.calls.clear()
+
+
+def _fake_mp4(manifest: dict[str, Any]) -> bytes:
+    """An ISO-BMFF `ftyp` box followed by the render's manifest as JSON.
+
+    Deterministic — the same request is the same bytes — and readable back by
+    `read_fake_manifest`, which is how a test proves what a render was told
+    (captions burned in, overlays, the music bed) without decoding video.
+    """
+    header = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+    return header + json.dumps(manifest, sort_keys=True, ensure_ascii=False).encode()
+
+
+def read_fake_manifest(content: bytes) -> dict[str, Any]:
+    body = content[24:]
+    result: dict[str, Any] = json.loads(body.decode())
+    return result
+
+
+class FakeVideoComposer:
+    """Records the reel it was asked for and returns it as a fake master."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def compose(
+        self,
+        *,
+        shots: list[ReelShot],
+        aspect: str,
+        transition: str,
+        music: str | None,
+        captions: list[CaptionCue],
+        end_card: EndCard | None,
+        duration_seconds: float,
+    ) -> VideoResult:
+        manifest = {
+            "kind": "reel",
+            "aspect": aspect,
+            "seconds": duration_seconds,
+            "transition": transition,
+            "music": music,
+            "shots": [
+                {
+                    "image": hashlib.sha256(shot.image).hexdigest()[:16],
+                    "seconds": shot.seconds,
+                    "overlay": shot.overlay,
+                }
+                for shot in shots
+            ],
+            "captions": [[cue.text, cue.start, cue.end] for cue in captions],
+            "end_card": (
+                {
+                    "title": end_card.title,
+                    "cta": end_card.call_to_action,
+                    "seconds": end_card.seconds,
+                }
+                if end_card
+                else None
+            ),
+        }
+        self.calls.append(manifest)
+        return VideoResult(
+            content=_fake_mp4(manifest),
+            mime="video/mp4",
+            duration_seconds=duration_seconds,
+            provider="fake",
+            model="fake-composer-1",
+            latency_ms=1,
+        )
+
     def clear(self) -> None:
         self.calls.clear()
 
 
 _fake_video_provider = FakeVideoProvider()
+_fake_video_composer = FakeVideoComposer()

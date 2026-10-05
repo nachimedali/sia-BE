@@ -23,6 +23,13 @@ from accounts.views import (
     ThrottledTokenObtainPairView,
     VerifyEmailView,
 )
+from ai.video_views import (
+    VideoCatalogueView,
+    VideoEstimateView,
+    VideoRenderDetailView,
+    VideoRenderListView,
+    VideoRenderSendView,
+)
 from ai.views import (
     CreativeOptionsView,
     GenerateView,
@@ -401,6 +408,14 @@ urlpatterns = [
     # there is no workspace-scoped object here for the tenancy sweep to walk.
     path("ai/hashtags/", HashtagSuggestionView.as_view(), name="ai-hashtags"),
     path("ai/creative-options/", CreativeOptionsView.as_view(), name="ai-creative-options"),
+    # --- video (steps-plan S3) ---
+    # Plain paths: `{pk}` is resolved through a workspace-filtered queryset in
+    # the view, so another tenant's render is a 404 (Part 7 rule 3).
+    path("ai/video/catalogue/", VideoCatalogueView.as_view(), name="ai-video-catalogue"),
+    path("ai/video/estimate/", VideoEstimateView.as_view(), name="ai-video-estimate"),
+    path("ai/video/renders/", VideoRenderListView.as_view(), name="ai-video-renders"),
+    path("ai/video/renders/send/", VideoRenderSendView.as_view(), name="ai-video-send"),
+    path("ai/video/renders/<int:pk>/", VideoRenderDetailView.as_view(), name="ai-video-render"),
     # --- guest review: sharing a post with someone who has no account ---
     # `{pk}` is resolved through a workspace-filtered queryset inside the view,
     # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the

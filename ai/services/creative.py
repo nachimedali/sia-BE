@@ -66,11 +66,28 @@ def _active(kind: str) -> dict[str, CreativeOption]:
     return {row.key: row for row in CreativeOption.objects.filter(kind=kind, is_active=True)}
 
 
+#: The Motion step's kinds. Served by `GET /ai/video/catalogue/` behind the S3
+#: flag (`ai.services.video`), so they stay out of the image controls' catalog.
+VIDEO_KINDS = frozenset(
+    {
+        CreativeKind.VIDEO_LENGTH,
+        CreativeKind.MOTION,
+        CreativeKind.VIDEO_ASPECT,
+        CreativeKind.REEL_STYLE,
+        CreativeKind.MUSIC,
+        CreativeKind.VIDEO_EXTRA,
+    }
+)
+
+
 def catalog() -> dict[str, list[CreativeOption]]:
     """Every active row, grouped by kind and in display order — **including
-    kinds with no rows**, so a client never has to ask whether a key exists."""
-    grouped: dict[str, list[CreativeOption]] = {kind.value: [] for kind in CreativeKind}
-    for row in CreativeOption.objects.filter(is_active=True):
+    kinds with no rows**, so a client never has to ask whether a key exists.
+    The video kinds are not here; they have their own endpoint."""
+    grouped: dict[str, list[CreativeOption]] = {
+        kind.value: [] for kind in CreativeKind if kind not in VIDEO_KINDS
+    }
+    for row in CreativeOption.objects.filter(is_active=True, kind__in=grouped):
         grouped[row.kind].append(row)
     return grouped
 

@@ -15,6 +15,7 @@ from django.db import transaction
 
 from ai.creative_seed import CATALOG
 from ai.models import CreativeOption
+from ai.video_seed import VIDEO_CATALOG
 
 
 class Command(BaseCommand):
@@ -30,7 +31,7 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
         created = updated = 0
-        for kind, rows in CATALOG.items():
+        for kind, rows in {**CATALOG, **VIDEO_CATALOG}.items():
             for position, spec in enumerate(rows):
                 defaults = {**spec, "sort_order": position * 10, "is_active": True}
                 key = defaults.pop("key")

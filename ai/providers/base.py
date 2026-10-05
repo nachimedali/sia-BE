@@ -154,6 +154,76 @@ class VideoProvider(Protocol):
         model: str | None = None,
     ) -> VideoResult: ...
 
+    def animate(
+        self,
+        *,
+        image: bytes,
+        role: str,
+        prompt: str,
+        aspect: str,
+        duration_seconds: float,
+        model: str | None = None,
+    ) -> VideoResult:
+        """Animate one still into a clip (steps-plan S3).
+
+        `role` is `start` (the clip opens on the still and moves away from it)
+        or `end` (it moves toward the still and lands on it) — the two
+        image-to-video modes every current vendor offers. `prompt` is camera
+        direction only; the product's look comes from the image.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class ReelShot:
+    """One shot in a reel: the still, how long it holds, and the line set over
+    it (empty for none)."""
+
+    image: bytes
+    seconds: float
+    overlay: str = ""
+
+
+@dataclass(frozen=True)
+class CaptionCue:
+    """One burned-in caption: what it says and when, in seconds from the start."""
+
+    text: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
+class EndCard:
+    title: str
+    call_to_action: str = ""
+    seconds: float = 2.0
+
+
+class VideoComposer(Protocol):
+    """Cuts shots into a reel master (steps-plan S3): transitions, overlays, a
+    music bed, burned-in captions and an end card, rendered to one file.
+
+    A second port rather than a method on `VideoProvider` because it is a
+    different kind of vendor: image-to-video models animate a still, while
+    composition is templated editing — a render farm or a local encoder —
+    and nobody's animation endpoint is their editing one. Everything the
+    composer is told is decided in code (`ai.services.video`): shot timings,
+    caption cues, which track. It decides nothing.
+    """
+
+    def compose(
+        self,
+        *,
+        shots: list[ReelShot],
+        aspect: str,
+        transition: str,
+        music: str | None,
+        captions: list[CaptionCue],
+        end_card: EndCard | None,
+        duration_seconds: float,
+    ) -> VideoResult: ...
+
 
 class EmbeddingProvider(Protocol):
     """Text → vector, for the trend clustering in design.md §8.4.

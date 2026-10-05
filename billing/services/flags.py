@@ -118,6 +118,13 @@ TRENDGEN_GENERATION = "trendgen_generation"
 #: delete what somebody accepted.
 BRAND_IMPORT_S1 = "brand_import_s1"
 
+#: steps-plan S3 — video: the Studio's Motion step (animate a still, build a
+#: reel), the render queue and the post editor's Animate action. Off restores
+#: the image-only Studio: the video endpoints answer 404 and the Studio shows
+#: no Image/Video choice. Renders already made stay on the posts they were
+#: sent to — a flag hides a feature, it does not take a clip off a post.
+VIDEO_S3 = "video_s3"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -127,6 +134,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     LEARN_V7: True,
     STUDIO_VARIANTS_V2: True,
     BRAND_IMPORT_S1: True,
+    VIDEO_S3: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

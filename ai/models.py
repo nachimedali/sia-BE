@@ -397,6 +397,14 @@ class CreativeKind(models.TextChoices):
     # The post editor's "What should change?" chips: why a post is being
     # regenerated, each carrying the instruction the model reads.
     REVISE_REASON = "revise_reason", "Why regenerate"
+    # The Motion step (steps-plan S3, `ai/video_seed.py`). Prices are
+    # `metadata.credits` on these rows, so a video price is an admin edit.
+    VIDEO_LENGTH = "video_length", "Video length"
+    MOTION = "motion", "Camera motion"
+    VIDEO_ASPECT = "video_aspect", "Video frame"
+    REEL_STYLE = "reel_style", "Reel style"
+    MUSIC = "music", "Music bed"
+    VIDEO_EXTRA = "video_extra", "Video surcharge"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
@@ -466,3 +474,137 @@ class CreativeOption(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind}/{self.key}"
+
+
+# -----------------------------------------------------------------------------
+# Video renders (steps-plan S3)
+# -----------------------------------------------------------------------------
+class VideoMode(models.TextChoices):
+    #: One still, animated into a 5 or 10 second clip.
+    CLIP = "clip", "Clip"
+    #: Several shots cut together with overlays, music and captions.
+    REEL = "reel", "Reel"
+
+
+class VideoRenderStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    SUCCEEDED = "SUCCEEDED", "Succeeded"
+    FAILED = "FAILED", "Failed"
+
+
+class VideoReview(models.TextChoices):
+    """What the person did with a finished (or failed) render. Blank is
+    "not looked at yet"."""
+
+    ACCEPTED = "ACCEPTED", "Accepted"
+    DISCARDED = "DISCARDED", "Discarded"
+    HIDDEN = "HIDDEN", "Hidden"
+    RETRIED = "RETRIED", "Retried as a new render"
+
+
+class VideoRender(models.Model):
+    """One clip or reel, from the confirmed estimate to the finished file.
+
+    **The credits are held, not taken.** `credits` is the price the person
+    confirmed; while the render is `QUEUED` or `RUNNING` it counts against
+    what they can spend (`ai.services.video.held_credits`), and it reaches the
+    ledger only when the render passes the quality gate — one debit, linked by
+    `charge`. A failed render writes nothing, so "releasing the hold" is the
+    status changing, not a compensating row. The hold is a query over these
+    rows and never a cached number (Part 7 rule 5).
+
+    `spec` is the normalised request — option *keys* and media ids, never
+    labels — so an operator renaming a motion does not rewrite what was asked.
+    `lines` is the priced breakdown the person saw, kept as shown.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="video_renders"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="video_renders"
+    )
+    product = models.ForeignKey(
+        "products.Product",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+    mode = models.CharField(max_length=8, choices=VideoMode.choices)
+    spec = models.JSONField(default=dict)
+    #: The post copy: the caption of the post this lands on, and the source of
+    #: a reel's burned-in captions.
+    text = models.TextField(blank=True)
+    #: The still a clip animates, or a reel's first shot: what the output is
+    #: `derived_from`.
+    source = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+
+    estimate_id = models.CharField(max_length=32)
+    credits = models.PositiveIntegerField()
+    lines = models.JSONField(default=list)
+    render_s = models.PositiveIntegerField(default=0)
+
+    status = models.CharField(
+        max_length=10, choices=VideoRenderStatus.choices, default=VideoRenderStatus.QUEUED
+    )
+    phase = models.CharField(max_length=24, blank=True)
+    progress = models.FloatField(default=0)
+    review = models.CharField(max_length=10, choices=VideoReview.choices, blank=True)
+    #: A user-facing reason on `FAILED`; `error_code` is the machine one.
+    error = models.CharField(max_length=300, blank=True)
+    error_code = models.CharField(max_length=40, blank=True)
+
+    output = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="rendered_by",
+    )
+    #: The one ledger row this render was paid with. Null until it passes —
+    #: and forever on a render that failed.
+    charge = models.OneToOneField(
+        "billing.CreditLedger",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="video_render",
+    )
+    #: The draft post the clip was sent to. Set once; a sent render is final.
+    post = models.ForeignKey(
+        "content.Post",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+    retry_of = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="retries"
+    )
+
+    provider = models.CharField(max_length=64, blank=True)
+    model = models.CharField(max_length=64, blank=True)
+    latency_ms = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at", "-id"]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["workspace", "-created_at"]),
+            models.Index(fields=["workspace", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.mode} render {self.pk} ({self.status})"
