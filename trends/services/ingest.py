@@ -83,7 +83,15 @@ def sources_for(category: Category, platform: str) -> list[TrendSource]:
     the inherited set for that leaf alone.
     """
     for node in [category, *reversed(category.ancestors())]:
-        sources = list(TrendSource.objects.filter(category=node, platform=platform, is_active=True))
+        # `workspace__isnull=True` is the tenancy boundary of the shared corpus
+        # (P6-08). A competitor source belongs to one workspace and is extracted
+        # on its own pass; letting one leak in here would put a brand's
+        # competitor list into every other brand's trend window.
+        sources = list(
+            TrendSource.objects.filter(
+                category=node, platform=platform, is_active=True, workspace__isnull=True
+            )
+        )
         if sources:
             return sources
     return []

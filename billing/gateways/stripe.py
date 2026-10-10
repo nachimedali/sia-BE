@@ -16,6 +16,7 @@ from django.conf import settings
 
 from billing.gateways.base import (
     BillingGateway,
+    BillingGatewayError,
     CheckoutMode,
     CheckoutSession,
     PortalSession,
@@ -85,6 +86,16 @@ class StripeBillingGateway:
         stripe = _stripe()
         session = stripe.billing_portal.Session.create(customer=customer_id, return_url=return_url)
         return PortalSession(url=session["url"])
+
+    def update_subscription_quantity(self, *, subscription_item_id: str, quantity: int) -> None:
+        try:
+            _stripe().SubscriptionItem.modify(
+                subscription_item_id,
+                quantity=quantity,
+                proration_behavior="create_prorations",
+            )
+        except Exception as exc:
+            raise BillingGatewayError(str(exc)) from exc
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
         stripe = _stripe()

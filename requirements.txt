@@ -19,3 +19,11 @@ django-storages[s3]
 structlog
 sentry-sdk
 django-cors-headers
+# RFC 5545 recurrence expansion (P1-10). Present transitively via celery
+# and botocore, but an undeclared transitive dependency is one a version
+# bump elsewhere can remove without warning.
+python-dateutil
+# ISO 3166 market codes for cohort benchmarks (P8-02), read from the same
+# package's `iso3166.tab`. Present transitively via celery, declared for the
+# same reason as dateutil above.
+tzdata

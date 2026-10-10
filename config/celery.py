@@ -13,6 +13,8 @@ its own worker deployment (implementation.md Phase 16.5).
 | ai_q       | high              | fail fast, refund, surface to user         |
 | metrics_q  | low               | silent retry, tolerate gaps                |
 | trends_q   | lowest            | silent retry, last corpus stays valid      |
+| notify_q   | high              | retry; someone is waiting to be told       |
+| analyze_q  | lowest, batch     | retries on the next schedule, never inline |
 """
 
 from __future__ import annotations
@@ -35,6 +37,20 @@ QUEUE_NAMES = (
     "ai_q",
     "metrics_q",
     "trends_q",
+    # P2-12. Its own pool rather than sharing `remind_q`: a busy thread can fan
+    # out to a whole team at once, and a burst of notifications must not be
+    # able to delay the reminder that tells someone to publish at 09:00.
+    "notify_q",
+    # P7-01. Learn reads a whole campaign's captures and decisions and may sit
+    # on a provider for a narration call — minutes to hours is the expected
+    # shape, not a fault. Its own pool because that posture is the opposite of
+    # every other queue's: a digest that arrives late is fine, a digest that
+    # delays a publish is not, and a job this long would otherwise occupy a
+    # worker that something time-critical is waiting for. **Retries land on
+    # the next schedule rather than immediately** — the inputs are a trailing
+    # window, so nothing is lost by waiting and a provider outage does not
+    # become a retry storm.
+    "analyze_q",
 )
 
 app.conf.task_queues = tuple(Queue(name) for name in QUEUE_NAMES)
@@ -54,16 +70,35 @@ app.conf.task_routes = {
     "accounts.tasks.*": {"queue": "remind_q"},
     "scheduling.tasks.remind*": {"queue": "remind_q"},
     "content.tasks.media*": {"queue": "media_q"},
+    # Periodic content bookkeeping — revision retention, and the recurrence
+    # slot scan. `metrics_q` because it is the pool the billing sweeps already
+    # share: nobody is waiting on these, and they must never delay a publish.
+    "content.tasks.prune*": {"queue": "metrics_q"},
+    "content.tasks.recurrence*": {"queue": "metrics_q"},
     "ai.tasks.video*": {"queue": "media_q"},
     "ai.tasks.*": {"queue": "ai_q"},
     # Autopilot's body is generation, so it shares the pool sized for provider
     # latency rather than one sized for bookkeeping.
     "products.tasks.*": {"queue": "ai_q"},
+    # The website import (S1): a few page fetches then one inference call —
+    # provider latency, and a person is watching the progress bar.
+    "brand.tasks.*": {"queue": "ai_q"},
+    # Pre-publish checks (S4) call the OCR and policy readers: provider latency.
+    "checks.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
     # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody
     # is waiting on them, and they must never delay a scheduled publish.
     "billing.tasks.*": {"queue": "metrics_q"},
+    "notifications.tasks.*": {"queue": "notify_q"},
+    # Bulk items are ordinary content edits at volume, and a batch of 500 must
+    # never be able to delay a scheduled publish — so they share `media_q`'s
+    # bookkeeping posture rather than sitting anywhere near `publish_q`.
+    "planning.tasks.*": {"queue": "media_q"},
+    "learn.tasks.*": {"queue": "analyze_q"},
+    # Cohort benchmarks (P8) rebuild a projection over every contributor and
+    # aggregate it: the same minutes-to-hours batch posture as Learn.
+    "benchmarks.tasks.*": {"queue": "analyze_q"},
 }
 
 app.autodiscover_tasks()

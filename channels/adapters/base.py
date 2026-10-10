@@ -5,18 +5,20 @@ deterministic fake (A8). This one is the whole of D2: OCCS never talks to
 Meta, TikTok or YouTube, so swapping Zernio for bundle.social is a change of
 one settings value and one module in this package.
 
-**Eight methods, not design.md §9's five.** The table there names `connect_url`,
-`publish`, `fetch_metrics`, `fetch_comments`, `disconnect`. The connect flow
-needs three methods rather than one, because V1 (design.md §14) resolved to a
-*headless* flow: `connect_url` starts OAuth, `resolve_callback` handles the
-return, and `select_target` finishes the platforms that make the user pick a
-page or organisation. Rendering that picker is OCCS's job, not the provider's —
-that is what "the user never sees the provider" costs, and it is a method on the
-port rather than provider-specific glue in a view.
+**This port publishes and nothing else** (P0-28). `fetch_metrics`,
+`fetch_comments` and `fetch_account_stats` used to live here and now live on
+`analytics.providers.MetricsProvider`. Publishing sends data out; measurement
+pulls it in, and the day measurement moves to another vendor, no publish call
+site should be in the blast radius. `analytics/tests/test_port_separation.py`
+asserts the split rather than trusting a comment to preserve it.
 
-`fetch_metrics`/`fetch_comments` were deferred out of Phase 9 (A92) on the rule
-that a port method with no implementation behind it is a promise, not a
-contract. Phase 11 is the implementation, so they land here now.
+**Six methods, not design.md §9's five.** The connect flow needs three rather
+than one, because V1 (design.md §14) resolved to a *headless* flow:
+`connect_url` starts OAuth, `resolve_callback` handles the return, and
+`select_target` finishes the platforms that make the user pick a page or
+organisation. Rendering that picker is OCCS's job, not the provider's — that is
+what "the user never sees the provider" costs, and it is a method on the port
+rather than provider-specific glue in a view.
 
 **Failure taxonomy.** `PlatformError.retryable` and `needs_reauth` are the only
 things the publish task branches on: a 429 or a 5xx will succeed later and must
@@ -39,6 +41,18 @@ from common.exceptions import ProviderError
 #: platform fact rather than a provider one — both adapters read this table, and
 #: the contract test asserts they agree about which flow a platform takes.
 SELECTION_PLATFORMS = frozenset({"facebook", "linkedin"})
+
+#: Provider-backed option lists, by the `source` a `rules.py` `remote_choice`
+#: option names (P4-02). Declared here rather than accepted as a free string
+#: from the caller: an endpoint that forwarded any source to the vendor would
+#: be a proxy for every call the vendor exposes.
+#:
+#: `platform` is part of the row because a source belongs to one platform — a
+#: Pinterest board list requested for an Instagram account is a bug worth a
+#: 400, not an empty list that looks like "no boards yet".
+REMOTE_OPTION_SOURCES: dict[str, str] = {
+    "pinterest_boards": "pinterest",
+}
 
 
 class PlatformError(ProviderError):
@@ -112,44 +126,6 @@ class ConnectResolution:
 
 
 @dataclass(frozen=True)
-class MetricSnapshot:
-    """One reading of what a published post has earned so far.
-
-    Cumulative, not incremental: every platform reports totals-to-date, and the
-    decay slope §8.9 needs is computed from the differences between captures
-    rather than trusted from the provider.
-
-    `impressions` is `0` where the platform does not report it — LinkedIn
-    personal accounts and several others simply do not — which is why
-    `engagement_rate` falls back to a follower denominator (§8.9) rather than
-    dividing by zero and calling it engagement.
-    """
-
-    impressions: int = 0
-    likes: int = 0
-    comments: int = 0
-    shares: int = 0
-    clicks: int = 0
-    saves: int = 0
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class CommentSnapshot:
-    external_id: str
-    body: str = ""
-    author: str = ""
-    posted_at: Any = None
-
-
-@dataclass(frozen=True)
-class AccountStats:
-    followers: int = 0
-    following: int = 0
-    total_posts: int = 0
-
-
-@dataclass(frozen=True)
 class PublishResult:
     provider_post_id: str
     platform_post_id: str = ""
@@ -191,24 +167,23 @@ class PlatformAdapter(Protocol):
         idempotency_key: str,
     ) -> PublishResult: ...
 
-    def fetch_metrics(self, *, platform: str, provider_post_id: str) -> MetricSnapshot:
-        """Totals-to-date for one published post. A platform that reports
-        nothing for a field leaves it at zero rather than guessing."""
-        ...
-
-    def fetch_comments(
-        self, *, platform: str, provider_post_id: str, since: Any = None
-    ) -> list[CommentSnapshot]:
-        """Comments on one published post, newest first. `since` narrows the
-        request where the platform supports it and is applied client-side where
-        it does not — ingestion is idempotent on `external_id` either way."""
-        ...
-
-    def fetch_account_stats(self, *, provider_account_id: str) -> AccountStats:
-        """Follower counts for one connected account, for `AccountSnapshot`."""
-        ...
-
     def disconnect(self, *, provider_account_id: str) -> None: ...
+
+    def list_remote_options(
+        self, *, platform: str, provider_account_id: str, source: str
+    ) -> list[dict[str, Any]]:
+        """Reference data only the provider knows — a Pinterest board list.
+
+        Returns `[{"id", "name"}]`, empty for a source this adapter does not
+        serve. Empty rather than raising: an unrecognised source is a composer
+        bug, and a form that renders an empty select is recoverable where a
+        500 is not.
+
+        **Read-only, and outside the publish path.** It answers the composer
+        while someone is typing, so it must never be on the path that sends a
+        post.
+        """
+        ...
 
 
 def echo_targets(params: dict[str, Any], targets: list[ConnectTarget]) -> dict[str, Any]:

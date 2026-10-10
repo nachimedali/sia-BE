@@ -19,6 +19,10 @@ REQUIRED_PROD_ENV = {
     "EMAIL_HOST_USER": "mailer",
     "EMAIL_HOST_PASSWORD": "secret",
     "DEFAULT_FROM_EMAIL": "no-reply@example.com",
+    # Required without a fallback on purpose (P0-37): a deploy that lost its
+    # measurement key must fail at boot rather than quietly fall back to the
+    # fake and start fabricating metrics.
+    "ZERNIO_API_KEY": "zk-test",
 }
 
 
@@ -49,6 +53,23 @@ def test_prod_does_not_expose_the_browsable_api(prod_settings) -> None:
     ]
 
 
+def test_prod_cannot_run_on_fakes(prod_settings) -> None:
+    """Part 7 rule 17. `base.py` turns each fake on when its key is absent,
+    which is right for a fresh checkout and wrong for a deploy — a lost key
+    would start fabricating rather than failing. Prod pins them off."""
+    assert prod_settings.USE_FAKE_PLATFORM_ADAPTER is False
+    assert prod_settings.USE_FAKE_AI_PROVIDERS is False
+    assert prod_settings.USE_FAKE_TREND_VENDORS is False
+
+
 def test_dev_settings_import_cleanly() -> None:
     dev = importlib.import_module("config.settings.dev")
     assert dev.DEBUG is True
+
+
+def test_prod_cannot_store_media_on_the_filesystem(prod_settings) -> None:
+    """The filesystem fake is served without auth (see `test_media_serving`);
+    a deploy that lost its S3 endpoint must fail at upload, not start serving
+    workspace-private media publicly."""
+    assert prod_settings.USE_FAKE_STORAGE is False
+    assert prod_settings.STORAGES["default"]["BACKEND"] == "storages.backends.s3.S3Storage"

@@ -15,9 +15,10 @@ import time_machine
 from django.utils import timezone
 
 from ai.models import Generation, GenerationMode
-from billing.models import CreditLedger, VideoLedger, VideoReason
+from billing.models import CreditLedger, FeatureFlag, VideoLedger, VideoReason
 from billing.services import ledger
-from content.models import Post, PostSource, PostStatus
+from billing.services.flags import COLLABORATION_V2
+from content.models import Post
 from products.models import (
     AutopilotDraft,
     AutopilotDraftKind,
@@ -48,7 +49,9 @@ def test_autopilot_stops_at_included_video_allowance(
 
     assert job.status == AutopilotJobStatus.BLOCKED_QUOTA
     assert job.detail["reason"] == "included_video_allowance"
-    assert job.detail["videos_deferred"] == autopilot_workspace.plan.included_videos == 4
+    assert (
+        job.detail["videos_deferred"] == autopilot_workspace.organization.plan.included_videos == 4
+    )
 
 
 def test_autopilot_never_debits_prepaid_video_packs(
@@ -74,22 +77,29 @@ def test_autopilot_never_debits_prepaid_video_packs(
     assert ledger.video_balance(autopilot_workspace) == 10
 
 
-def test_auto_approve_gated_to_advanced_plan(
+def test_automatic_approval_is_refused_on_every_plan(
     auth_client: Any, autopilot_product: Any, plans: dict[str, Any], autopilot_workspace: Any
 ) -> None:
-    """§4.1 — `autopilot_auto_approve` is Advanced-only, and the gate is a 402
-    with an upgrade payload, not a 403."""
+    """L-2: nothing is approved without a person, so `auto_approve` and the
+    straight-to-calendar landing are refused outright — on Advanced too. A 400
+    with a stable code, never a silent acceptance of a setting that is ignored."""
     url = f"/api/v1/products/{autopilot_product.pk}/autopilot/"
 
-    response = auth_client.patch(url, {"auto_approve": True}, format="json")
+    for plan in (None, "advanced"):
+        if plan:
+            autopilot_workspace.organization.plan = plans[plan]
+            autopilot_workspace.organization.save(update_fields=["plan"])
+        for body in ({"auto_approve": True}, {"landing": "AUTO_CALENDAR"}):
+            response = auth_client.patch(url, body, format="json")
+            assert response.status_code == 400, (plan, body)
+            assert response.json()["error"]["code"] == "human_approval_required"
 
-    assert response.status_code == 402
-    assert response.json()["error"]["upgrade"]["suggested_plan"] == "advanced"
-
-    autopilot_workspace.plan = plans["advanced"]
-    autopilot_workspace.save(update_fields=["plan"])
-
-    assert auth_client.patch(url, {"auto_approve": True}, format="json").status_code == 200
+    stored = auth_client.get(url).json()
+    assert stored["auto_approve"] is False
+    assert stored["landing"] == "REVIEW_QUEUE"
+    # Switching it *off*, and choosing the review queue, stay allowed.
+    ok = auth_client.patch(url, {"auto_approve": False, "landing": "REVIEW_QUEUE"}, format="json")
+    assert ok.status_code == 200
 
 
 def test_cadence_generates_lookahead_days_ahead(autopilot_config: Any) -> None:
@@ -185,8 +195,8 @@ def test_horizon_is_clamped_to_what_the_plan_can_schedule(
 ) -> None:
     """A Free horizon is 7 days; drafting 30 days out would produce drafts that
     `require_scheduling_horizon` could only ever refuse."""
-    autopilot_workspace.plan = plans["free"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["free"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
     autopilot_config.lookahead_days = 30
     autopilot_config.cadence_days = 1
     autopilot_config.save()
@@ -230,8 +240,8 @@ def test_a_run_without_the_autopilot_feature_fails_cleanly(
 ) -> None:
     """The plan can be downgraded after autopilot was configured; the engine
     must not act on a workspace that no longer has it."""
-    autopilot_workspace.plan = plans["free"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["free"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
 
     job = autopilot.run_config(autopilot_config)
 
@@ -346,47 +356,93 @@ def test_latitude_changes_the_brief(autopilot_config: Any) -> None:
 # -----------------------------------------------------------------------------
 # Routing and the review queue
 # -----------------------------------------------------------------------------
-def test_auto_approve_lands_drafts_on_the_calendar(
+def _auto_calendar(config: Any, workspace: Any, plans: dict[str, Any]) -> None:
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
+    config.auto_approve = True
+    config.landing = AutopilotLanding.AUTO_CALENDAR
+    config.lookahead_days = 3
+    config.cadence_days = 3
+    config.save()
+
+
+def test_auto_approve_no_longer_reaches_the_calendar_on_its_own(
     autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
-    autopilot_workspace.plan = plans["advanced"]
-    autopilot_workspace.save(update_fields=["plan"])
-    autopilot_config.auto_approve = True
-    autopilot_config.landing = AutopilotLanding.AUTO_CALENDAR
-    autopilot_config.lookahead_days = 3
-    autopilot_config.cadence_days = 3
-    autopilot_config.save()
+    """**L-2, and the opposite of what this asserted before Phase 2.**
+
+    Auto-approve used to put generated content straight into the schedule at
+    03:00 with nobody having read it — a configuration that publishes
+    unreviewed content, which Part 7 rule 13 says cannot exist. The drafts are
+    not lost: they wait in the review queue, which is where the user acts on
+    them anyway. Phase 5's C-01 retires the path entirely.
+    """
+    _auto_calendar(autopilot_config, autopilot_workspace, plans)
 
     job = autopilot.run_config(autopilot_config)
 
-    assert job.status == AutopilotJobStatus.GENERATED
+    assert job.status == AutopilotJobStatus.QUEUED
+    # Said out loud on the job, not silently queued: someone switched this on.
+    assert job.detail["reason"] == "human_approval_required"
+    assert job.detail["drafts_scheduled"] == 0
     draft = AutopilotDraft.objects.get()
-    assert draft.status == AutopilotDraftStatus.SCHEDULED
-    assert draft.post is not None
-    assert draft.post.status == PostStatus.SCHEDULED
-    assert draft.post.source == PostSource.AUTOPILOT
+    assert draft.status == AutopilotDraftStatus.PENDING
+    assert draft.post is None
+
+
+def test_no_flag_restores_the_auto_calendar_path(
+    autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
+) -> None:
+    """**C-01 retired this path permanently, and the flag does not bring it
+    back.**
+
+    Phase 2 neutralised auto-landing behind `COLLABORATION_V2`, and this test
+    used to assert that switching the flag off restored it — which is Part 3's
+    ordinary rule that flag-off means pre-phase behaviour. Phase 5 removes the
+    branch outright, so that is no longer true here, and deliberately:
+    Part 7 rule 13 says nothing publishes without human approval with **no
+    tier, flag or configuration** excepted. A flag that restored auto-landing
+    would itself be the configuration rule 13 forbids, so the revertibility
+    Part 3 asks for cannot extend to this one branch.
+
+    The drafts are not lost — they wait in the review queue, which is where the
+    user acts on them anyway. What was removed is the 03:00 part.
+    """
+    FeatureFlag.objects.create(
+        organization=autopilot_workspace.organization, key=COLLABORATION_V2, enabled=False
+    )
+    _auto_calendar(autopilot_config, autopilot_workspace, plans)
+
+    job = autopilot.run_config(autopilot_config)
+
+    assert job.status == AutopilotJobStatus.QUEUED
+    draft = AutopilotDraft.objects.get()
+    assert draft.status == AutopilotDraftStatus.PENDING
+    assert draft.post is None, "a run put content on a calendar with nobody having read it"
 
 
 def test_auto_approve_without_a_connected_account_falls_back_to_the_queue(
     autopilot_config: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
     """The drafts are generated and paid for either way, so they land in the
-    queue rather than being lost to a Phase 9 precondition."""
+    queue rather than being lost to a Phase 9 precondition.
+
+    **The reason is now `human_approval_required`, not `no_connected_accounts`**
+    — and that is the honest one. With the auto-calendar branch retired (C-01)
+    a run never attempts to schedule, so it never discovers the missing
+    account; reporting a precondition nothing checked would be inventing a
+    cause. What the user needs to know is why their drafts are waiting, and
+    they are waiting for a person.
+    """
     from channels.models import SocialAccount
 
     SocialAccount.objects.all().delete()
-    autopilot_workspace.plan = plans["advanced"]
-    autopilot_workspace.save(update_fields=["plan"])
-    autopilot_config.auto_approve = True
-    autopilot_config.landing = AutopilotLanding.AUTO_CALENDAR
-    autopilot_config.lookahead_days = 3
-    autopilot_config.cadence_days = 3
-    autopilot_config.save()
+    _auto_calendar(autopilot_config, autopilot_workspace, plans)
 
     job = autopilot.run_config(autopilot_config)
 
     assert job.status == AutopilotJobStatus.QUEUED
-    assert job.detail["reason"] == "no_connected_accounts"
+    assert job.detail["reason"] == "human_approval_required"
     assert job.detail["drafts_scheduled"] == 0
     assert AutopilotDraft.objects.get().status == AutopilotDraftStatus.PENDING
 
@@ -408,14 +464,14 @@ def test_auto_approve_is_ignored_when_the_plan_no_longer_allows_it(
     assert AutopilotDraft.objects.get().status == AutopilotDraftStatus.PENDING
 
 
-def test_approving_a_draft_creates_and_schedules_its_post(autopilot_config: Any) -> None:
+def test_approving_a_draft_creates_and_schedules_its_post(autopilot_config: Any, user: Any) -> None:
     autopilot_config.lookahead_days = 3
     autopilot_config.cadence_days = 3
     autopilot_config.save()
     autopilot.run_config(autopilot_config)
     draft = AutopilotDraft.objects.get()
 
-    autopilot.approve_draft(draft)
+    autopilot.approve_draft(draft, actor=user)
 
     post = Post.objects.get()
     assert post.master_body == draft.caption
@@ -427,20 +483,20 @@ def test_approving_a_draft_creates_and_schedules_its_post(autopilot_config: Any)
     assert draft.status == AutopilotDraftStatus.SCHEDULED
 
 
-def test_a_draft_cannot_be_acted_on_twice(autopilot_config: Any) -> None:
+def test_a_draft_cannot_be_acted_on_twice(autopilot_config: Any, user: Any) -> None:
     autopilot_config.lookahead_days = 3
     autopilot_config.cadence_days = 3
     autopilot_config.save()
     autopilot.run_config(autopilot_config)
-    draft = autopilot.reject_draft(AutopilotDraft.objects.get())
+    draft = autopilot.reject_draft(AutopilotDraft.objects.get(), actor=user)
 
     with pytest.raises(autopilot.AutopilotNotConfigurableError):
-        autopilot.reject_draft(draft)
+        autopilot.reject_draft(draft, actor=user)
     with pytest.raises(autopilot.AutopilotNotConfigurableError):
-        autopilot.approve_draft(draft)
+        autopilot.approve_draft(draft, actor=user)
 
 
-def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any) -> None:
+def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any, user: Any) -> None:
     """The user said no to that slot, not to that attempt — re-drafting it
     would spend the credits again on something already refused."""
     autopilot_config.cadence_days = 2
@@ -449,7 +505,7 @@ def test_a_rejected_slot_is_retired_not_redrafted(autopilot_config: Any) -> None
     start = timezone.now()
     with time_machine.travel(start, tick=False):
         autopilot.run_config(autopilot_config)
-    autopilot.reject_draft(AutopilotDraft.objects.order_by("scheduled_for")[0])
+    autopilot.reject_draft(AutopilotDraft.objects.order_by("scheduled_for")[0], actor=user)
     spent = CreditLedger.objects.filter(delta__lt=0).count()
 
     with time_machine.travel(start + dt.timedelta(hours=1), tick=False):
@@ -487,8 +543,8 @@ def test_queue_returns_pending_drafts_for_this_workspace_only(
 def test_queue_is_gated_to_plans_with_autopilot(
     auth_client: Any, autopilot_workspace: Any, plans: dict[str, Any]
 ) -> None:
-    autopilot_workspace.plan = plans["free"]
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plans["free"]
+    autopilot_workspace.organization.save(update_fields=["plan"])
 
     response = auth_client.get("/api/v1/autopilot/queue/")
 
@@ -522,8 +578,8 @@ def test_another_workspaces_draft_is_a_404_not_a_403(
 
     other_owner = get_user_model().objects.create_user(email="other@example.com", password="x")
     other = provision_workspace(other_owner, name="Someone Else")
-    other.plan = plans["pro"]
-    other.save(update_fields=["plan"])
+    other.organization.plan = plans["pro"]
+    other.organization.save(update_fields=["plan", "updated_at"])
     autopilot_config.lookahead_days = 3
     autopilot_config.cadence_days = 3
     autopilot_config.save()
@@ -621,8 +677,8 @@ def test_unlimited_plans_report_unlimited_included_videos(
     plan = plans["advanced"]
     plan.included_videos = UNLIMITED
     plan.save(update_fields=["included_videos"])
-    workspace.plan = plan
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plan
+    workspace.organization.save(update_fields=["plan"])
 
     assert entitlements_for(workspace).included_video_units_remaining() == UNLIMITED
 
@@ -635,8 +691,8 @@ def test_unlimited_video_allowance_never_blocks_the_run(
     plan = plans["advanced"]
     plan.included_videos = UNLIMITED
     plan.save(update_fields=["included_videos"])
-    autopilot_workspace.plan = plan
-    autopilot_workspace.save(update_fields=["plan"])
+    autopilot_workspace.organization.plan = plan
+    autopilot_workspace.organization.save(update_fields=["plan"])
     autopilot_config.format_mix = {"VIDEO": 1}
     autopilot_config.cadence_days = 1
     autopilot_config.lookahead_days = 5

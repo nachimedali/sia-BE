@@ -15,7 +15,7 @@ from django.db.models import Model
 from rest_framework.request import Request
 
 from accounts.models import User
-from common.exceptions import OCCSError
+from common.exceptions import NotFoundError, OCCSError
 from workspaces.models import Workspace
 
 
@@ -31,29 +31,71 @@ def authenticated_user(request: Request) -> User:
     return user
 
 
-def active_workspace(request: Request) -> Workspace:
+#: The header the BFF injects (P0-15). Explicit on every request, because the
+#: alternative — inferring the workspace server-side — is exactly the silent
+#: fallback P0-14 deletes.
+WORKSPACE_HEADER = "HTTP_X_WORKSPACE_ID"
+
+
+def request_workspace(request: Request) -> Workspace:
     """The workspace this request acts on, resolved once per request.
 
-    Phase 2 has exactly one workspace per user, so the owned workspace is
-    unambiguous. Multi-workspace switching arrives with invitations in a later
-    phase; this is the single place that will need to change.
+    **This replaces `request_workspace`, which is deleted rather than
+    deprecated** (P0-14). The old resolver answered "the caller's oldest
+    membership", which is unambiguous only while everyone has exactly one
+    workspace. The moment a second exists, that fallback silently routes a
+    request at the wrong tenant's data, and nothing in the request says which
+    one was meant — a cross-tenant leak that reads as a working feature.
+
+    So: the workspace is named explicitly by `X-Workspace-Id`, injected by
+    `proxy.ts`, which is the only thing that reads the session. Two cases
+    remain:
+
+    * **header present** — resolved through the caller's own memberships, so
+      another tenant's id is a **404, never a 403** (Part 7 rule 3). A 403
+      would confirm the workspace exists;
+    * **header absent** — permitted only while the caller has exactly one
+      workspace, where "which one" has a single answer. With two or more it is
+      a 400 naming the header, not a guess.
     """
-    cached: Workspace | None = getattr(request, "_active_workspace", None)
+    cached: Workspace | None = getattr(request, "_request_workspace", None)
     if cached is not None:
         return cached
 
-    workspace = (
-        Workspace.objects.filter(memberships__user=authenticated_user(request))
-        # `owner` joins because both checkout flows read `owner.email` to hand
-        # Stripe a billing identity, and it is one row either way.
-        .select_related("plan", "category", "owner")
-        .order_by("created_at")
-        .first()
+    user = authenticated_user(request)
+    mine = Workspace.objects.filter(memberships__user=user).select_related(
+        # The organization's plan and owner join because the entitlement
+        # resolver reads the plan on every request and both checkout flows
+        # read `owner.email` to hand Stripe a billing identity — one row
+        # either way, and both live on the organization since P0-56.
+        "category",
+        "organization",
+        "organization__plan",
+        "organization__owner",
     )
-    if workspace is None:
-        raise OCCSError("This account has no workspace.", code="no_workspace")
 
-    request._active_workspace = workspace  # type: ignore[attr-defined]
+    requested = str(request.META.get(WORKSPACE_HEADER, "") or "").strip()
+    if requested:
+        workspace = mine.filter(pk=requested).first() if requested.isdigit() else None
+        if workspace is None:
+            raise NotFoundError(
+                "No such workspace.", detail={"workspace": requested}, code="workspace_not_found"
+            )
+    else:
+        # Two, not one: we need to know whether there is a *second* before
+        # answering, and slicing to two is how that costs one query.
+        candidates = list(mine.order_by("created_at")[:2])
+        if not candidates:
+            raise OCCSError("This account has no workspace.", code="no_workspace")
+        if len(candidates) > 1:
+            raise OCCSError(
+                "This account belongs to more than one workspace; name one with "
+                "the X-Workspace-Id header.",
+                code="workspace_required",
+            )
+        workspace = candidates[0]
+
+    request._request_workspace = workspace  # type: ignore[attr-defined]
     return workspace
 
 
@@ -76,6 +118,30 @@ def scope_related_field_to_workspace(
     queryset = model._default_manager.none()
     if request is not None:
         with contextlib.suppress(OCCSError):
-            queryset = model._default_manager.filter(workspace=active_workspace(request))
+            queryset = model._default_manager.filter(workspace=request_workspace(request))
+    target = getattr(field, "child_relation", field)
+    target.queryset = queryset
+
+
+def scope_related_field_to_members(field: Any, request: Request | None) -> None:
+    """Restricts a user-valued field's choices to the request workspace's own
+    members — the sibling of `scope_related_field_to_workspace`, for the one
+    relation it cannot serve.
+
+    A `User` has no workspace column, so scoping goes through `memberships`.
+    Without it, naming an assignee or an approver by id would accept any
+    account in the system, which is a tenancy leak that reads as a working
+    autocomplete.
+
+    Same empty-rather-than-raise contract as its sibling, and for the same
+    reason: schema generation instantiates every serializer with an
+    unauthenticated request and has to produce a schema, not a 401.
+    """
+    from accounts.models import User
+
+    queryset = User.objects.none()
+    if request is not None:
+        with contextlib.suppress(OCCSError):
+            queryset = User.objects.filter(memberships__workspace=request_workspace(request))
     target = getattr(field, "child_relation", field)
     target.queryset = queryset

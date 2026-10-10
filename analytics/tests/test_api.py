@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
-from analytics.models import Comment, RepurposeCandidate, Sentiment
+from analytics.models import AudienceComment, RepurposeCandidate, Sentiment
 from analytics.tests.conftest import capture, make_target
 
 pytestmark = pytest.mark.django_db
@@ -53,8 +53,8 @@ def test_a_free_plan_sees_a_shorter_window_not_a_402(
 ) -> None:
     """Reading your own numbers is not a paid feature; keeping two years of
     them is (§4.1). A Free workspace gets 7 days, and gets them successfully."""
-    workspace.plan = plans["free"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
     capture(make_target(workspace, user, social_account, age_days=3), rate=0.20)
     capture(make_target(workspace, user, social_account, age_days=40), rate=0.90)
 
@@ -85,7 +85,7 @@ def test_sentiment_aggregates_across_the_workspace(auth_client: Any, published_t
     for index, (sentiment, score) in enumerate(
         [(Sentiment.POSITIVE, 1.0), (Sentiment.POSITIVE, 1.0), (Sentiment.NEGATIVE, -1.0)]
     ):
-        Comment.objects.create(
+        AudienceComment.objects.create(
             post_target=published_target,
             external_id=f"c-{index}",
             body="x",
@@ -107,13 +107,13 @@ def test_sentiment_aggregates_across_the_workspace(auth_client: Any, published_t
 
 def test_comments_are_listed_newest_first(auth_client: Any, published_target: Any) -> None:
     now = timezone.now()
-    Comment.objects.create(
+    AudienceComment.objects.create(
         post_target=published_target,
         external_id="old",
         body="older",
         posted_at=now - dt.timedelta(days=1),
     )
-    Comment.objects.create(
+    AudienceComment.objects.create(
         post_target=published_target, external_id="new", body="newer", posted_at=now
     )
 
@@ -134,8 +134,8 @@ def test_another_workspaces_numbers_are_never_visible(
 
     other_user = get_user_model().objects.create_user(email="other@example.com", password="x")
     other_ws = provision_workspace(other_user, name="Other")
-    other_ws.plan = plans["pro"]
-    other_ws.save(update_fields=["plan"])
+    other_ws.organization.plan = plans["pro"]
+    other_ws.organization.save(update_fields=["plan", "updated_at"])
     other_account = SocialAccount.objects.create(
         workspace=other_ws, platform="instagram", handle="@o", provider_account_id="acct-o"
     )
@@ -170,8 +170,8 @@ def test_the_repurpose_queue_lists_open_candidates_best_first(
 def test_the_repurpose_queue_is_gated_to_paid(
     auth_client: Any, workspace: Any, plans: dict[str, Any]
 ) -> None:
-    workspace.plan = plans["free"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
 
     response = auth_client.get(REPURPOSE)
 
@@ -215,8 +215,8 @@ def test_another_workspaces_candidate_is_a_404_not_a_403(
 
     other_user = get_user_model().objects.create_user(email="other@example.com", password="x")
     other_ws = provision_workspace(other_user, name="Other")
-    other_ws.plan = plans["pro"]
-    other_ws.save(update_fields=["plan"])
+    other_ws.organization.plan = plans["pro"]
+    other_ws.organization.save(update_fields=["plan", "updated_at"])
     other_account = SocialAccount.objects.create(
         workspace=other_ws, platform="instagram", handle="@o", provider_account_id="acct-o"
     )

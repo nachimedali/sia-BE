@@ -82,7 +82,11 @@ class NanoBananaImageProvider:
         n: int,
         batch: bool,
         model: str | None = None,
+        style: dict[str, float] | None = None,
     ) -> ImageGenerationResult:
+        # `style` is the fake's colour-grade hint. This vendor is directed by
+        # the prompt, which already carries every choice the grade came from,
+        # so applying it here as well would grade the picture twice.
         model = model or settings.IMAGE_PROVIDER_MODEL
         started = time.monotonic()
         body = {

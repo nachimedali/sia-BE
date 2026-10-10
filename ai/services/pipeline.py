@@ -26,19 +26,28 @@ on exhaustion there is nothing to literally reverse; the "then_refunds" test
 asserts the regeneration loop actually runs `max_regeneration_attempts` times
 and nets to a zero balance change (design.md §15.8 A72).
 
-**On cost and `n`.** design.md's §4.2 table prices a kind/mode pair (e.g.
-"Studio image: 3 credits") without saying whether requesting `n` variants in
-one call multiplies that cost by `n`. This implementation charges the
-resolved cost once per generation *action*, covering every variant it
-produces — "one Studio generation costs 3 credits" reads more naturally than
-a per-variant multiplier the spec never states, and it is what
-`test_passed_quality_gate_debits_exactly_generation_cost` asserts literally
-(design.md §15.8 A73).
+**On cost and `n` — superseded by X-09.** design.md's §4.2 table prices a
+kind/mode pair ("Studio image: 3 credits") without saying whether requesting
+`n` variants multiplies it. This originally charged once per generation
+*action* whatever `n` was (design.md §15.8 A73). It still does for every
+caller that does not ask otherwise — autopilot, revisions, captions and
+suggestions all leave `paid_slots` unset and are priced and rendered exactly
+as before.
+
+Studio now buys **slots**. `paid_slots` is how many variants the user may
+keep, priced at `credits` each; the engine renders `GenerationCost.
+variant_pool` around that, and the surplus is locked until bought at
+`unlock_percent` (see `ai.services.variants`). A73's terms remain reachable
+with `STUDIO_VARIANTS_V2` off, which is asserted rather than remembered —
+the flag exists because this is the one change here that could overcharge
+somebody if it were wrong.
 """
 
 from __future__ import annotations
 
+import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -57,12 +66,16 @@ from ai.models import (
 from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
+from ai.providers.video import get_video_provider
+from ai.services import creative as creative_service
+from ai.services import hashtags as hashtag_service
 from ai.services import prompting, quality
-from ai.services.costing import resolve_cost
+from ai.services.costing import resolve_pricing
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
-from common.exceptions import InsufficientCredits, OCCSError
-from content.models import MediaAsset, MediaSource
+from billing.services.flags import STUDIO_VARIANTS_V2, flag_enabled
+from common.exceptions import InsufficientCredits, OCCSError, ProviderError
+from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
 from products.models import Product
 from products.services.guards import ensure_generation_ready
@@ -75,6 +88,8 @@ from workspaces.models import Workspace
 # `ai.services.revisions.create_revision` and
 # `products.services.autopilot` — each of which validates its own precondition
 # in place of the mode check `create_generation` applies to a direct request.
+logger = logging.getLogger(__name__)
+
 ALLOWED_MODES = frozenset(
     {
         GenerationMode.IDEA,
@@ -82,6 +97,11 @@ ALLOWED_MODES = frozenset(
         GenerationMode.REWRITE,
         GenerationMode.REVISION,
         GenerationMode.AUTOPILOT,
+        # P1-13. Both are text-only and provider-backed, so they need nothing
+        # the pipeline does not already do — which is the point: two new modes
+        # cost two rows here and one prompt assembler each.
+        GenerationMode.CAPTION,
+        GenerationMode.SUGGEST,
     }
 )
 DIRECTLY_CREATABLE_MODES = ALLOWED_MODES - {GenerationMode.REVISION, GenerationMode.AUTOPILOT}
@@ -109,7 +129,10 @@ def create_generation(
     aspect: str = "1:1",
     render_style: str = "",
     scene: str = "",
+    creative: dict[str, Any] | None = None,
     is_batch: bool = False,
+    source_media: MediaAsset | None = None,
+    paid_slots: int | None = None,
 ) -> Generation:
     """Validates and persists the `PENDING` row. No provider call — that is
     `run_generation`'s job (design.md §11)."""
@@ -118,14 +141,23 @@ def create_generation(
     if mode not in DIRECTLY_CREATABLE_MODES:
         raise GenerationModeNotAvailableError(detail={"mode": mode})
 
+    if mode == GenerationMode.CAPTION:
+        _ensure_captionable(workspace, source_media)
+
     if kind == GenerationKind.VIDEO:
-        # The entitlement gate is real even though nothing behind it is
-        # (Phase 14 builds the provider) — Free must be blocked here, not
-        # only once a VideoProvider exists to call.
+        # Entitlement first, availability second, and the order matters: a Free
+        # workspace must see 402-upgrade rather than "no provider configured",
+        # because the second answer would be true and useless — upgrading is
+        # what they need to hear.
         entitlements.require_feature("video_generation")
-        raise GenerationKindNotAvailableError(
-            "Video generation lands in a later phase.", detail={"kind": kind}
-        )
+        if get_video_provider() is None:
+            # C-11 / P0-04: the gate used to stand in front of nothing. It now
+            # stands in front of a port, and this is what an unconfigured
+            # deployment says — plainly, rather than a fake quietly producing a
+            # clip nobody rendered.
+            raise GenerationKindNotAvailableError(
+                "No video provider is configured for this deployment.", detail={"kind": kind}
+            )
     if kind not in {GenerationKind.TEXT, GenerationKind.IMAGE}:
         raise GenerationKindNotAvailableError(detail={"kind": kind})
 
@@ -134,9 +166,28 @@ def create_generation(
 
     # Preflight only (I5) — the authoritative check is inside the debit's own
     # transaction in `run_generation`, once the gate has passed.
-    cost = resolve_cost(kind=kind, mode=mode)
-    entitlements.require_credits(cost)
+    #
+    # **Priced per slot since X-09.** `paid_slots` is how many variants the
+    # buyer may keep; the engine renders more than that and locks the rest.
+    # Under flag-off the multiplier is 1 whatever was asked for, which is
+    # design.md A73's original "one action, one charge" exactly.
+    #
+    # **`paid_slots=None` is the whole compatibility story.** Autopilot,
+    # revisions, captions and suggestions pass nothing and are priced and
+    # rendered exactly as they were before X-09 — one charge, no surplus,
+    # because none of them has a human looking at a dock to sell one to.
+    # Studio passes a number, and that is what opts a generation into slot
+    # pricing and a pool. The flag collapses the opt-in back to the old terms.
+    pricing = resolve_pricing(kind=kind, mode=mode)
+    if paid_slots is not None and flag_enabled(workspace.organization, STUDIO_VARIANTS_V2):
+        slots = paid_slots
+        pool = max(pricing.variant_pool, slots)
+    else:
+        slots = 1
+        pool = 0
+    entitlements.require_credits(pricing.credits * slots)
 
+    creative = creative or {}
     return Generation.objects.create(
         workspace=workspace,
         user=user,
@@ -147,10 +198,38 @@ def create_generation(
         category=workspace.category,
         voice_profile=voice_profile,
         aspect=aspect,
-        render_style=render_style,
-        scene=scene,
+        # The legacy columns stay populated from the brief, so everything that
+        # reads them — the eval harness, exports, old rows' readers — still can.
+        render_style=render_style or creative_service.render_style_label(creative),
+        scene=scene or creative_service.scene_label(creative),
+        creative=creative,
         is_batch=is_batch,
+        source_media=source_media,
+        paid_slots=slots,
+        variant_pool=pool,
     )
+
+
+def _ensure_captionable(workspace: Workspace, asset: MediaAsset | None) -> None:
+    """A caption needs an image, and it needs to be *this workspace's* image.
+
+    The tenancy check is here rather than only in the serializer because this
+    function is also the entry point autopilot and any later service uses —
+    a check that lives only at the edge is a check the next caller skips.
+    """
+    if asset is None:
+        raise GenerationModeNotAvailableError(
+            "A caption needs a media asset to read.", detail={"mode": GenerationMode.CAPTION}
+        )
+    if asset.workspace_id != workspace.pk:
+        raise GenerationModeNotAvailableError(
+            "That media asset belongs to another workspace.",
+            detail={"source_media": asset.pk},
+        )
+    if asset.kind != MediaKind.IMAGE:
+        raise GenerationModeNotAvailableError(
+            "Only images can be captioned.", detail={"source_media": asset.pk}
+        )
 
 
 def _reference_image_bytes(product: Product | None) -> list[bytes]:
@@ -172,8 +251,22 @@ def _attempt_text(
         workspace=generation.workspace,
         product=generation.product,
         voice_profile=generation.voice_profile,
+        mode=generation.mode,
+        direction=creative_service.caption_lines(generation.creative),
     )
-    result = provider.generate(system=grounded.system, prompt=grounded.user, n=n)
+    source_media = generation.source_media
+    if generation.mode == GenerationMode.CAPTION and source_media is not None:
+        # The one branch, and it is on *capability* rather than on mode name:
+        # this is the only mode whose input is a picture, so it is the only one
+        # that needs the vision method. Everything after it — the quality gate,
+        # the debit, the variant rows — is identical.
+        with source_media.file.open("rb") as handle:
+            image_bytes = handle.read()
+        result = provider.caption(
+            system=grounded.system, prompt=grounded.user, image_bytes=image_bytes, n=n
+        )
+    else:
+        result = provider.generate(system=grounded.system, prompt=grounded.user, n=n)
 
     banned = generation.voice_profile.banned_phrases if generation.voice_profile else []
     checked = [
@@ -200,6 +293,7 @@ def _attempt_image(
         product=generation.product,
         render_style=generation.render_style,
         scene=generation.scene,
+        direction=creative_service.image_lines(generation.creative),
     )
     restrictions = generation.product.restrictions if generation.product else []
 
@@ -209,6 +303,7 @@ def _attempt_image(
         aspect=generation.aspect,
         n=n,
         batch=generation.is_batch,
+        style=creative_service.style_for(generation.creative),
     )
     checked = [
         (
@@ -241,10 +336,79 @@ def _persist_generated_image(generation: Generation, variant: ImageVariant) -> M
     return asset
 
 
+@dataclass(frozen=True)
+class VariantCopy:
+    headline: str
+    body: str
+    hashtags: list[str]
+
+
+def split_copy(text: str) -> tuple[str, str]:
+    """A model's reply as `(headline, caption)`.
+
+    The prompt asks for the headline on the first line; this honours that and
+    **copes when it is ignored** — a model that returns one paragraph gets its
+    first few words as a headline and the whole paragraph as the caption,
+    rather than a failed generation over formatting.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if len(lines) >= 2 and len(lines[0].split()) <= 12:
+        return lines[0].strip(" \"'*#"), "\n".join(lines[1:])
+    words = text.split()
+    return " ".join(words[:8]).strip(" \"'*#"), text.strip()
+
+
+def _write_copy(generation: Generation, *, count: int) -> list[VariantCopy]:
+    """A headline, a caption and tags for each image that passed the gate.
+
+    One text call for all of them, through the same port every caption goes
+    through, so it is grounded, voice-aware and quality-gated like any other
+    copy. **It degrades rather than fails:** by now the pictures have passed
+    and are about to be charged for, and discarding them because the copywriter
+    was briefly unavailable would punish the customer for a vendor's outage. The
+    variants arrive without copy, which the Studio lets the user write.
+    """
+    empty = [VariantCopy("", "", []) for _ in range(count)]
+    try:
+        grounded = prompting.assemble_text_prompt(
+            idea=generation.prompt,
+            workspace=generation.workspace,
+            product=generation.product,
+            voice_profile=generation.voice_profile,
+            direction=creative_service.caption_lines(generation.creative),
+            headline_first=True,
+        )
+        result = get_text_provider().generate(system=grounded.system, prompt=grounded.user, n=count)
+    except ProviderError:
+        logger.warning("copy for generation %s unavailable", generation.pk, exc_info=True)
+        return empty
+
+    banned = generation.voice_profile.banned_phrases if generation.voice_profile else []
+    toggles = generation.creative.get("toggles") or {}
+    tags: list[str] = []
+    if toggles.get("hashtags", True):
+        tags = [
+            f"#{r.tag.lstrip('#')}"
+            for r in hashtag_service.rank_for_workspace(generation.workspace, limit=4)
+        ]
+
+    copy: list[VariantCopy] = []
+    for variant in result.variants[:count]:
+        headline, caption = split_copy(variant.body)
+        # A caption that breaks a banned phrase is dropped, not shipped: the
+        # same text gate every other piece of copy passes.
+        if not quality.run_text_quality_gate(body=caption, banned_phrases=banned).passed:
+            headline, caption = "", ""
+        copy.append(VariantCopy(headline=headline, body=caption, hashtags=tags))
+    return (copy + empty)[:count]
+
+
 def _persist_variants(
-    generation: Generation, passing: list[tuple[Any, quality.QualityResult]]
+    generation: Generation,
+    passing: list[tuple[Any, quality.QualityResult]],
+    copy: list[VariantCopy] | None = None,
 ) -> None:
-    for rank, (candidate, _check) in enumerate(passing):
+    for rank, (candidate, check) in enumerate(passing):
         if generation.kind == GenerationKind.TEXT:
             GenerationVariant.objects.create(
                 generation=generation,
@@ -255,11 +419,16 @@ def _persist_variants(
             )
         else:
             media_asset = _persist_generated_image(generation, candidate)
+            words = copy[rank] if copy else None
             GenerationVariant.objects.create(
                 generation=generation,
                 kind=GenerationKind.IMAGE,
                 media_asset=media_asset,
                 rank=rank,
+                headline=words.headline if words else "",
+                body=words.body if words else "",
+                hashtags=words.hashtags if words else [],
+                identity_score=check.identity_score,
             )
 
 
@@ -272,7 +441,19 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
     workspace = generation.workspace
     entitlements = entitlements_for(workspace)
     config = QualityGateConfig.get_solo()
-    cost = resolve_cost(kind=generation.kind, mode=generation.mode)
+    pricing = resolve_pricing(kind=generation.kind, mode=generation.mode)
+
+    # **The pool is what gets rendered; the slots are what got paid for**
+    # (X-09). Rendering more than was bought is the whole upsell: there is
+    # nothing to offer at half price unless it already exists. The pool never
+    # shrinks below the slots — a buyer who paid for four must be able to
+    # choose four — and under flag-off it collapses to exactly the `n` the
+    # caller asked for, which is the pre-change behaviour.
+    # Zero means the caller wanted no surplus, so `n` stands as asked.
+    n = generation.variant_pool or n
+    # Legacy rows carry `paid_slots=1`, so this is the old single charge for
+    # every caller that never opted in.
+    cost = pricing.credits * generation.paid_slots
     reference_images = (
         _reference_image_bytes(generation.product)
         if generation.kind == GenerationKind.IMAGE
@@ -325,6 +506,16 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         generation.save()
         return generation
 
+    # Written before the transaction, never inside it: it is a provider call,
+    # and holding the ledger's row lock across one is how a slow vendor stalls
+    # every other debit in the organization.
+    copy = (
+        _write_copy(generation, count=len(passing))
+        if generation.kind == GenerationKind.IMAGE
+        and creative_service.wants_copy(generation.creative)
+        else None
+    )
+
     try:
         with transaction.atomic():
             ledger.debit_credits(
@@ -337,7 +528,7 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
             generation.credits_charged = cost
             generation.status = GenerationStatus.SUCCEEDED
             generation.save()
-            _persist_variants(generation, passing)
+            _persist_variants(generation, passing, copy)
     except InsufficientCredits:
         # I5's task-preflight gate: `create_generation`'s own check ran
         # against the balance at request time, which can be stale by the

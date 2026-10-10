@@ -1,38 +1,129 @@
-"""Post scheduling (design.md §6.3, §8.5, §8.8, implementation.md Phase 8, 13).
+"""Post scheduling (design.md §6.3, §8.5, §8.8; BUILD-PLAN C-02, P2-04, P2-05).
 
-`schedule_post` is the only writer of `Post.delivery_mode`/`Post.
-scheduled_at` outside creation (`content/serializers.py` A49 marks both
-read-only on `PostSerializer` for exactly this reason) — the horizon check
-has to run before either is set, so both writes live behind it rather than
-in the view.
+`schedule_post` is the only writer of `Post.delivery_mode`/`Post.scheduled_at`
+outside creation (`content/serializers.py` A49 marks both read-only on
+`PostSerializer` for exactly this reason) — the horizon check has to run before
+either is set, so both writes live behind it rather than in the view.
+
+**Since Phase 2 this is also where L-2 is enforced.** Nothing reaches
+`SCHEDULED` without an `APPROVE` action naming a person, on any plan, under any
+configuration:
+
+* the workspace's default chain **blocks** → the post must already be
+  `APPROVED`, or this is a 409;
+* the chain **does not block** → scheduling *is* the approval, and an `APPROVE`
+  row is written naming whoever scheduled it.
+
+The second branch is what keeps a solo user from having to review their own
+draft while still leaving `no SCHEDULED post without an APPROVE row` true as a
+single, testable statement.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from typing import TYPE_CHECKING, Any
 
+from billing.services import trial
 from billing.services.entitlements import entitlements_for
+from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import StateConflict
-from content.models import DeliveryMode, Post, PostStatus
-from reminders.services import arm_reminder
+from content.models import (
+    SLOTTED_STATUSES,
+    ContentKind,
+    DeliveryMode,
+    Post,
+    PostStatus,
+    PostTarget,
+    PostTargetState,
+)
+from content.services.revisions import UNEDITABLE_STATUSES
+from reminders.services import arm_reminder, withdraw
 from scheduling.publishing import build_targets
+from workspaces.services import approvals
+
+if TYPE_CHECKING:
+    from accounts.models import User
 
 
-def schedule_post(*, post: Post, delivery_mode: str, scheduled_at: dt.datetime) -> Post:
-    entitlements = entitlements_for(post.workspace)
-    entitlements.require_scheduling_horizon(scheduled_at)
+def _gate_approval(post: Post, *, actor: User) -> Post:
+    """Apply the workspace's chain, and return the post ready to schedule.
 
-    # design.md §8.8: active when the workspace has switched it on *and* the
-    # plan still includes it — re-checked here rather than trusted from the
-    # toggle alone, the same reasoning `Entitlements` applies to a lapsed
-    # trial: a downgrade must make the requirement inert, not enforce a
-    # feature the workspace no longer pays for.
-    approval_active = post.workspace.requires_approval and entitlements.feature("approval_workflow")
-    if approval_active and post.status != PostStatus.APPROVED:
+    **Flag off is pre-phase behaviour, not an error** (Part 3): before Phase 2
+    a workspace that had not switched approval on scheduled straight from
+    `DRAFT` with no record, and with `COLLABORATION_V2` off it still does. A
+    blocking chain is honoured either way, because that is the behaviour the
+    old `requires_approval=True` already had.
+    """
+    if post.status == PostStatus.APPROVED:
+        return post
+
+    if approvals.default_chain(post.workspace).blocks_publish:
         raise StateConflict(
             "This workspace requires approval before a post can be scheduled.",
             detail={"post": post.pk, "status": post.status},
         )
+
+    if not flag_enabled(post.workspace.organization, COLLABORATION_V2):
+        return post
+
+    return approvals.approve_implicitly(post, actor=actor)
+
+
+def default_delivery_mode(workspace: Any, *, entitlements: Any = None) -> str:
+    """Auto-publish where the plan allows it, reminders otherwise.
+
+    One copy, because there are two callers — autopilot's approval path and
+    Studio's commit — and D4's reminders-only fallback is one plan edit away.
+    Two copies of "which tier is which" is exactly the drift rule 10 exists to
+    prevent (I8). `entitlements` is an optional override for a caller that has
+    already resolved them, so a loop does not re-resolve per item.
+    """
+    resolved = entitlements or entitlements_for(workspace)
+    return DeliveryMode.AUTO_PUBLISH if resolved.feature("auto_publish") else DeliveryMode.REMINDER
+
+
+def schedule_post(
+    *, post: Post, delivery_mode: str, scheduled_at: dt.datetime, actor: User
+) -> Post:
+    """`actor` is **required**, with no default (L-2).
+
+    Someone always did this, and a default of `None` would be a quiet way for a
+    future caller to schedule a post with nobody's name on the approval. A
+    keyword with no default makes the omission a `TypeError` at the call site
+    rather than a null in the audit trail.
+    """
+    # **A DOC has nowhere to go** (P3-01). It carries no targets and no
+    # adaptation, so a scheduled one would sit in the beat scan forever, or —
+    # worse — build zero targets and report success. 409 rather than 400: the
+    # request is well-formed, it is this post that cannot be in this state.
+    if post.content_kind == ContentKind.DOC:
+        raise StateConflict(
+            "A document is published by hand, not scheduled.",
+            detail={"content_kind": post.content_kind},
+        )
+
+    if post.status == PostStatus.CANCELLED:
+        raise StateConflict(
+            "A cancelled post is never published. Reproduce it to schedule it again.",
+            detail={"post": post.pk, "status": post.status},
+        )
+
+    entitlements = entitlements_for(post.workspace)
+    entitlements.require_scheduling_horizon(scheduled_at)
+
+    # S4: a check that blocks this content stops it here, whatever the UI drew.
+    from checks.services import ensure_not_blocked
+
+    ensure_not_blocked(post, actor=actor)
+    post = _gate_approval(post, actor=actor)
+
+    # L-4/P0-20: the quota trial is metered here, at the moment a post is
+    # committed to going out, rather than at creation. A draft nobody schedules
+    # has cost nothing, and counting it would make the trial feel smaller than
+    # it is. Pooled at the organization, so two brands cannot both spend the
+    # last post.
+    trial.consume_trial_post(post.workspace)
 
     post.delivery_mode = delivery_mode
     post.scheduled_at = scheduled_at
@@ -48,8 +139,111 @@ def schedule_post(*, post: Post, delivery_mode: str, scheduled_at: dt.datetime) 
         # publish attempt happens to run first (I9, scheduling/publishing.py).
         build_targets(post)
     else:
+        # **REMINDER carries no entitlement check, on any plan** (L-4, P0-22).
+        # It is a capability, not a price point — the only path for formats the
+        # publishing API cannot reach — and gating it would leave those formats
+        # unreachable rather than merely unpaid. `test_reminder_is_available_on
+        # _every_plan` is what keeps a future gate out of this branch.
         post.status = PostStatus.REMINDER_ARMED
         post.save(update_fields=["delivery_mode", "scheduled_at", "status", "updated_at"])
         arm_reminder(post, scheduled_at)
 
+    return post
+
+
+class NotScheduledError(StateConflict):
+    default_code = "not_scheduled"
+    default_detail = "This post has no slot to clear."
+
+
+class NotCancellableError(StateConflict):
+    default_code = "not_cancellable"
+    default_detail = "This post can no longer be cancelled."
+
+
+def _clear_slot(post: Post) -> None:
+    """Undo what `schedule_post` armed: the reminder and the delivery targets.
+
+    A reminder that has not gone out is `SKIPPED`, not deleted — the row is the
+    record that one was armed. The per-account targets `build_targets` made are
+    removed while still `PENDING`; the composer's option-only targets
+    (`social_account` empty) are settings, not delivery, and stay.
+    """
+    withdraw(post)
+    PostTarget.objects.filter(
+        post=post, social_account__isnull=False, state=PostTargetState.PENDING
+    ).delete()
+    post.delivery_mode = ""
+    post.scheduled_at = None
+
+
+def hold_slot_for_review(post: Post) -> list[str]:
+    """Clear an armed slot while the post goes back to review, keeping the time
+    as the post's proposal — which `_finalise_approval` schedules from once it
+    is approved again (and refuses to, if that time has passed by then).
+
+    Returns the fields it changed; the caller saves them with the status change,
+    so nothing is ever armed for content no one approved. Not saved here.
+    """
+    post.proposed_delivery_mode = post.delivery_mode
+    post.proposed_scheduled_at = post.scheduled_at
+    _clear_slot(post)
+    return ["delivery_mode", "scheduled_at", "proposed_delivery_mode", "proposed_scheduled_at"]
+
+
+def unschedule_post(post: Post, *, actor: User) -> Post:
+    """The slot cleared, the approval kept (`SCHEDULED`/`REMINDER_ARMED` →
+    `APPROVED`).
+
+    Approval attaches to content, and clearing a time changes no content, so
+    the post goes back to where scheduling found it: approved, waiting for a
+    time. 409 when there is no slot — a silent success would tell the user a
+    post was unscheduled that never was.
+    """
+    if post.status not in SLOTTED_STATUSES:
+        raise NotScheduledError(detail={"post": post.pk, "status": post.status})
+    _clear_slot(post)
+    post.status = PostStatus.APPROVED
+    post.save(update_fields=["delivery_mode", "scheduled_at", "status", "updated_at"])
+    approvals.log(
+        workspace=post.workspace,
+        actor=actor,
+        verb="post.unscheduled",
+        target_repr=str(post),
+        meta={"post": post.pk},
+    )
+    return post
+
+
+def cancel_post(post: Post, *, actor: User, reason: str) -> Post:
+    """`CANCELLED`: archived with its history and never published.
+
+    Refused once the post has gone or is going (`PUBLISHING`, `PUBLISHED`) —
+    what was sent cannot be un-sent by a status — and on a post already
+    cancelled. Any slot is cleared on the way, so nothing armed survives to
+    fire. The reason is written to the audit log, where the team reads it.
+    """
+    if post.status in UNEDITABLE_STATUSES:
+        raise NotCancellableError(detail={"post": post.pk, "status": post.status})
+    _clear_slot(post)
+    post.status = PostStatus.CANCELLED
+    post.proposed_delivery_mode = ""
+    post.proposed_scheduled_at = None
+    post.save(
+        update_fields=[
+            "delivery_mode",
+            "scheduled_at",
+            "status",
+            "proposed_delivery_mode",
+            "proposed_scheduled_at",
+            "updated_at",
+        ]
+    )
+    approvals.log(
+        workspace=post.workspace,
+        actor=actor,
+        verb="post.cancelled",
+        target_repr=str(post),
+        meta={"post": post.pk, "reason": reason},
+    )
     return post

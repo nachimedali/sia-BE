@@ -12,7 +12,15 @@ self-contained:
 from __future__ import annotations
 
 from .dev import *  # noqa: F403
-from .dev import BASE_DIR
+from .dev import BASE_DIR, DATABASES
+
+# **Its own database, not the dev one.** The suite shares a Postgres server
+# with development, and pointing both at one database means a long-lived dev
+# schema — including tables left behind by other build lines — decides whether
+# the end-to-end run passes. A dedicated database makes the run reproducible
+# from migrations alone, and lets it be dropped and rebuilt without touching
+# anyone's development data.
+DATABASES["default"] = {**DATABASES["default"], "NAME": "occs_e2e"}
 
 EMAIL_BACKEND = "django.core.mail.backends.filebased.EmailBackend"
 EMAIL_FILE_PATH = BASE_DIR / ".e2e-mail"

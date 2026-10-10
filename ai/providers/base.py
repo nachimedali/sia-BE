@@ -52,6 +52,19 @@ class TextProvider(Protocol):
         self, *, system: str, prompt: str, n: int, model: str | None = None
     ) -> TextGenerationResult: ...
 
+    def caption(
+        self, *, system: str, prompt: str, image_bytes: bytes, n: int, model: str | None = None
+    ) -> TextGenerationResult:
+        """Write `n` captions for an image (P1-13).
+
+        A method on `TextProvider` rather than a fourth port: the vendor is the
+        same LLM gateway, the result is the same `TextGenerationResult`, and
+        `classify_constraints` below already established that this port sees
+        images. A separate `VisionProvider` would be one more thing to
+        configure for no substitutable behaviour behind it.
+        """
+        ...
+
     def classify_constraints(self, *, image_bytes: bytes, restrictions: list[str]) -> list[str]:
         """Which of `restrictions` this image violates — empty if none.
 
@@ -90,7 +103,126 @@ class ImageProvider(Protocol):
         n: int,
         batch: bool,
         model: str | None = None,
-    ) -> ImageGenerationResult: ...
+        style: dict[str, float] | None = None,
+    ) -> ImageGenerationResult:
+        """`style` is a colour-grade hint (`chroma`, `cb`, `cr`) derived from
+        the brief's light, mood, palette and intensity. A real provider takes
+        its direction from the prompt and may ignore it; the fake uses it to
+        make its mock-up visibly reflect what was chosen."""
+        ...
+
+
+@dataclass(frozen=True)
+class VideoResult:
+    """One rendered clip.
+
+    `content` rather than a URL: the ingestion path stores bytes and mints its
+    own signed URL, so a provider handing back a link would put a second,
+    expiring source of truth for the same asset into the system.
+    """
+
+    content: bytes
+    mime: str
+    duration_seconds: float
+    provider: str
+    model: str
+    latency_ms: int
+
+
+class VideoProvider(Protocol):
+    """Video generation (C-11 / P0-04).
+
+    **The port exists; no paid vendor sits behind it.** C-11's complaint was
+    that video was "gated correctly, no provider" — a gate in front of nothing.
+    Two options were open: remove the gate, or put a port with a fake behind
+    it so a fresh checkout runs end to end (Part 7 rule 6). The port is the
+    better of the two, because the gate itself is correct and deleting it would
+    have to be undone the day a vendor is chosen.
+
+    In production `get_video_provider()` resolves to `None` and the pipeline
+    says so plainly, rather than a fake quietly producing a clip nobody
+    rendered.
+    """
+
+    def generate(
+        self,
+        *,
+        prompt: str,
+        reference_images: list[bytes],
+        aspect: str,
+        duration_seconds: float,
+        model: str | None = None,
+    ) -> VideoResult: ...
+
+    def animate(
+        self,
+        *,
+        image: bytes,
+        role: str,
+        prompt: str,
+        aspect: str,
+        duration_seconds: float,
+        model: str | None = None,
+    ) -> VideoResult:
+        """Animate one still into a clip (steps-plan S3).
+
+        `role` is `start` (the clip opens on the still and moves away from it)
+        or `end` (it moves toward the still and lands on it) — the two
+        image-to-video modes every current vendor offers. `prompt` is camera
+        direction only; the product's look comes from the image.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class ReelShot:
+    """One shot in a reel: the still, how long it holds, and the line set over
+    it (empty for none)."""
+
+    image: bytes
+    seconds: float
+    overlay: str = ""
+
+
+@dataclass(frozen=True)
+class CaptionCue:
+    """One burned-in caption: what it says and when, in seconds from the start."""
+
+    text: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
+class EndCard:
+    title: str
+    call_to_action: str = ""
+    seconds: float = 2.0
+
+
+class VideoComposer(Protocol):
+    """Cuts shots into a reel master (steps-plan S3): transitions, overlays, a
+    music bed, burned-in captions and an end card, rendered to one file.
+
+    A second port rather than a method on `VideoProvider` because it is a
+    different kind of vendor: image-to-video models animate a still, while
+    composition is templated editing — a render farm or a local encoder —
+    and nobody's animation endpoint is their editing one. Everything the
+    composer is told is decided in code (`ai.services.video`): shot timings,
+    caption cues, which track. It decides nothing.
+    """
+
+    def compose(
+        self,
+        *,
+        shots: list[ReelShot],
+        aspect: str,
+        transition: str,
+        music: str | None,
+        captions: list[CaptionCue],
+        end_card: EndCard | None,
+        duration_seconds: float,
+    ) -> VideoResult: ...
 
 
 class EmbeddingProvider(Protocol):

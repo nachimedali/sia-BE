@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from ai.models import Generation, GenerationKind, GenerationMode, VoiceProfile
+from analytics.models import Report
 from channels.models import SocialAccount
+from collaboration.services import open_thread
 from config.api_urls import router
+from content.models import (
+    Platform,
+    PostTarget,
+    PostTargetState,
+    PostTemplate,
+    RecurrenceRule,
+)
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post
+from learn.models import Digest
+from planning.models import BulkOperation, Campaign, Label, SavedView, Timetable
 from products.services.products import create_product
 from reminders.models import Reminder
+from taste.models import ContentCandidate, Rule, RuleKind, RuleSet, TasteProfile
 from workspaces.models import Membership
 from workspaces.services.provisioning import provision_workspace
 
@@ -68,12 +82,86 @@ def test_post_list_does_not_n_plus_one_media(
     for _ in range(5):
         create_post(workspace=workspace, author=user, master_body="x", media_assets=[media_asset])
 
-    # Auth, count, the page of posts, and one prefetch for their attachments —
-    # flat regardless of how many posts are on the page.
-    with django_assert_max_num_queries(4):
+    # Auth, count, the page of posts, one prefetch for their attachments and one
+    # for their targets — flat regardless of how many posts are on the page.
+    # 6: the five the list always took, plus one S4 flag read — per request,
+    # not per post (`checks/tests` pins the badge itself as row-independent).
+    with django_assert_max_num_queries(6):
         response = auth_client.get(POSTS_URL)
     assert response.status_code == 200
     assert len(response.json()["results"]) == 5
+
+
+def test_post_exposes_its_targets_for_the_dashboard_score(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    """The workspace home draws a platform x weekday grid, and a `Post` row
+    alone says nothing about *where* it goes. Targets travel with the post
+    because the alternative is one request per post to find out."""
+    post = create_post(workspace=workspace, author=user, master_body="x")
+    published_at = timezone.now()
+    PostTarget.objects.create(
+        post=post,
+        platform=Platform.INSTAGRAM,
+        state=PostTargetState.PUBLISHED,
+        published_at=published_at,
+    )
+    PostTarget.objects.create(post=post, platform=Platform.LINKEDIN)
+
+    body = auth_client.get(f"{POSTS_URL}{post.id}/").json()
+
+    by_platform = {t["platform"]: t for t in body["targets"]}
+    assert set(by_platform) == {Platform.INSTAGRAM, Platform.LINKEDIN}
+    assert by_platform[Platform.INSTAGRAM]["state"] == "PUBLISHED"
+    assert by_platform[Platform.INSTAGRAM]["published_at"] is not None
+    # Unpublished is null, not an epoch and not an empty string.
+    assert by_platform[Platform.LINKEDIN]["published_at"] is None
+    # Only what the grid needs: no rendered payload, no provider ids, no
+    # error detail — those are the publish pipeline's, not a dashboard's.
+    assert set(by_platform[Platform.LINKEDIN]) == {
+        "platform",
+        "post_format",
+        "state",
+        "published_at",
+    }
+
+
+def test_post_targets_are_not_client_writable(auth_client: Any, workspace: Any) -> None:
+    response = auth_client.post(
+        POSTS_URL,
+        {"master_body": "hi", "targets": [{"platform": "instagram"}]},
+        format="json",
+    )
+    assert response.status_code == 201
+    assert response.json()["targets"] == []
+
+
+def test_a_post_with_no_targets_serialises_an_empty_list(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="draft")
+    assert auth_client.get(f"{POSTS_URL}{post.id}/").json()["targets"] == []
+
+
+def test_post_list_does_not_n_plus_one_targets(
+    auth_client: Any,
+    workspace: Any,
+    user: Any,
+    django_assert_max_num_queries: Any,
+) -> None:
+    for _ in range(5):
+        post = create_post(workspace=workspace, author=user, master_body="x")
+        PostTarget.objects.create(post=post, platform=Platform.INSTAGRAM)
+        PostTarget.objects.create(post=post, platform=Platform.LINKEDIN)
+
+    # Auth, count, the page, the attachments prefetch and the targets
+    # prefetch — flat in the number of posts.
+    # 6: the five the list always took, plus one S4 flag read — per request,
+    # not per post (`checks/tests` pins the badge itself as row-independent).
+    with django_assert_max_num_queries(6):
+        response = auth_client.get(POSTS_URL)
+    assert response.status_code == 200
+    assert all(len(row["targets"]) == 2 for row in response.json()["results"])
 
 
 def test_status_delivery_mode_and_scheduled_at_are_not_client_writable(
@@ -218,7 +306,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 8
+    assert len(router.registry) == 22
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -252,6 +340,7 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         workspace=other_workspace, platform="instagram", provider_account_id="not-yours"
     )
     other_membership = Membership.objects.get(user=other_owner, workspace=other_workspace)
+    other_profile = TasteProfile.objects.create(workspace=other_workspace, version=1)
 
     objects_by_basename = {
         "post": post,
@@ -262,6 +351,63 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
         "reminder": reminder,
         "social-account": social_account,
         "membership": other_membership,
+        "post-template": PostTemplate.objects.create(
+            workspace=other_workspace, name="Not yours either"
+        ),
+        "thread": open_thread(post, author=other_owner, title="Not yours either", body="nor this"),
+        "recurrence-rule": RecurrenceRule.objects.create(
+            source=PostTemplate.objects.create(workspace=other_workspace, name="Nor this"),
+            rrule="FREQ=DAILY",
+            timezone="UTC",
+            horizon_days=7,
+        ),
+        # --- Phase 3 planning surfaces ---
+        "campaign": Campaign.objects.create(
+            workspace=other_workspace,
+            name="Not yours either",
+            starts_at=timezone.now(),
+            ends_at=timezone.now() + dt.timedelta(days=7),
+        ),
+        "label": Label.objects.create(
+            workspace=other_workspace, name="Not yours", colour="#FF5722"
+        ),
+        "saved-view": SavedView.objects.create(workspace=other_workspace, name="Not yours"),
+        "timetable": Timetable.objects.create(
+            workspace=other_workspace, name="Not yours", timezone="UTC"
+        ),
+        "bulk-operation": BulkOperation.objects.create(
+            workspace=other_workspace, action="delete", total_count=0
+        ),
+        # --- Phase 5 taste surfaces ---
+        "taste-profile": other_profile,
+        "ruleset": RuleSet.objects.create(workspace=other_workspace, version=1),
+        "candidate": ContentCandidate.objects.create(
+            workspace=other_workspace, taste_profile=other_profile
+        ),
+        # --- Phase 6 reporting ---
+        "report": Report.objects.create(
+            workspace=other_workspace, name="Not yours either", created_by=other_owner
+        ),
+        # --- Phase 7 learn ---
+        "digest": Digest.objects.create(
+            workspace=other_workspace,
+            window_start=timezone.now() - dt.timedelta(days=7),
+            window_end=timezone.now(),
+        ),
+        # Scoped through its ruleset rather than a workspace column of its own,
+        # which is exactly why it belongs in this sweep: the join is the guard.
+        "rule-proposal": Rule.objects.create(
+            ruleset=RuleSet.objects.create(
+                workspace=other_workspace,
+                version=2,
+                derived_from=Digest.objects.create(
+                    workspace=other_workspace,
+                    window_start=timezone.now() - dt.timedelta(days=7),
+                    window_end=timezone.now(),
+                ),
+            ),
+            kind=RuleKind.FORMAT,
+        ),
     }
 
     for prefix, _viewset, basename in router.registry:

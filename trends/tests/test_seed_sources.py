@@ -26,10 +26,15 @@ def test_seeds_sources_for_every_root_and_platform(category: Any) -> None:
 
     root = category.parent
     assert TrendSource.objects.filter(category=root).exists()
-    # Every platform the seed covers gets at least one source, and none hang
-    # off the leaf — inheritance is what serves leaves (`sources_for`).
-    assert set(TrendSource.objects.filter(category=root).values_list("platform", flat=True)) == set(
-        Platform.values
+    # Every platform gets at least one source, **or is declared as having
+    # none and why** — a platform in neither table fails here, which is what
+    # stops a new one silently acquiring empty trend coverage.
+    from trends.management.commands.seed_trend_sources import PLATFORMS_WITHOUT_TRENDS
+
+    seeded = set(TrendSource.objects.filter(category=root).values_list("platform", flat=True))
+    assert seeded == set(Platform.values) - PLATFORMS_WITHOUT_TRENDS
+    assert not (seeded & PLATFORMS_WITHOUT_TRENDS), (
+        "a platform declared as having no trend corpus was seeded one anyway"
     )
     assert not TrendSource.objects.filter(category=category).exists()
 

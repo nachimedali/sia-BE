@@ -5,12 +5,12 @@ declares `Membership.invited_by` and an `EmailToken` purpose for `INVITE`, and
 `/accept-invite` exists as a landing page — the natural reading is a mint-a-
 token, email-a-link flow that also on-boards someone with no account yet. This
 implementation deliberately does not build that: `common.workspaces.
-active_workspace` resolves a user's *single* workspace as the oldest
+request_workspace` resolves a user's *single* workspace as the oldest
 membership they hold, and every user already has one — the workspace
 `workspaces.services.provisioning.provision_workspace` gave them at
 registration. A second membership added by email is therefore reachable by
 that user in the ORM and in every test, but there is no way for *them* to
-switch into it: `active_workspace` has no per-request override yet (`common/
+switch into it: `request_workspace` has no per-request override yet (`common/
 mixins.py`'s own comment flags this as "the single place that will need to
 change" for a workspace-switcher, still unbuilt). Building the full
 token-and-registration invite flow on top of a foundation that cannot let the
@@ -88,7 +88,7 @@ def add_member(workspace: Workspace, *, email: str, role: str, invited_by: Any) 
 
 
 def change_role(membership: Membership, *, role: str) -> Membership:
-    if membership.user_id == membership.workspace.owner_id:
+    if membership.user_id == membership.workspace.organization.owner_id:
         raise CannotModifyOwnerError(detail={"membership": membership.pk})
     _require_assignable(role)
     membership.role = role
@@ -97,6 +97,6 @@ def change_role(membership: Membership, *, role: str) -> Membership:
 
 
 def remove_member(membership: Membership) -> None:
-    if membership.user_id == membership.workspace.owner_id:
+    if membership.user_id == membership.workspace.organization.owner_id:
         raise CannotModifyOwnerError(detail={"membership": membership.pk})
     membership.delete()

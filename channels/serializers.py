@@ -15,7 +15,7 @@ from rest_framework import serializers
 
 from channels import services
 from channels.models import SocialAccount
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 from content.models import Platform
 
 
@@ -56,7 +56,7 @@ class ConnectCompleteRequestSerializer(serializers.Serializer[dict[str, Any]]):
         # before OCCS spends a request finding out.
         request = self.context.get("request")
         if request is not None:
-            services.enforce_account_cap(active_workspace(request))
+            services.enforce_account_cap(request_workspace(request))
         return attrs
 
 
@@ -69,3 +69,19 @@ class ConnectCompleteResponseSerializer(serializers.Serializer[dict[str, Any]]):
     account = SocialAccountSerializer(required=False, allow_null=True)
     targets = ConnectTargetSerializer(many=True, required=False)
     params = serializers.DictField(required=False)
+
+
+class RemoteOptionSerializer(serializers.Serializer[Any]):
+    """One choice in a provider-backed list — a Pinterest board (P4-02).
+
+    `id` and `name` only. The provider's own row carries more, and forwarding
+    it would put a vendor's shape in front of the composer, which is the thing
+    the adapter layer exists to prevent.
+    """
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+
+
+class RemoteOptionListSerializer(serializers.Serializer[Any]):
+    options = RemoteOptionSerializer(many=True)

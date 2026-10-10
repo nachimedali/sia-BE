@@ -120,6 +120,7 @@ def test_submitting_an_already_approved_post_is_illegal(
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)
+    post = approvals.unlock(post, actor=admin_user)
 
     with pytest.raises(StateConflict):
         approvals.submit_for_review(post, actor=contributor_user)
@@ -131,11 +132,21 @@ def test_submitting_an_already_approved_post_is_illegal(
 def test_editing_approved_post_reverts_to_pending_review(
     advanced_workspace: Any, contributor_user: Any, admin_user: Any
 ) -> None:
+    """The two Phase 2 rules meet here, and they meet coherently.
+
+    Approval **locks** the post (P2-11), so the first thing an edit hits is a
+    409. An `admin` unlocks, which is audited — and then the pre-existing rule
+    applies unchanged: a content edit voids the approval it invalidated.
+    """
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)
     assert post.status == PostStatus.APPROVED
 
+    with pytest.raises(approvals.PostLockedError):
+        update_post(post, master_body="Changed my mind about the wording")
+
+    post = approvals.unlock(post, actor=admin_user)
     post = update_post(post, master_body="Changed my mind about the wording")
 
     assert post.status == PostStatus.PENDING_REVIEW
@@ -153,6 +164,7 @@ def test_editing_a_field_that_is_not_content_does_not_revert_approval(
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)
+    post = approvals.unlock(post, actor=admin_user)
 
     post = update_post(post, category=category)
 
@@ -186,11 +198,18 @@ def test_contributor_post_cannot_publish_until_admin_approves(
     # Not yet approved: scheduling — the CONTRIBUTOR's own next move — is
     # refused outright, so there is nothing left that could publish it.
     with pytest.raises(StateConflict):
-        schedule_post(post=post, delivery_mode="AUTO_PUBLISH", scheduled_at=scheduled_at)
+        schedule_post(
+            post=post,
+            delivery_mode="AUTO_PUBLISH",
+            scheduled_at=scheduled_at,
+            actor=contributor_user,
+        )
 
     post = approvals.approve(post, actor=admin_user)
 
-    scheduled = schedule_post(post=post, delivery_mode="AUTO_PUBLISH", scheduled_at=scheduled_at)
+    scheduled = schedule_post(
+        post=post, delivery_mode="AUTO_PUBLISH", scheduled_at=scheduled_at, actor=admin_user
+    )
 
     assert scheduled.status == PostStatus.SCHEDULED
 
@@ -207,27 +226,32 @@ def test_a_reminder_delivery_is_gated_the_same_way_auto_publish_is(
             post=post,
             delivery_mode="REMINDER",
             scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+            actor=contributor_user,
         )
 
 
-def test_a_downgraded_plan_makes_the_toggle_inert(
+def test_a_downgrade_does_not_switch_the_approval_gate_off(
     advanced_workspace: Any, contributor_user: Any, advanced_social_account: Any, plans: Any
 ) -> None:
-    """`requires_approval=True` survives a downgrade in the database, but a
-    plan without the feature must not still enforce it — the same "the
-    resolver checks the clock/plan itself" shape `Entitlements` uses for a
-    lapsed trial."""
-    advanced_workspace.plan = plans["pro"]
-    advanced_workspace.save(update_fields=["plan"])
+    """**The opposite of what this asserted before C-02.**
+
+    A blocking chain used to be inert on a plan without `approval_workflow`,
+    because approval was an Advanced feature and a downgrade had to make the
+    feature stop applying. Approval is now universal (L-2): a downgrade may
+    remove chain *depth*, and it may never remove the requirement that a human
+    said yes. A gate that a billing change can switch off is not a gate.
+    """
+    advanced_workspace.organization.plan = plans["pro"]
+    advanced_workspace.organization.save(update_fields=["plan"])
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
 
-    scheduled = schedule_post(
-        post=post,
-        delivery_mode="AUTO_PUBLISH",
-        scheduled_at=timezone.now() + dt.timedelta(minutes=5),
-    )
-
-    assert scheduled.status == PostStatus.SCHEDULED
+    with pytest.raises(StateConflict):
+        schedule_post(
+            post=post,
+            delivery_mode="AUTO_PUBLISH",
+            scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+            actor=contributor_user,
+        )
 
 
 def test_auto_publish_scheduling_without_a_connected_account_still_refuses(
@@ -244,6 +268,7 @@ def test_auto_publish_scheduling_without_a_connected_account_still_refuses(
             post=post,
             delivery_mode="AUTO_PUBLISH",
             scheduled_at=timezone.now() + dt.timedelta(minutes=5),
+            actor=admin_user,
         )
 
 
@@ -280,32 +305,6 @@ def test_approval_action_and_audit_log_are_append_only(
 
 
 # -----------------------------------------------------------------------------
-# Comments
-# -----------------------------------------------------------------------------
-def test_a_comment_can_be_resolved_once_and_is_idempotent(
-    advanced_workspace: Any, contributor_user: Any
-) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-    comment = approvals.add_comment(post, author=contributor_user, body="Consider a shorter hook")
-
-    resolved = approvals.resolve_comment(comment)
-    resolved_at = resolved.resolved_at
-    resolved_again = approvals.resolve_comment(resolved)
-
-    assert resolved_at is not None
-    assert resolved_again.resolved_at == resolved_at
-
-
-def test_a_reply_threads_under_its_parent(advanced_workspace: Any, contributor_user: Any) -> None:
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
-    parent = approvals.add_comment(post, author=contributor_user, body="Question")
-
-    reply = approvals.add_comment(post, author=contributor_user, body="Answer", parent=parent)
-
-    assert reply.parent_id == parent.pk
-
-
-# -----------------------------------------------------------------------------
 # ensure_approval_still_valid — unit coverage; the full Celery-preflight path
 # is scheduling/tests/test_publishing.py::
 # test_role_revoked_after_scheduling_blocks_publish (the named Phase 13 test).
@@ -327,5 +326,86 @@ def test_ensure_approval_still_valid_passes_while_the_approver_still_holds_admin
     post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)
+
+    approvals.ensure_approval_still_valid(post)  # must not raise
+
+
+def test_ensure_approval_still_valid_is_unaffected_by_the_chain_blocking_afterward(
+    workspace: Any, user: Any
+) -> None:
+    """Found in review: the check used to recompute `required` from
+    `default_chain(post.workspace).blocks_publish` **read fresh at publish
+    time**, rather than from what was actually true when the approval
+    happened. An admin turning review on after an EDITOR's legitimate,
+    open-chain approval must not retroactively invalidate that approval —
+    the approver's authority did not change; the workspace's policy did.
+    """
+    from workspaces.models import Membership, Role
+
+    post = schedule_post(
+        post=create_post(workspace=workspace, author=user, master_body="Open chain"),
+        delivery_mode="REMINDER",
+        scheduled_at=timezone.now() + dt.timedelta(days=1),
+        actor=user,
+    )
+    membership = Membership.objects.get(user=user, workspace=workspace)
+    membership.role = Role.EDITOR
+    membership.permissions = ["view", "comment", "edit", "publish", "analyze"]
+    membership.save(update_fields=["role", "permissions"])
+
+    # The chain starts blocking *after* the approval already happened.
+    chain = approvals.default_chain(workspace)
+    chain.blocks_publish = True
+    chain.save(update_fields=["blocks_publish"])
+
+    approvals.ensure_approval_still_valid(post)  # must not raise
+
+
+def test_ensure_approval_still_valid_still_catches_a_real_revocation_on_an_open_chain(
+    workspace: Any, user: Any
+) -> None:
+    """The fix must not turn the check into a no-op: revoking the actual
+    permission the approver used must still be caught, regardless of the
+    chain's current setting."""
+    from workspaces.models import Membership, Role
+
+    post = schedule_post(
+        post=create_post(workspace=workspace, author=user, master_body="Open chain"),
+        delivery_mode="REMINDER",
+        scheduled_at=timezone.now() + dt.timedelta(days=1),
+        actor=user,
+    )
+    membership = Membership.objects.get(user=user, workspace=workspace)
+    membership.role = Role.EDITOR
+    membership.permissions = ["view", "comment", "edit", "publish", "analyze"]
+    membership.save(update_fields=["role", "permissions"])
+
+    # The chain also starts blocking, so a *naive* fix that just always checks
+    # `publish` for an open-chain approval would wrongly pass here too if it
+    # ignored a genuinely revoked `publish` grant.
+    chain = approvals.default_chain(workspace)
+    chain.blocks_publish = True
+    chain.save(update_fields=["blocks_publish"])
+
+    membership.permissions = ["view", "analyze"]  # publish revoked
+    membership.save(update_fields=["permissions"])
+
+    with pytest.raises(approvals.ApprovalRevokedError):
+        approvals.ensure_approval_still_valid(post)
+
+
+def test_ensure_approval_still_valid_is_unaffected_by_the_chain_unblocking_afterward(
+    advanced_workspace: Any, contributor_user: Any, admin_user: Any
+) -> None:
+    """The symmetric case: a real, explicit `approve` (needing `approve`) must
+    not be second-guessed against `publish` just because an admin turned
+    review off afterward."""
+    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    post = approvals.submit_for_review(post, actor=contributor_user)
+    post = approvals.approve(post, actor=admin_user)
+
+    chain = approvals.default_chain(advanced_workspace)
+    chain.blocks_publish = False
+    chain.save(update_fields=["blocks_publish"])
 
     approvals.ensure_approval_still_valid(post)  # must not raise

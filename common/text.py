@@ -9,11 +9,22 @@ common, and the disagreement would only ever show up as a strange cluster.
 
 `content_tokens` drops function words, which is the whole difference between
 "these two posts use English" and "these two posts are about the same thing".
+
+`HASHTAG_RE` is the same shared-answer reasoning for a narrower question: what
+counts as a hashtag. `content.services.adaptation` extracts them from a post
+body and `ai.services.hashtags` counts them across a trend corpus — two
+independent copies of the pattern would let "handle Unicode hashtags" or "strip
+trailing punctuation" get fixed in one and not the other, and the two counts
+would disagree with no visible cause.
 """
 
 from __future__ import annotations
 
 import re
+
+#: A hashtag starts at a word boundary, so "a#b" is not one. `\w` already
+#: covers unicode word characters under Python's default (unicode) regex mode.
+HASHTAG_RE = re.compile(r"(?<!\w)#(\w+)")
 
 STOPWORDS = frozenset(
     [

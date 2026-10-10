@@ -13,9 +13,11 @@ what's reachable" shape `PostStatus` used in Phase 4 (A47).
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -34,6 +36,12 @@ class GenerationMode(models.TextChoices):
     AUTOPILOT = "AUTOPILOT", "Autopilot"
     RECIPE = "RECIPE", "Recipe"
     REVISION = "REVISION", "Revision"
+    #: Caption written from an image the workspace already owns (P1-13). A
+    #: vision call, so it needs `Generation.source_media` — a caption mode with
+    #: no image is a text generation wearing the wrong name.
+    CAPTION = "CAPTION", "Caption"
+    #: Post ideas grounded in the workspace's own top-percentile posts (P1-13).
+    SUGGEST = "SUGGEST", "Suggest"
 
 
 class GenerationStatus(models.TextChoices):
@@ -105,6 +113,16 @@ class Generation(models.Model):
     parent_generation = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="revisions"
     )
+    #: The image a `CAPTION` generation read (P1-13). Nullable because every
+    #: other mode has no source image, and `SET_NULL` because deleting the
+    #: picture must not delete the record of what was generated from it.
+    source_media = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="captions",
+    )
 
     output_type = models.CharField(max_length=32, blank=True)
     aspect = models.CharField(max_length=16, blank=True, default="1:1")
@@ -112,13 +130,52 @@ class Generation(models.Model):
     scene = models.CharField(max_length=200, blank=True)
     motion = models.CharField(max_length=64, blank=True)
     duration = models.PositiveIntegerField(null=True, blank=True)
+    #: **Every Studio control, as the user set it** — scene, light, camera,
+    #: who is in the frame, moods, palette, language, call to action, format,
+    #: the three sliders, the toggles, what to keep out, which platforms.
+    #: Option *keys* (validated against `CreativeOption` before they get here),
+    #: never labels, so renaming "Golden hour" in admin does not rewrite what an
+    #: old generation was asked for. `{}` for every caller that is not the
+    #: Studio — autopilot, revisions, captions — which is what keeps them
+    #: priced and rendered exactly as before. `scene`/`render_style`/`aspect`
+    #: above stay populated for the same compatibility reason.
+    creative = models.JSONField(default=dict, blank=True)
 
     is_batch = models.BooleanField(default=False)
     provider = models.CharField(max_length=64, blank=True)
     model = models.CharField(max_length=64, blank=True)
+
+    # --- provenance (P5-15) ------------------------------------------------
+    # **Attribution is impossible without all of these.** A change in
+    # acceptance rate otherwise has five candidate causes — the model, the
+    # prompt, the taste profile, the rule set, or the content itself — and no
+    # way to tell them apart. `provider`/`model` and the token counts above
+    # cover the first and the cost; these three cover the rest.
+    #
+    # Null on a generation that predates Phase 5, and on any run with no taste
+    # profile behind it. Null rather than zero: "we did not record it" and
+    # "version 0" are different claims, and only the first is true.
+    taste_profile_version = models.PositiveIntegerField(null=True, blank=True)
+    ruleset_version = models.PositiveIntegerField(null=True, blank=True)
+    prompt_template_version = models.CharField(max_length=40, blank=True)
     tokens_in = models.PositiveIntegerField(default=0)
     tokens_out = models.PositiveIntegerField(default=0)
     credits_charged = models.PositiveIntegerField(default=0)
+    #: How many variants this generation's buyer paid to keep (X-09). The
+    #: engine renders `GenerationCost.variant_pool`, which is larger; the
+    #: surplus is locked until bought. Stored on the row rather than derived
+    #: from the ledger because it is what the *selection* rule reads on every
+    #: click, and a rule that re-derives its own limit from money already
+    #: spent gets the answer wrong the moment a refund exists.
+    paid_slots = models.PositiveSmallIntegerField(default=1)
+    #: How many variants the engine was told to render (X-09). **Zero means
+    #: "no surplus"** — render exactly what the caller asked for, which is
+    #: what autopilot, revisions, captions and suggestions all want: none of
+    #: them has a human looking at a dock, so a pool would be provider spend
+    #: with nobody to sell it to. Only Studio sets it, and it is stored rather
+    #: than re-resolved so a retuned pool column never changes what an old
+    #: generation is understood to have offered.
+    variant_pool = models.PositiveSmallIntegerField(default=0)
     video_units_charged = models.PositiveIntegerField(default=0)
     latency_ms = models.PositiveIntegerField(default=0)
     status = models.CharField(
@@ -141,6 +198,16 @@ class Generation(models.Model):
     def __str__(self) -> str:
         return f"{self.kind} {self.mode} {self.pk} ({self.status})"
 
+    @property
+    def model_identity(self) -> str:
+        """`provider/model`, or whichever half is known.
+
+        One string because that is what a `Decision` records and what a digest
+        groups by — a reader comparing the two halves separately would have to
+        reimplement this join, and would eventually do it differently.
+        """
+        return "/".join(part for part in (self.provider, self.model) if part)
+
 
 class GenerationVariant(models.Model):
     """One candidate output. `was_selected` marks the one the user actually
@@ -157,10 +224,33 @@ class GenerationVariant(models.Model):
         on_delete=models.SET_NULL,
         related_name="generation_variants",
     )
+    #: The line set over the picture. Studio image variants only; `body` is
+    #: their caption. Both are editable before the variant is sent, which is
+    #: why they are columns and not read back out of the provider's reply.
+    headline = models.CharField(max_length=200, blank=True)
+    #: Observed tags from the category corpus (counted, never invented — see
+    #: `ai.services.hashtags`). Empty when the toggle was off or no corpus exists.
+    hashtags = models.JSONField(default=list, blank=True)
+    #: How closely the render matches the product's reference photo, 0-1, as
+    #: the quality gate measured it. **Null** for text variants and for rows
+    #: from before this was kept — unknown is not a low score.
+    identity_score = models.FloatField(null=True, blank=True)
     platform = models.CharField(max_length=16, blank=True)
     rank = models.PositiveSmallIntegerField(default=0)
     rationale = models.CharField(max_length=300, blank=True)
     was_selected = models.BooleanField(default=False)
+
+    #: **Bought beyond the paid slots** (X-09). A generation renders a pool
+    #: larger than the slots the user paid for; selecting one of the extras
+    #: costs `GenerationCost.unlock_percent` of the per-variant price. An
+    #: unlocked variant stops counting against the free allowance, which is
+    #: what lets the two rules — "only N free" and "the rest are buyable" —
+    #: coexist without either needing to know about the other.
+    is_unlocked = models.BooleanField(default=False)
+    #: What was actually charged to unlock it, not what the table says today.
+    #: A price retuned in admin must not rewrite what a customer already paid,
+    #: and an audit that recomputes the figure would do exactly that.
+    unlock_charged = models.PositiveIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -186,6 +276,16 @@ class GenerationCost(models.Model):
     provider = models.CharField(max_length=64, blank=True)
     model = models.CharField(max_length=64, blank=True)
     credits = models.PositiveIntegerField()
+    #: How many variants the engine renders for this pair, regardless of how
+    #: many the user paid for (X-09). Larger than the usual purchase on
+    #: purpose: the surplus is what there is to upsell. A commercial number,
+    #: so it is a column an operator retunes and never a constant (rule 10).
+    variant_pool = models.PositiveSmallIntegerField(default=4)
+    #: What one surplus variant costs, as a percentage of `credits`, rounded
+    #: **up** — half of a 3-credit image is 2, never 1. Also a commercial
+    #: number, also admin-editable, and deliberately a percentage rather than
+    #: a second price so retuning `credits` carries the upsell with it.
+    unlock_percent = models.PositiveSmallIntegerField(default=50)
     is_active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -257,3 +357,254 @@ class QualityGateConfig(models.Model):
     def get_solo(cls) -> QualityGateConfig:
         instance, _ = cls.objects.get_or_create(pk=1)
         return instance
+
+
+# -----------------------------------------------------------------------------
+# The Studio's controls, as rows
+# -----------------------------------------------------------------------------
+class CreativeKind(models.TextChoices):
+    """Which control a `CreativeOption` row belongs to.
+
+    A new *kind* is a new control and costs code; a new *row* in an existing
+    kind is a new choice and costs nothing — an operator adds a scene in admin
+    and it is on every workspace's Studio the next time it loads.
+    """
+
+    SCENE = "scene", "Scene"
+    LIGHT = "light", "Light"
+    CAMERA = "camera", "Camera angle"
+    CAST = "cast", "Who is in the frame"
+    VIBE = "vibe", "Cast vibe"
+    MOOD = "mood", "Mood"
+    PALETTE = "palette", "Palette"
+    LANGUAGE = "language", "Content language"
+    CTA = "cta", "Call to action"
+    FORMAT = "format", "Format"
+    TEMPO = "tempo", "Tempo (creativity)"
+    DYNAMICS = "dynamics", "Dynamics (colour intensity)"
+    TONE = "tone", "Voice"
+    TOGGLE = "toggle", "On/off option"
+    PRESET = "preset", "Preset"
+    QUICK_TAG = "quick_tag", "Brief quick tag"
+    # The product form's choice lists (`/app/products/new`): rows for the same
+    # reason the Studio's are — a new audience or claim is an admin edit.
+    AUDIENCE = "audience", "Product audience"
+    TONE_PRESET = "tone_preset", "Voice preset"
+    CLAIM = "claim", "Claim that needs proof"
+    SHOT_TAG = "shot_tag", "Photo shot type"
+    ASPECT = "aspect", "Image aspect"
+    SUGGESTION = "suggestion", "Suggested entry"
+    # The post editor's "What should change?" chips: why a post is being
+    # regenerated, each carrying the instruction the model reads.
+    REVISE_REASON = "revise_reason", "Why regenerate"
+    # The Motion step (steps-plan S3, `ai/video_seed.py`). Prices are
+    # `metadata.credits` on these rows, so a video price is an admin edit.
+    VIDEO_LENGTH = "video_length", "Video length"
+    MOTION = "motion", "Camera motion"
+    VIDEO_ASPECT = "video_aspect", "Video frame"
+    REEL_STYLE = "reel_style", "Reel style"
+    MUSIC = "music", "Music bed"
+    VIDEO_EXTRA = "video_extra", "Video surcharge"
+
+
+#: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
+#: else — these strings are rendered from the database into the page, so the
+#: only safe icon is one that cannot be anything but a path.
+_PATH_DATA = re.compile(r"^[MmLlHhVvCcSsQqTtAaZz0-9eE.,+\-\s]+$")
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _validate_icon_paths(value: object) -> None:
+    if not isinstance(value, list) or not all(isinstance(p, str) for p in value):
+        raise ValidationError("icon_paths must be a list of SVG path strings.")
+    bad = [p for p in value if len(p) > 600 or not _PATH_DATA.match(p)]
+    if bad:
+        raise ValidationError("icon_paths may only contain SVG path data.")
+
+
+def _validate_colors(value: object) -> None:
+    if not isinstance(value, list) or not all(isinstance(c, str) and _HEX.match(c) for c in value):
+        raise ValidationError("colors must be a list of #RRGGBB values.")
+
+
+class CreativeOption(models.Model):
+    """One choice on one Studio control (scene, light, camera angle, …).
+
+    Global, not per-workspace: the catalog is the product's own, edited by an
+    operator in admin, and every workspace reads the same one. Per-brand
+    taste lives in `TasteProfile`; this is the vocabulary a brief is written
+    in.
+
+    **A row carries everything a control needs to draw itself and to be
+    understood by a model:**
+
+    * `label` / `description` — the text on the tile and its sub-line
+    * `icon_paths` — SVG path data, drawn client-side; validated to be nothing
+      but path data
+    * `colors` — the swatch or backdrop, as hex
+    * `prompt_fragment` — what the generation prompt says when this is chosen
+    * `metadata` — per-kind extras, documented where each is read: a light's
+      colour `grade`, a format's `aspect`, a preset's `values`, a toggle's
+      default
+
+    Selections are stored on `Generation.creative` by **key**, so editing a
+    label never rewrites history.
+    """
+
+    kind = models.CharField(max_length=16, choices=CreativeKind.choices)
+    key = models.SlugField(max_length=40)
+    label = models.CharField(max_length=80)
+    description = models.CharField(max_length=160, blank=True)
+    icon_paths = models.JSONField(default=list, blank=True, validators=[_validate_icon_paths])
+    colors = models.JSONField(default=list, blank=True, validators=[_validate_colors])
+    prompt_fragment = models.CharField(max_length=300, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["kind", "sort_order", "id"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["kind", "key"], name="unique_creative_option_key")
+        ]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["kind", "is_active"])]
+
+    def __str__(self) -> str:
+        return f"{self.kind}/{self.key}"
+
+
+# -----------------------------------------------------------------------------
+# Video renders (steps-plan S3)
+# -----------------------------------------------------------------------------
+class VideoMode(models.TextChoices):
+    #: One still, animated into a 5 or 10 second clip.
+    CLIP = "clip", "Clip"
+    #: Several shots cut together with overlays, music and captions.
+    REEL = "reel", "Reel"
+
+
+class VideoRenderStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    SUCCEEDED = "SUCCEEDED", "Succeeded"
+    FAILED = "FAILED", "Failed"
+
+
+class VideoReview(models.TextChoices):
+    """What the person did with a finished (or failed) render. Blank is
+    "not looked at yet"."""
+
+    ACCEPTED = "ACCEPTED", "Accepted"
+    DISCARDED = "DISCARDED", "Discarded"
+    HIDDEN = "HIDDEN", "Hidden"
+    RETRIED = "RETRIED", "Retried as a new render"
+
+
+class VideoRender(models.Model):
+    """One clip or reel, from the confirmed estimate to the finished file.
+
+    **The credits are held, not taken.** `credits` is the price the person
+    confirmed; while the render is `QUEUED` or `RUNNING` it counts against
+    what they can spend (`ai.services.video.held_credits`), and it reaches the
+    ledger only when the render passes the quality gate — one debit, linked by
+    `charge`. A failed render writes nothing, so "releasing the hold" is the
+    status changing, not a compensating row. The hold is a query over these
+    rows and never a cached number (Part 7 rule 5).
+
+    `spec` is the normalised request — option *keys* and media ids, never
+    labels — so an operator renaming a motion does not rewrite what was asked.
+    `lines` is the priced breakdown the person saw, kept as shown.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="video_renders"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="video_renders"
+    )
+    product = models.ForeignKey(
+        "products.Product",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+    mode = models.CharField(max_length=8, choices=VideoMode.choices)
+    spec = models.JSONField(default=dict)
+    #: The post copy: the caption of the post this lands on, and the source of
+    #: a reel's burned-in captions.
+    text = models.TextField(blank=True)
+    #: The still a clip animates, or a reel's first shot: what the output is
+    #: `derived_from`.
+    source = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+
+    estimate_id = models.CharField(max_length=32)
+    credits = models.PositiveIntegerField()
+    lines = models.JSONField(default=list)
+    render_s = models.PositiveIntegerField(default=0)
+
+    status = models.CharField(
+        max_length=10, choices=VideoRenderStatus.choices, default=VideoRenderStatus.QUEUED
+    )
+    phase = models.CharField(max_length=24, blank=True)
+    progress = models.FloatField(default=0)
+    review = models.CharField(max_length=10, choices=VideoReview.choices, blank=True)
+    #: A user-facing reason on `FAILED`; `error_code` is the machine one.
+    error = models.CharField(max_length=300, blank=True)
+    error_code = models.CharField(max_length=40, blank=True)
+
+    output = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="rendered_by",
+    )
+    #: The one ledger row this render was paid with. Null until it passes —
+    #: and forever on a render that failed.
+    charge = models.OneToOneField(
+        "billing.CreditLedger",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="video_render",
+    )
+    #: The draft post the clip was sent to. Set once; a sent render is final.
+    post = models.ForeignKey(
+        "content.Post",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+    retry_of = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="retries"
+    )
+
+    provider = models.CharField(max_length=64, blank=True)
+    model = models.CharField(max_length=64, blank=True)
+    latency_ms = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at", "-id"]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["workspace", "-created_at"]),
+            models.Index(fields=["workspace", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.mode} render {self.pk} ({self.status})"

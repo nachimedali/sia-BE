@@ -1,15 +1,15 @@
 """The completeness scorer and the I7 generation-ready flag
-(design.md §6.4, implementation.md Phase 5.3)."""
+(design.md §6.4, implementation.md Phase 5.3; checks reworked for the product
+brief)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
-from django.core.files.uploadedfile import SimpleUploadedFile
 
-from content.services.media import ingest_media
-from products.services.completeness import score_product
+from categories.models import Category
+from products.services.completeness import CHECKS, check_definitions, score_product
 from products.services.products import (
     attach_reference_images,
     detach_reference_image,
@@ -17,6 +17,11 @@ from products.services.products import (
 )
 
 pytestmark = pytest.mark.django_db
+
+
+def test_weights_sum_to_one_hundred() -> None:
+    assert sum(c.weight for c in CHECKS) == 100
+    assert {d["key"] for d in check_definitions()} == {c.key for c in CHECKS}
 
 
 def test_is_generation_ready_flips_on_first_and_last_reference_image(
@@ -37,30 +42,35 @@ def test_is_generation_ready_flips_on_first_and_last_reference_image(
     assert after_last_removed is False
 
 
-def test_completeness_score_monotonic_as_fields_are_filled(
+def test_generation_readiness_ignores_every_other_check(product: Any, make_png_upload: Any) -> None:
+    """I7: one photo is the whole gate. The rules-reviewed and platform checks
+    that the *form* requires before staging never become a server refusal."""
+    attach_reference_images(product=product, uploads=[make_png_upload()])
+    product.refresh_from_db()
+    assert product.is_generation_ready is True
+    assert product.completeness_score < 100
+
+
+def test_completeness_score_monotonic_as_the_brief_is_filled(
     product: Any, make_png_upload: Any
 ) -> None:
+    category = Category.objects.create(name="Ceramics", slug="ceramics")
     scores = [score_product(product)[0]]
 
-    update_product(product, description="Hand-glazed 12oz mug, matte finish.")
-    scores.append(score_product(product)[0])
+    def step(**fields: Any) -> None:
+        update_product(product, **fields)
+        scores.append(score_product(product)[0])
 
-    update_product(product, restrictions=["Never claim dishwasher-safe"])
-    scores.append(score_product(product)[0])
-
-    update_product(product, voice="Playful, confident, no corporate jargon")
-    scores.append(score_product(product)[0])
-
-    update_product(product, formats=["image"])
-    scores.append(score_product(product)[0])
-
-    update_product(product, platforms=["instagram"])
-    scores.append(score_product(product)[0])
-
-    update_product(product, ctas=["Shop now"])
-    scores.append(score_product(product)[0])
-
-    attach_reference_images(product=product, uploads=[make_png_upload()])
+    step(category=category)
+    step(short_description="Hand-glazed 12oz mug, matte finish, six colourways.")
+    step(features=["Hand-made", "Small batch"])
+    step(tone={"formal": 40, "bold": 45, "modern": 50, "poetic": 50})
+    step(use_words=["craft"])
+    step(rules_reviewed=True)
+    step(platforms=["instagram"])
+    attach_reference_images(
+        product=product, uploads=[make_png_upload()] * 3, shot_tags=["front", "side-back", "detail"]
+    )
     product.refresh_from_db()
     scores.append(score_product(product)[0])
 
@@ -69,40 +79,28 @@ def test_completeness_score_monotonic_as_fields_are_filled(
     assert scores[-1] == 100
 
 
-def test_completeness_missing_lists_every_unsatisfied_check_with_a_positive_impact(
-    product: Any,
-) -> None:
+def test_missing_lists_every_unsatisfied_check_with_a_positive_impact(product: Any) -> None:
     _score, missing = score_product(product)
     keys = {item["key"] for item in missing}
-    assert "references" in keys
-    assert "description" in keys
+    assert {"references", "category", "short_description", "rules_reviewed", "platforms"} <= keys
     assert all(int(item["impact"]) > 0 for item in missing)  # type: ignore[call-overload]
 
 
-def test_motion_reference_requires_a_video_kind_asset_when_video_is_requested(
-    product: Any, make_png_upload: Any
-) -> None:
-    update_product(product, formats=["video"])
-    _score, missing = score_product(product)
-    assert "motion_reference" in {item["key"] for item in missing}
+def test_an_unproven_claim_keeps_the_claims_check_open(product: Any) -> None:
+    update_product(product, claims=[{"key": "organic", "proof_media": None}])
+    assert "claims" in {item["key"] for item in score_product(product)[1]}
 
-    # An image reference satisfies I7's `is_generation_ready`, but not the
-    # video-specific completeness check — the two measure different things.
-    attach_reference_images(product=product, uploads=[make_png_upload()])
-    product.refresh_from_db()
-    assert product.is_generation_ready is True
-    _score, missing = score_product(product)
-    assert "motion_reference" in {item["key"] for item in missing}
 
-    video_asset = ingest_media(
-        workspace=product.workspace,
-        upload=SimpleUploadedFile("clip.mp4", b"fake-mp4-bytes", content_type="video/mp4"),
+def test_tagging_needs_three_photos_each_tagged(product: Any, make_png_upload: Any) -> None:
+    attach_reference_images(
+        product=product, uploads=[make_png_upload()] * 2, shot_tags=["front", "detail"]
     )
-    product.reference_images.add(video_asset)
-    _score, missing = score_product(product)
-    assert "motion_reference" not in {item["key"] for item in missing}
+    assert "photos_tagged" in {item["key"] for item in score_product(product)[1]}
+    attach_reference_images(product=product, uploads=[make_png_upload()], shot_tags=["packaging"])
+    assert "photos_tagged" not in {item["key"] for item in score_product(product)[1]}
 
 
-def test_motion_reference_is_not_applicable_without_the_video_format(product: Any) -> None:
-    _score, missing = score_product(product)
-    assert "motion_reference" not in {item["key"] for item in missing}
+def test_the_older_voice_descriptor_still_counts_as_a_tone(product: Any) -> None:
+    assert "tone" in {item["key"] for item in score_product(product)[1]}
+    update_product(product, voice="Warm, plain-spoken")
+    assert "tone" not in {item["key"] for item in score_product(product)[1]}

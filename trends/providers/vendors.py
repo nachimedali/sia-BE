@@ -182,6 +182,13 @@ def _text(entry: ET.Element, tag: str) -> str:
 #: chain of `if`s so an unknown kind is a `KeyError` at the one place that
 #: resolves them, not a silently-skipped source.
 _VENDORS: dict[str, Any] = {
+    # Competitor posts come from the same data vendor as Ad Library and
+    # Creative Center, for the same reason (D12): reading a public account's
+    # posts directly is the part with ToS exposure, and a dataset parameter is
+    # a row edit rather than a deploy. The `handle` on the source is passed
+    # through in `query`, which is what makes one adapter serve every
+    # competitor.
+    TrendSourceKind.COMPETITOR: lambda: RapidAPIVendor("social-account-posts"),
     TrendSourceKind.ADLIB: lambda: RapidAPIVendor("meta-ad-library"),
     TrendSourceKind.CREATIVE_CENTER: lambda: RapidAPIVendor("tiktok-creative-center"),
     TrendSourceKind.YOUTUBE: YouTubeVendor,

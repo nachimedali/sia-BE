@@ -32,20 +32,17 @@ from django.conf import settings
 
 from channels.adapters.base import (
     SELECTION_PLATFORMS,
-    AccountStats,
-    CommentSnapshot,
     ConnectedAccount,
     ConnectResolution,
     ConnectTarget,
-    MetricSnapshot,
     PlatformAdapter,
     PlatformError,
     PublishResult,
     echo_targets,
     find_offered_target,
 )
-from common.timestamps import parse_or_none
 from content.models import MediaKind
+from content.services.rules import options_for
 
 #: Zernio's `type` vocabulary for a media item, keyed by ours.
 _MEDIA_TYPES = {MediaKind.IMAGE: "image", MediaKind.VIDEO: "video"}
@@ -267,9 +264,23 @@ class ZernioAdapter:
     ) -> PublishResult:
         body = {
             "content": payload.get("body", ""),
-            "platforms": [{"platform": platform, "accountId": provider_account_id}],
+            "platforms": [
+                {
+                    "platform": platform,
+                    "accountId": provider_account_id,
+                    **_provider_options(platform, payload.get("options") or {}),
+                }
+            ],
             "mediaItems": [
-                {"type": _MEDIA_TYPES.get(item["kind"], "image"), "url": _absolute(item["url"])}
+                {
+                    "type": _MEDIA_TYPES.get(item["kind"], "image"),
+                    "url": _absolute(item["url"]),
+                    # Alt text is per-use, resolved by `render_post` (P1-06).
+                    # Sent unconditionally: an empty string is a legitimate
+                    # "no description", and omitting the key on some items and
+                    # not others is how a provider mismaps a carousel.
+                    "altText": item.get("alt", ""),
+                }
                 for item in payload.get("media", [])
             ],
             "publishNow": True,
@@ -306,74 +317,29 @@ class ZernioAdapter:
             )
         return PublishResult(provider_post_id=existing_id, was_replay=True)
 
-    # --- analytics (Phase 11) --------------------------------------------
-    def fetch_metrics(self, *, platform: str, provider_post_id: str) -> MetricSnapshot:
-        """`GET /v1/analytics` per post (design.md §14, V1: "per-post analytics
-        plus ~25 platform-specific endpoints").
+    def list_remote_options(
+        self, *, platform: str, provider_account_id: str, source: str
+    ) -> list[dict[str, Any]]:
+        """Pinterest's board list (P4-02).
 
-        Coverage is uneven and the V1 findings say so: full on X, IG, FB,
-        TikTok, YouTube, Pinterest and Threads; **partial on LinkedIn**, where a
-        personal account only reports posts published through Zernio; **none**
-        on Reddit, Bluesky, Telegram or Snapchat. A platform that reports
-        nothing leaves every field at zero rather than being guessed at — a
-        fabricated impression count would corrupt the percentile every other
-        number in this app is ranked against.
+        A source this adapter does not serve answers empty rather than
+        raising — see the protocol. The path is Zernio's documented contract
+        at OpenAPI v1.0.4 and not observed behaviour (U-5), which is why a
+        wrong guess here is one row in `_REMOTE_OPTION_PATHS` to change.
         """
+        path = _REMOTE_OPTION_PATHS.get(source)
+        if path is None:
+            return []
+
         with _client() as client:
             payload = _json(
-                client.get("/v1/analytics", params={"postId": provider_post_id}),
-                label="Zernio analytics",
+                client.get(path.format(account_id=provider_account_id)),
+                label=f"Zernio {source}",
             )
-
-        metrics = payload.get("metrics", payload)
-        return MetricSnapshot(
-            impressions=_count(metrics, "impressions", "views", "reach"),
-            likes=_count(metrics, "likes", "reactions"),
-            comments=_count(metrics, "comments", "replies"),
-            shares=_count(metrics, "shares", "reposts", "retweets"),
-            clicks=_count(metrics, "clicks", "linkClicks"),
-            saves=_count(metrics, "saves", "bookmarks"),
-            raw=metrics if isinstance(metrics, dict) else {},
-        )
-
-    def fetch_comments(
-        self, *, platform: str, provider_post_id: str, since: Any = None
-    ) -> list[CommentSnapshot]:
-        with _client() as client:
-            payload = _json(
-                client.get("/v1/comments", params={"postId": provider_post_id}),
-                label="Zernio comments",
-            )
-
-        comments = [
-            CommentSnapshot(
-                external_id=str(entry.get("id", "")),
-                body=str(entry.get("text") or entry.get("body") or ""),
-                author=str(entry.get("author") or entry.get("username") or ""),
-                posted_at=parse_or_none(entry.get("createdAt") or entry.get("timestamp")),
-            )
-            for entry in payload.get("comments", [])
-            if entry.get("id")
+        return [
+            {"id": str(row.get("id", "")), "name": str(row.get("name", ""))}
+            for row in payload.get("items", [])
         ]
-        # The endpoint takes no lower bound, so the watermark is applied here —
-        # ingestion is idempotent on `external_id` regardless, but there is no
-        # reason to re-classify sentiment on comments already stored.
-        if since is not None:
-            comments = [c for c in comments if c.posted_at and c.posted_at > since]
-        return comments
-
-    def fetch_account_stats(self, *, provider_account_id: str) -> AccountStats:
-        with _client() as client:
-            payload = _json(
-                client.get(f"/v1/accounts/{provider_account_id}"), label="Zernio account"
-            )
-
-        account = payload.get("account", payload)
-        return AccountStats(
-            followers=_count(account, "followerCount", "followers"),
-            following=_count(account, "followingCount", "following"),
-            total_posts=_count(account, "postCount", "posts"),
-        )
 
     def disconnect(self, *, provider_account_id: str) -> None:
         with _client() as client:
@@ -381,26 +347,6 @@ class ZernioAdapter:
                 client.delete(f"/v1/accounts/{provider_account_id}"),
                 label="Zernio disconnect",
             )
-
-
-def _count(payload: Any, *names: str) -> int:
-    """The first of `names` this payload actually carries, as an int.
-
-    Platforms disagree about what a number is called — impressions vs views vs
-    reach, shares vs reposts vs retweets — and Zernio passes each platform's own
-    vocabulary through. Trying the aliases here keeps that disagreement inside
-    the adapter, where the rest of §9 says provider vocabulary belongs.
-    """
-    if not isinstance(payload, dict):
-        return 0
-    for name in names:
-        value = payload.get(name)
-        if value is not None:
-            try:
-                return max(int(value), 0)
-            except (TypeError, ValueError):
-                return 0
-    return 0
 
 
 def _platform_post_id(post: dict[str, Any], platform: str) -> str:
@@ -418,3 +364,111 @@ def get_platform_adapter() -> PlatformAdapter:
 
         return _fake_adapter
     return ZernioAdapter()
+
+
+#: Our option key → Zernio's field name, per platform (P1-11).
+#:
+#: **Data, and it lives here rather than in `rules.py`.** `rules.py` states
+#: what an option *is* — a platform fact, true whoever publishes it. What the
+#: vendor calls it is a vendor fact, and keeping the two in one table is what
+#: turns a provider swap into an excavation (D3).
+#:
+#: An option with no row is **dropped, not forwarded**. A key the vendor does
+#: not recognise is a rejected post, so forwarding an unmapped setting loses
+#: the whole publish where dropping it loses one setting.
+#:
+#: Like every other Zernio field name in this module, these are the documented
+#: contract at OpenAPI v1.0.4 and not observed behaviour (U-5) — which is
+#: exactly why a wrong guess here should be one row to change.
+#: Where each provider-backed option list lives, by `source`. A table for the
+#: same reason `PROVIDER_OPTION_FIELDS` is one: a vendor path is a vendor fact,
+#: and the day it moves should be one row to edit rather than a method to find.
+_REMOTE_OPTION_PATHS: dict[str, str] = {
+    "pinterest_boards": "/v1/accounts/{account_id}/pinterest-boards",
+}
+
+
+PROVIDER_OPTION_FIELDS: dict[str, dict[str, str]] = {
+    "instagram": {
+        "first_comment": "firstComment",
+        "location_id": "locationId",
+        "collab_handles": "collaborators",
+        "tagged_handles": "taggedAccounts",
+        # Declared since P1-11 and unmapped until Phase 4's gate went looking:
+        # an unmapped option is *dropped*, so toggling "also share a reel to
+        # the feed" changed nothing and said nothing. The composer showed a
+        # switch that did not exist.
+        "share_to_feed": "shareToFeed",
+    },
+    "facebook": {
+        "first_comment": "firstComment",
+        "location_id": "locationId",
+        "targeting_countries": "targetingCountries",
+        "targeting_min_age": "targetingMinAge",
+        "targeting_interests": "targetingInterests",
+        "targeting_locales": "targetingLocales",
+        "tagged_page_ids": "taggedPages",
+    },
+    "linkedin": {
+        "first_comment": "firstComment",
+        "visibility": "visibility",
+        "targeting_locales": "targetingLocales",
+        "tagged_organization_ids": "taggedOrganizations",
+    },
+    "tiktok": {
+        "allow_comments": "allowComments",
+        "allow_duet": "allowDuet",
+    },
+    "x": {
+        "reply_settings": "replySettings",
+    },
+    "pinterest": {
+        "board_id": "boardId",
+        "title": "title",
+        "destination_link": "link",
+    },
+    "google_business": {
+        "post_type": "topicType",
+        "cta_type": "actionType",
+        "cta_url": "actionUrl",
+        "event_title": "eventTitle",
+        "event_start": "eventStartTime",
+        "event_end": "eventEndTime",
+        "offer_coupon_code": "couponCode",
+        "offer_redeem_url": "redeemOnlineUrl",
+        "offer_terms": "termsConditions",
+    },
+    "youtube": {
+        "title": "title",
+        "privacy": "privacyStatus",
+        # A URL by the time it gets here, not a `MediaAsset` id — `options.
+        # resolve` renders `media`-kind options the same way it renders the
+        # media list, because a provider cannot fetch a row from our database.
+        "thumbnail_media_id": "thumbnailUrl",
+    },
+}
+
+
+def _provider_options(platform: str, options: dict[str, Any]) -> dict[str, Any]:
+    """Renamed for the vendor, and absolutised where the *declaration* says a
+    value is a media reference.
+
+    **`kind == "media"`, not a naming convention.** Whether an option
+    references a `MediaAsset` is already a first-class fact `rules.py`
+    declares (`content.services.options` routes the tenancy check and the
+    URL-rendering off it) — this used to re-derive the same fact by checking
+    whether the key ended in `_media_id`, a guess a differently-named media
+    option would silently fail. Consulting the declaration is what
+    `test_every_media_option_declares_itself_as_one` already holds every
+    other reader of `kind` to.
+    """
+    mapping = PROVIDER_OPTION_FIELDS.get(platform, {})
+    declared = options_for(platform)
+    resolved: dict[str, Any] = {}
+    for key, value in options.items():
+        if key not in mapping:
+            continue
+        option = declared.get(key)
+        is_media = option is not None and option.kind == "media"
+        resolved[mapping[key]] = _absolute(value) if is_media else value
+    return resolved

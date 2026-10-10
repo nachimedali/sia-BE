@@ -22,6 +22,7 @@ class ProductFormat(models.TextChoices):
 
 
 class HashtagStyle(models.TextChoices):
+    NONE = "NONE", "None"
     MINIMAL = "MINIMAL", "Minimal"
     MODERATE = "MODERATE", "Moderate"
     HEAVY = "HEAVY", "Heavy"
@@ -31,6 +32,28 @@ class EmojiStyle(models.TextChoices):
     NONE = "NONE", "None"
     LIGHT = "LIGHT", "Light"
     EXPRESSIVE = "EXPRESSIVE", "Expressive"
+
+
+class CaptionLength(models.TextChoices):
+    SHORT = "short", "Short"
+    MEDIUM = "medium", "Medium"
+    STORY = "story", "Story"
+
+
+class ApprovalMode(models.TextChoices):
+    """Who this product's posts are meant to be signed off by. A *preference*
+    the review queue reads; the workspace's approval chain (C-02) is what
+    actually gates a publish, and a product cannot loosen it."""
+
+    ME = "me", "Me"
+    MANAGER = "manager", "Brand manager"
+    TWO_STEP = "two", "Two-step"
+
+
+class CampaignGoal(models.TextChoices):
+    AWARENESS = "awareness", "Awareness"
+    TRAFFIC = "traffic", "Traffic"
+    SALES = "sales", "Sales"
 
 
 class Product(models.Model):
@@ -77,6 +100,61 @@ class Product(models.Model):
     hashtags_style = models.CharField(max_length=16, choices=HashtagStyle.choices, blank=True)
     emoji_style = models.CharField(max_length=16, choices=EmojiStyle.choices, blank=True)
     ctas = models.JSONField(default=list, blank=True)
+
+    # --- The product brief (product-new.html) -----------------------------
+    #
+    # Narrow overrides on the workspace's taste (L-1 / C-08), never a second
+    # voice identity: the sliders, word lists and rules below are *layered on*
+    # the workspace's TasteProfile at generation time and screened the same way
+    # (`taste.services.profiles.constraints_for`). Typed columns for scalars,
+    # validated JSON for lists; every list that names a catalog row holds the
+    # row's *key* (`products.brief`), so renaming a label rewrites nothing.
+    sku = models.CharField(max_length=64, blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    price_currency = models.CharField(max_length=3, default="TND")
+    product_url = models.URLField(max_length=500, blank=True)
+    short_description = models.CharField(max_length=160, blank=True)
+    features = models.JSONField(default=list, blank=True)
+    audience = models.JSONField(default=list, blank=True, help_text="`audience` option keys.")
+    languages = models.JSONField(
+        default=list, blank=True, help_text="Caption languages, FR/EN (L-6)."
+    )
+
+    tone = models.JSONField(default=dict, blank=True, help_text="formal/bold/modern/poetic, 0-100.")
+    tone_preset = models.CharField(max_length=40, blank=True)
+    use_words = models.JSONField(default=list, blank=True)
+    avoid_words = models.JSONField(default=list, blank=True)
+    caption_length = models.CharField(max_length=8, choices=CaptionLength.choices, blank=True)
+
+    scenes = models.JSONField(default=list, blank=True, help_text="`scene` option keys.")
+    lights = models.JSONField(default=list, blank=True, help_text="`light` option keys.")
+    people = models.CharField(max_length=40, blank=True, help_text="A `cast` option key.")
+    brand_colors = models.JSONField(default=list, blank=True)
+    aspects = models.JSONField(default=list, blank=True, help_text="`aspect` option keys.")
+
+    must_include = models.JSONField(default=list, blank=True)
+    claims = models.JSONField(default=list, blank=True, help_text="[{key, proof_media}]")
+    ramadan_quiet_hours = models.BooleanField(default=False)
+    no_children = models.BooleanField(default=False)
+    mention_price = models.BooleanField(default=False)
+    approval_mode = models.CharField(max_length=8, choices=ApprovalMode.choices, blank=True)
+    legal_mention = models.TextField(blank=True)
+    rules_reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    photo_policy = models.JSONField(
+        default=dict, blank=True, help_text="bg_remove / restage / unaltered / logo_legible."
+    )
+    reference_tags = models.JSONField(
+        default=dict, blank=True, help_text="{media id: shot_tag key} for reference_images."
+    )
+
+    platform_plan = models.JSONField(
+        default=dict, blank=True, help_text="{platform: {formats: [...], per_week: n}}"
+    )
+    campaign_goal = models.CharField(max_length=12, choices=CampaignGoal.choices, blank=True)
+    campaign_starts = models.DateField(null=True, blank=True)
+    campaign_ends = models.DateField(null=True, blank=True)
+    brand_hashtags = models.JSONField(default=list, blank=True)
 
     # Both server-controlled: `products.services.completeness.recompute_completeness`
     # is the only writer (implementation.md Phase 5.2).
@@ -236,6 +314,21 @@ class AutopilotDraft(models.Model):
     )
     post = models.ForeignKey(
         "content.Post",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="autopilot_drafts",
+    )
+    #: The reviewable proposal this slot produced (C-01, P5-07). **The draft
+    #: is autopilot's slot bookkeeping — `scheduled_for`, `strategy`, the
+    #: platform rotation — and the candidate is the thing a person judges.**
+    #: Approval goes through `taste.services.candidates`, so a `Decision` is
+    #: written before anything becomes a `Post`; nothing here constructs one.
+    #:
+    #: Nullable for the rows that predate Phase 5, which have no candidate and
+    #: never will — backfilling one would invent a review that never happened.
+    candidate = models.ForeignKey(
+        "taste.ContentCandidate",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

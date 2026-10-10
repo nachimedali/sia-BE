@@ -109,6 +109,18 @@ def snooze(reminder: Reminder, snoozed_to: dt.datetime) -> Reminder:
     return reminder
 
 
+def withdraw(post: Post) -> int:
+    """Stand down every reminder still waiting to go out for this post.
+
+    `SKIPPED`, not deleted — the row is the record that one was armed. Unlike
+    `skip`, the post is left where it is: the caller (unschedule, cancel) owns
+    the post's next status. Returns how many were withdrawn.
+    """
+    return Reminder.objects.filter(
+        post=post, state__in=[ReminderState.ARMED, ReminderState.SNOOZED]
+    ).update(state=ReminderState.SKIPPED)
+
+
 def skip(reminder: Reminder) -> Reminder:
     reminder.state = ReminderState.SKIPPED
     reminder.save(update_fields=["state", "updated_at"])

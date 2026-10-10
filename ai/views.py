@@ -26,17 +26,27 @@ from rest_framework.views import APIView
 from ai.models import Generation, VoiceProfile
 from ai.permissions import HasSufficientCredits
 from ai.serializers import (
+    CreativeCatalogSerializer,
+    CreativeOptionSerializer,
+    EditVariantRequestSerializer,
     GenerateRequestSerializer,
     GenerationSerializer,
+    HashtagSuggestionSerializer,
     ReviseRequestSerializer,
+    VariantCommitSerializer,
+    VariantSelectionSerializer,
     VoiceProfileSerializer,
 )
+from ai.services import creative as creative_service
+from ai.services import hashtags
+from ai.services import variants as variant_service
 from ai.services.pipeline import create_generation
 from ai.services.revisions import create_revision
 from ai.tasks import run_generation_task
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace, authenticated_user
+from common.workspaces import authenticated_user, request_workspace
+from content.serializers import PostSerializer
 
 
 class GenerateView(APIView):
@@ -58,7 +68,7 @@ class GenerateView(APIView):
         ),
     )
     def post(self, request: Request) -> Response:
-        workspace = active_workspace(request)
+        workspace = request_workspace(request)
         serializer = GenerateRequestSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -74,7 +84,10 @@ class GenerateView(APIView):
             aspect=data["aspect"],
             render_style=data["render_style"],
             scene=data["scene"],
+            creative=data.get("creative") or {},
             is_batch=data["is_batch"],
+            source_media=data.get("source_media"),
+            paid_slots=data.get("paid_slots"),
         )
         run_generation_task.delay(generation_id=generation.id, n=data["n"])
         # A no-op in production (the task runs on a worker, asynchronously,
@@ -117,6 +130,102 @@ class GenerationViewSet(
         child.refresh_from_db()  # see GenerateView.post
         return Response(GenerationSerializer(child).data, status=status.HTTP_201_CREATED)
 
+    # ---- variant economics (X-09) -------------------------------------
+    #
+    # Two verbs on the generation rather than a `/variants/{id}/` resource:
+    # the allowance is a property of the *generation*, and a per-variant
+    # endpoint would have to re-derive it on every call, which is how the
+    # number the user sees and the number that enforces drift apart.
+
+    def _variant_action(self, request: Request, act: Any) -> Response:
+        """The shared half of `select` and `unlock`.
+
+        Both take the same body, act on the same object and answer with the
+        same shape; only the verb differs. Written once so the next parameter
+        one of them gains does not have to be remembered for the other.
+        """
+        generation = self.get_object()
+        payload = VariantSelectionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        act(
+            generation,
+            variant_ids=payload.validated_data["variant_ids"],
+            actor=authenticated_user(request),
+        )
+        # Re-read **through the viewset's own queryset**, not
+        # `refresh_from_db()`. The bulk updates in the service bypass Python's
+        # object cache so something must be re-read, but a bare refresh drops
+        # the `variants__media_asset` prefetch and the serializer then issues
+        # one query per variant — an N+1 on every click of the dock.
+        fresh = self.get_queryset().get(pk=generation.pk)
+        return Response(GenerationSerializer(fresh).data)
+
+    @extend_schema(
+        request=VariantSelectionSerializer,
+        responses={200: GenerationSerializer},
+        summary="Choose which variants to keep",
+        description=(
+            "Replaces the selection with exactly these variants. Answers 402 "
+            "`variant_allowance_exceeded` past the paid slots, carrying the "
+            "unlock price and how many need buying."
+        ),
+    )
+    @action(detail=True, methods=["post"])
+    def select(self, request: Request, pk: str | None = None) -> Response:
+        return self._variant_action(request, variant_service.select)
+
+    @extend_schema(
+        request=VariantSelectionSerializer,
+        responses={200: GenerationSerializer},
+        summary="Buy surplus variants at the unlock price",
+    )
+    @action(detail=True, methods=["post"])
+    def unlock(self, request: Request, pk: str | None = None) -> Response:
+        return self._variant_action(request, variant_service.unlock)
+
+    @extend_schema(
+        request=VariantCommitSerializer,
+        responses={201: PostSerializer(many=True)},
+        summary="Send the selection to the calendar as drafts",
+        description=(
+            "One draft post per selected variant. With `scheduled_at` it goes "
+            "through the schedule service, so the horizon, quota and approval "
+            "gates apply exactly as they would to a hand-typed post. Nothing "
+            "here publishes (L-2)."
+        ),
+    )
+    @action(detail=True, methods=["post"])
+    def commit(self, request: Request, pk: str | None = None) -> Response:
+        generation = self.get_object()
+        payload = VariantCommitSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        posts = variant_service.commit(
+            generation,
+            actor=authenticated_user(request),
+            scheduled_at=payload.validated_data.get("scheduled_at"),
+        )
+        return Response(PostSerializer(posts, many=True).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request=EditVariantRequestSerializer,
+        responses={200: GenerationSerializer},
+        summary="Edit a variant's headline or caption",
+        description="Changes the copy only; the picture is immutable.",
+    )
+    @action(detail=True, methods=["post"], url_path="edit-variant")
+    def edit_variant(self, request: Request, pk: str | None = None) -> Response:
+        generation = self.get_object()
+        payload = EditVariantRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        variant_service.edit_copy(
+            generation,
+            variant_id=payload.validated_data["variant"],
+            headline=payload.validated_data.get("headline"),
+            body=payload.validated_data.get("body"),
+        )
+        generation = self.get_queryset().get(pk=generation.pk)
+        return Response(GenerationSerializer(generation).data)
+
 
 class VoiceProfileViewSet(
     WorkspaceScopedQuerySetMixin,
@@ -131,4 +240,68 @@ class VoiceProfileViewSet(
     queryset = VoiceProfile.objects.all()
 
     def perform_create(self, serializer: Any) -> None:
-        serializer.save(workspace=active_workspace(self.request))
+        serializer.save(workspace=request_workspace(self.request))
+
+
+class HashtagSuggestionView(APIView):
+    """Hashtags that are actually working in this workspace's category (P1-13).
+
+    A **read**, not a generation: no provider call, no credits, no quality
+    gate. The corpus is shared per category (D11), so the answer is drawn from
+    what the whole vertical is observably doing rather than from a model's
+    guess — and each row carries the count it was ranked on, because a ranked
+    list with no evidence is an opinion the caller cannot check.
+    """
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: HashtagSuggestionSerializer},
+        summary="Hashtags ranked by use in this category",
+    )
+    def get(self, request: Request) -> Response:
+        ranked = hashtags.rank_for_workspace(request_workspace(request))
+        return Response({"hashtags": [{"tag": row.tag, "count": row.count} for row in ranked]})
+
+
+class CreativeOptionsView(APIView):
+    """The Studio's catalog: every control's choices, and the prices its
+    estimate reads. Read-only — the catalog is edited in admin, and a write
+    here would be a second place to do it."""
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: CreativeCatalogSerializer},
+        summary="The Studio's creative controls",
+        description=(
+            "Scenes, lights, camera angles, cast, moods, palettes, languages, "
+            "calls to action, formats, sliders, toggles, presets and quick tags "
+            "— as data — with the credit price of an image and of a text run."
+        ),
+    )
+    def get(self, request: Request) -> Response:
+        from ai.models import GenerationKind
+        from ai.services.costing import (
+            GenerationCostNotConfiguredError,
+            resolve_pricing,
+            unlock_price,
+        )
+
+        options = {
+            kind: CreativeOptionSerializer(rows, many=True).data
+            for kind, rows in creative_service.catalog().items()
+        }
+        pricing: dict[str, Any] = {}
+        for kind in (GenerationKind.IMAGE, GenerationKind.TEXT):
+            try:
+                row = resolve_pricing(kind=kind, mode="PRODUCT")
+            except GenerationCostNotConfiguredError:
+                pricing[kind] = None
+                continue
+            pricing[kind] = {
+                "credits": row.credits,
+                "variant_pool": row.variant_pool,
+                "unlock_price": unlock_price(row),
+            }
+        return Response({"options": options, "pricing": pricing})

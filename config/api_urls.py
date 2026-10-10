@@ -23,16 +23,45 @@ from accounts.views import (
     ThrottledTokenObtainPairView,
     VerifyEmailView,
 )
-from ai.views import GenerateView, GenerationViewSet, VoiceProfileViewSet
+from ai.video_views import (
+    VideoCatalogueView,
+    VideoEstimateView,
+    VideoRenderDetailView,
+    VideoRenderListView,
+    VideoRenderSendView,
+)
+from ai.views import (
+    CreativeOptionsView,
+    GenerateView,
+    GenerationViewSet,
+    HashtagSuggestionView,
+    VoiceProfileViewSet,
+)
 from analytics.views import (
     AnalyticsBestTimesView,
     AnalyticsCommentsView,
     AnalyticsOverviewView,
     AnalyticsPostsView,
     AnalyticsSentimentView,
+    AudienceCommentReplyView,
+    AudienceDemographicsView,
+    CompetitorComparisonView,
+    CompetitorDetailView,
+    CompetitorView,
+    ReportRunShareView,
+    ReportShareRevokeView,
+    ReportViewSet,
     RepurposeAcceptView,
     RepurposeDismissView,
     RepurposeQueueView,
+    SharedReportView,
+    ZernioCommentWebhookView,
+)
+from benchmarks.views import (
+    BenchmarkGrantView,
+    BenchmarkListView,
+    BenchmarkParticipationView,
+    BenchmarkRevokeView,
 )
 from billing.views import (
     BillingPortalView,
@@ -45,14 +74,51 @@ from billing.views import (
     SubscribeView,
     VideoLedgerView,
 )
+from brand.views import (
+    BrandCoreView,
+    BrandImportApplyView,
+    BrandImportDetailView,
+    BrandImportLatestView,
+    BrandImportListView,
+    BrandImportReviewView,
+    BrandImportSkipView,
+    ProductImportDetailView,
+    ProductImportImageView,
+    ProductImportListView,
+)
 from categories.views import CategoryListView
 from channels.views import ChannelConnectView, SocialAccountViewSet
+from checks.views import PostChecksView
+from collaboration.views import (
+    ReviewApproveView,
+    ReviewCommentView,
+    ReviewLinkRevokeView,
+    ReviewLinkView,
+    ReviewPacketView,
+    ThreadViewSet,
+)
 from common.health import HealthView
-from content.views import MediaAssetViewSet, PostViewSet
+from content.views import (
+    MediaAssetViewSet,
+    PlatformRuleListView,
+    PostTemplateViewSet,
+    PostViewSet,
+    RecurrenceRuleViewSet,
+)
+from learn.views import DigestViewSet, ProposedRuleViewSet
+from notifications.views import NotificationListView, NotificationPreferenceView
 from onboarding.views import OnboardingCompleteView, OnboardingView
+from planning.views import (
+    BulkOperationViewSet,
+    CampaignViewSet,
+    LabelViewSet,
+    SavedViewViewSet,
+    TimetableViewSet,
+)
 from products.views import (
     AutopilotApproveView,
     AutopilotQueueView,
+    AutopilotReadinessView,
     AutopilotRejectView,
     ProductViewSet,
 )
@@ -63,16 +129,48 @@ from reminders.views import (
     ReminderSnoozeView,
     ReminderViewSet,
 )
+from taste.views import (
+    ContentCandidateViewSet,
+    RuleSetViewSet,
+    TasteProfileViewSet,
+)
+from tools.views import ToolListView, ToolReadinessView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
-from workspaces.views import AuditLogView, MembershipViewSet, WorkspaceSettingsView
+from workspaces.views import (
+    ApiKeyView,
+    ApprovalChainStageView,
+    AuditLogView,
+    InvitationAcceptView,
+    MembershipViewSet,
+    OrganizationAddonView,
+    OrganizationListView,
+    WorkspaceInviteView,
+    WorkspaceListCreateView,
+    WorkspaceProfileView,
+    WorkspaceSettingsView,
+)
 
 router = DefaultRouter()
 router.register("posts", PostViewSet, basename="post")
 router.register("media", MediaAssetViewSet, basename="media-asset")
+router.register("post-templates", PostTemplateViewSet, basename="post-template")
+router.register("recurrence-rules", RecurrenceRuleViewSet, basename="recurrence-rule")
+router.register("threads", ThreadViewSet, basename="thread")
+router.register("campaigns", CampaignViewSet, basename="campaign")
+router.register("labels", LabelViewSet, basename="label")
+router.register("saved-views", SavedViewViewSet, basename="saved-view")
+router.register("timetables", TimetableViewSet, basename="timetable")
+router.register("bulk-operations", BulkOperationViewSet, basename="bulk-operation")
+router.register("taste-profiles", TasteProfileViewSet, basename="taste-profile")
+router.register("candidates", ContentCandidateViewSet, basename="candidate")
+router.register("rulesets", RuleSetViewSet, basename="ruleset")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
 router.register("reminders", ReminderViewSet, basename="reminder")
+router.register("reports", ReportViewSet, basename="report")
+router.register("digests", DigestViewSet, basename="digest")
+router.register("rule-proposals", ProposedRuleViewSet, basename="rule-proposal")
 router.register("channels", SocialAccountViewSet, basename="social-account")
 router.register("workspaces/members", MembershipViewSet, basename="membership")
 
@@ -99,7 +197,51 @@ urlpatterns = [
         name="auth-password-reset-confirm",
     ),
     # --- onboarding ---
+    # --- organization & workspace (BUILD-PLAN Phase 0, P0-46..P0-50) ---
+    path("organizations/", OrganizationListView.as_view(), name="organizations"),
+    path("workspaces/", WorkspaceListCreateView.as_view(), name="workspaces"),
+    path("workspaces/<int:pk>/invite/", WorkspaceInviteView.as_view(), name="workspace-invite"),
+    # Unauthenticated by necessity: the invitee may have no account yet, and
+    # the token is the credential. Hash-only, single-use, 14 days.
+    path("invites/<str:token>/accept/", InvitationAcceptView.as_view(), name="invite-accept"),
+    path("billing/addons/", OrganizationAddonView.as_view(), name="billing-addons"),
+    # C-11 / P0-04: `/app/tools` had a frontend and no backend, so it 404'd.
+    # Built rather than removed — six small forms over machinery that already
+    # exists. `POST` is the one endpoint that calls a provider in-request; see
+    # `tools/views.py` for why that exception is scoped rather than general.
+    path("tools/", ToolListView.as_view(), name="tools"),
+    # **Before the slug route, not after it**: `<str:slug>` would happily match
+    # "readiness" and answer with a 404 from the runner instead.
+    path("tools/readiness/", ToolReadinessView.as_view(), name="tools-readiness"),
+    path("tools/<str:slug>/", ToolRunView.as_view(), name="tool-run"),
+    # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
+    path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
     path("onboarding/", OnboardingView.as_view(), name="onboarding"),
+    # --- brand import (steps-plan S1) ---
+    path("brand/imports/", BrandImportListView.as_view(), name="brand-imports"),
+    path("brand/imports/latest/", BrandImportLatestView.as_view(), name="brand-import-latest"),
+    path("brand/imports/skip/", BrandImportSkipView.as_view(), name="brand-import-skip"),
+    path("brand/imports/<int:pk>/", BrandImportDetailView.as_view(), name="brand-import"),
+    path(
+        "brand/imports/<int:pk>/review/",
+        BrandImportReviewView.as_view(),
+        name="brand-import-review",
+    ),
+    path(
+        "brand/imports/<int:pk>/apply/", BrandImportApplyView.as_view(), name="brand-import-apply"
+    ),
+    path("brand/core/", BrandCoreView.as_view(), name="brand-core"),
+    path("brand/product-imports/", ProductImportListView.as_view(), name="product-imports"),
+    path(
+        "brand/product-imports/<int:pk>/",
+        ProductImportDetailView.as_view(),
+        name="product-import",
+    ),
+    path(
+        "brand/product-imports/<int:pk>/images/<int:index>/",
+        ProductImportImageView.as_view(),
+        name="product-import-image",
+    ),
     path("onboarding/complete/", OnboardingCompleteView.as_view(), name="onboarding-complete"),
     # --- billing ---
     path("billing/plans/", PlanListView.as_view(), name="billing-plans"),
@@ -132,6 +274,54 @@ urlpatterns = [
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
     path("analytics/comments/", AnalyticsCommentsView.as_view(), name="analytics-comments"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
+    # --- Phase 6: demographics and competitors ---
+    # Both answer for the caller's own workspace, so there is no id for the
+    # tenancy sweep to walk; the competitor detail route resolves its pk
+    # through `competitors.tracked`, which is workspace-filtered.
+    path(
+        "analytics/demographics/",
+        AudienceDemographicsView.as_view(),
+        name="analytics-demographics",
+    ),
+    path("analytics/competitors/", CompetitorView.as_view(), name="analytics-competitors"),
+    path(
+        "analytics/competitors/<int:pk>/",
+        CompetitorDetailView.as_view(),
+        name="analytics-competitor-detail",
+    ),
+    path(
+        "analytics/competitors/comparison/",
+        CompetitorComparisonView.as_view(),
+        name="analytics-competitor-comparison",
+    ),
+    # --- Phase 6: report shares ---
+    # `{pk}` is a run, resolved through a workspace-filtered queryset inside
+    # the view, so another tenant's run is a 404 and never a 403.
+    path("reports/runs/<int:pk>/share/", ReportRunShareView.as_view(), name="report-share"),
+    path(
+        "reports/runs/<int:pk>/share/<int:link_id>/revoke/",
+        ReportShareRevokeView.as_view(),
+        name="report-share-revoke",
+    ),
+    # Public and token-scoped, exactly like the review and reminder packets: a
+    # token is not a workspace-scoped pk, so the sweep has nothing to walk and
+    # `report_share.resolve` is the access control.
+    path("shared-reports/<str:token>/", SharedReportView.as_view(), name="shared-report"),
+    # L-4a. A plain path like its siblings, and the `{pk}` is resolved through
+    # a workspace-filtered queryset inside the view — another tenant's comment
+    # id is a 404, not a 403 (Part 7 rule 3).
+    path(
+        "analytics/comments/<int:pk>/reply/",
+        AudienceCommentReplyView.as_view(),
+        name="analytics-comment-reply",
+    ),
+    # Unauthenticated by necessity, authenticated by signature — the same
+    # shape as the Stripe handler, and next to it in spirit if not in the file.
+    path(
+        "webhooks/zernio/comment/",
+        ZernioCommentWebhookView.as_view(),
+        name="webhook-zernio-comment",
+    ),
     path(
         "analytics/repurpose/<int:pk>/accept/",
         RepurposeAcceptView.as_view(),
@@ -148,6 +338,9 @@ urlpatterns = [
     # queryset — the same guarantee the tenancy sweep (A52) checks, applied
     # where the sweep does not reach. The config itself is an action on
     # `ProductViewSet`, which the sweep does walk.
+    # Ungated on purpose (X-08): the plan is the first row of the answer, not
+    # a 402 in place of one.
+    path("autopilot/readiness/", AutopilotReadinessView.as_view(), name="autopilot-readiness"),
     path("autopilot/queue/", AutopilotQueueView.as_view(), name="autopilot-queue"),
     path("autopilot/<int:pk>/approve/", AutopilotApproveView.as_view(), name="autopilot-approve"),
     path("autopilot/<int:pk>/reject/", AutopilotRejectView.as_view(), name="autopilot-reject"),
@@ -157,6 +350,24 @@ urlpatterns = [
     # same corpus (D11) — so there is no workspace-scoped object for the
     # tenancy sweep (A52) to walk.
     path("trends/", TrendListView.as_view(), name="trends"),
+    # Phase 8. Not ViewSets: each answers for the caller's own workspace, and
+    # the cohort rows behind them belong to no workspace at all.
+    path("benchmarks/", BenchmarkListView.as_view(), name="benchmarks"),
+    path(
+        "benchmarks/participation/",
+        BenchmarkParticipationView.as_view(),
+        name="benchmark-participation",
+    ),
+    path(
+        "benchmarks/participation/grant/",
+        BenchmarkGrantView.as_view(),
+        name="benchmark-participation-grant",
+    ),
+    path(
+        "benchmarks/participation/revoke/",
+        BenchmarkRevokeView.as_view(),
+        name="benchmark-participation-revoke",
+    ),
     path("trends/refresh/", TrendRefreshView.as_view(), name="trends-refresh"),
     # --- workspaces: collaboration & roles (design.md §8.8) ---
     # Plain paths: both answer for the caller's own workspace rather than an
@@ -164,11 +375,68 @@ urlpatterns = [
     # walk. `MembershipViewSet`, which does return objects by pk, is
     # registered on `router` above instead.
     path("workspaces/settings/", WorkspaceSettingsView.as_view(), name="workspace-settings"),
+    path("workspaces/profile/", WorkspaceProfileView.as_view(), name="workspace-profile"),
+    # The default chain and its stages. A plain path for the same reason as
+    # the settings toggle above: it answers for the caller's own workspace
+    # rather than an id in the URL, so the tenancy sweep (A52) has nothing
+    # here to walk. Depth is what Advanced buys (P2-13).
+    path(
+        "workspaces/approval-chain/",
+        ApprovalChainStageView.as_view(),
+        name="workspace-approval-chain",
+    ),
     path("workspaces/audit-log/", AuditLogView.as_view(), name="workspace-audit-log"),
+    # --- notifications (P2-12) ---
+    # Plain paths: both answer for the caller in their current workspace rather
+    # than for an id in the URL, so the tenancy sweep (A52) has nothing to walk.
+    # Scoped by user *and* workspace — a colleague reading your notifications
+    # would be a leak inside a tenant rather than across one.
+    path("notifications/", NotificationListView.as_view(), name="notifications"),
+    path(
+        "notifications/preferences/",
+        NotificationPreferenceView.as_view(),
+        name="notification-preferences",
+    ),
     # --- reference data ---
     path("categories/", CategoryListView.as_view(), name="categories"),
+    # Platform facts, not tenant data — a caption limit is true whoever
+    # asks. Served rather than mirrored in the frontend so `rules.py`
+    # stays the one declaration (P1-05).
+    path("platform-rules/", PlatformRuleListView.as_view(), name="platform-rules"),
     # --- ai ---
     path("ai/generate/", GenerateView.as_view(), name="ai-generate"),
+    # A read, not a generation (P1-13): the corpus is category-shared, so
+    # there is no workspace-scoped object here for the tenancy sweep to walk.
+    path("ai/hashtags/", HashtagSuggestionView.as_view(), name="ai-hashtags"),
+    path("ai/creative-options/", CreativeOptionsView.as_view(), name="ai-creative-options"),
+    # --- video (steps-plan S3) ---
+    # Plain paths: `{pk}` is resolved through a workspace-filtered queryset in
+    # the view, so another tenant's render is a 404 (Part 7 rule 3).
+    path("ai/video/catalogue/", VideoCatalogueView.as_view(), name="ai-video-catalogue"),
+    path("ai/video/estimate/", VideoEstimateView.as_view(), name="ai-video-estimate"),
+    path("ai/video/renders/", VideoRenderListView.as_view(), name="ai-video-renders"),
+    path("ai/video/renders/send/", VideoRenderSendView.as_view(), name="ai-video-send"),
+    path("ai/video/renders/<int:pk>/", VideoRenderDetailView.as_view(), name="ai-video-render"),
+    # --- guest review: sharing a post with someone who has no account ---
+    # `{pk}` is resolved through a workspace-filtered queryset inside the view,
+    # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the
+    # same guarantee the sweep (A52) checks, applied where it does not reach.
+    path("posts/<int:pk>/share/", ReviewLinkView.as_view(), name="post-share"),
+    # S4: the post's pre-publish checks. `{pk}` resolves through a workspace-
+    # and visibility-filtered queryset in the view (Part 7 rule 3).
+    path("posts/<int:pk>/checks/", PostChecksView.as_view(), name="post-checks"),
+    path(
+        "posts/<int:pk>/share/<int:link_id>/revoke/",
+        ReviewLinkRevokeView.as_view(),
+        name="post-share-revoke",
+    ),
+    # Public and token-scoped, exactly like the reminder packet below: a token
+    # is not a workspace-scoped pk, so the tenancy sweep has nothing to walk
+    # and `collaboration.review.resolve` is the access control instead. The
+    # audience narrowing on top of it is what P2-G1 checks.
+    path("review/<str:token>/", ReviewPacketView.as_view(), name="review-packet"),
+    path("review/<str:token>/approve/", ReviewApproveView.as_view(), name="review-approve"),
+    path("review/<str:token>/comment/", ReviewCommentView.as_view(), name="review-comment"),
     # --- reminders: public, token-scoped, no login (design.md §8.5) ---
     # Not on `router` — a token is not a workspace-scoped pk, so the
     # cross-workspace tenancy sweep (A52) has nothing to walk here;

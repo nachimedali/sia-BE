@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import ClassVar
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+
+from common.records import AppendOnly
+from common.visibility import Visibility
 
 
 class Platform(models.TextChoices):
@@ -33,6 +37,13 @@ class Platform(models.TextChoices):
     YOUTUBE = "youtube", "YouTube"
     THREADS = "threads", "Threads"
     FACEBOOK = "facebook", "Facebook"
+    # --- Phase 4 (P4-01, P4-02, P4-03) ---
+    #: `"x"`, not `"twitter"`. The value is what the provider and every stored
+    #: `PostTarget` carry, so it is chosen once and never renamed — the display
+    #: label is where a rebrand belongs.
+    X = "x", "X"
+    PINTEREST = "pinterest", "Pinterest"
+    GOOGLE_BUSINESS = "google_business", "Google Business Profile"
 
 
 class PostStatus(models.TextChoices):
@@ -51,6 +62,18 @@ class PostStatus(models.TextChoices):
     PUBLISHED = "PUBLISHED", "Published"
     FAILED = "FAILED", "Failed"
     PAUSED = "PAUSED", "Paused"
+    #: Terminal, by a person's decision (the post editor's "Cancel this post").
+    #: Archived with its revisions, threads and media — never deleted, never
+    #: publishable, and reproducible as a fresh draft. Distinct from `REJECTED`,
+    #: which is a reviewer's verdict on the content, not the team's decision
+    #: not to post it.
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+#: A post with a slot: an auto-publish time or an armed reminder. One set, read
+#: by the schedule service (unschedule) and by regeneration (which refuses to
+#: rewrite content that is already armed).
+SLOTTED_STATUSES = frozenset({PostStatus.SCHEDULED, PostStatus.REMINDER_ARMED})
 
 
 class DeliveryMode(models.TextChoices):
@@ -58,11 +81,51 @@ class DeliveryMode(models.TextChoices):
     AUTO_PUBLISH = "AUTO_PUBLISH", "Auto-publish"
 
 
+class PostFormat(models.TextChoices):
+    """What shape a post takes on one platform (P4-04).
+
+    Declared in full, gated per platform by `rules.py`'s `formats` table — the
+    same shape `PostStatus` and `GenerationMode` already use. A platform does
+    not get a format because the enum has one; it gets it by declaring a row,
+    and `PostTarget.clean` refuses the rest.
+
+    `SHORT` and `REEL` are **not** aliases. They are two platforms' names for
+    a similar idea with different constraints and different provider fields,
+    and collapsing them would mean the composer offering YouTube a format
+    YouTube has never heard of.
+    """
+
+    FEED = "FEED", "Feed post"
+    STORY = "STORY", "Story"
+    REEL = "REEL", "Reel"
+    SHORT = "SHORT", "Short"
+    CAROUSEL = "CAROUSEL", "Carousel"
+    PDF_CAROUSEL = "PDF_CAROUSEL", "Document carousel"
+
+
+class ContentKind(models.TextChoices):
+    """What a `Post` *is* (P3-01).
+
+    **A subtype, not a sibling model.** A sibling would duplicate seven
+    subsystems to avoid one column — approval chains, threads, revisions,
+    labels, campaign membership, permissions and quota counting — and the
+    calendar alone settles it: every view, filter, bulk action and saved view
+    would have to merge two querysets forever, and each new one would have to
+    remember to.
+    """
+
+    SOCIAL = "SOCIAL", "Social post"
+    DOC = "DOC", "Document"
+
+
 class PostSource(models.TextChoices):
     MANUAL = "MANUAL", "Manual"
     AI = "AI", "AI"
     AUTOPILOT = "AUTOPILOT", "Autopilot"
     REPURPOSE = "REPURPOSE", "Repurpose"
+    #: A finished piece the team brought in rather than one the product made —
+    #: the calendar's "Uploaded" filter.
+    UPLOAD = "UPLOAD", "Uploaded"
 
 
 class Post(models.Model):
@@ -78,12 +141,31 @@ class Post(models.Model):
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="authored_posts"
     )
+    content_kind = models.CharField(
+        max_length=8, choices=ContentKind.choices, default=ContentKind.SOCIAL
+    )
     master_body = models.TextField(blank=True)
+    #: A `DOC`'s rich text, as the structured block list `content.services.blocks`
+    #: declares — **never HTML** (P3-02). Kept out of `master_body` rather than
+    #: overloading it: two formats in one column would make every reader of that
+    #: field — the renderer, the digest, search — parse before it could trust,
+    #: and the first one to forget would render a JSON array to a customer.
+    doc_body = models.JSONField(default=list, blank=True)
     media_assets = models.ManyToManyField(
         "content.MediaAsset", through="PostMediaAttachment", related_name="posts", blank=True
     )
 
     status = models.CharField(max_length=20, choices=PostStatus.choices, default=PostStatus.DRAFT)
+    #: Whether a guest reviewer may load this post at all (P2-03). Defaulting
+    #: to `INTERNAL` is the whole point: a draft becoming client-visible
+    #: because a field was forgotten is the one failure here that cannot be
+    #: walked back, since by then the client has read it. Enforced by
+    #: `common.visibility.VisibilityScopedQuerySetMixin` in the queryset, never
+    #: by a serializer omitting a field — a serializer that hides a row still
+    #: loaded it, still counted it in a page total, and still answered 200.
+    visibility = models.CharField(
+        max_length=8, choices=Visibility.choices, default=Visibility.INTERNAL
+    )
     # Server-controlled: `POST /posts/{id}/schedule/` (Phase 8) is the only
     # writer. Exposing these on the generic Post serializer now would let a
     # client set a delivery mode or a schedule the horizon/quota checks that
@@ -91,7 +173,38 @@ class Post(models.Model):
     delivery_mode = models.CharField(max_length=16, choices=DeliveryMode.choices, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
 
+    # --- approval (BUILD-PLAN P2-07, P2-10, P2-11) -------------------------
+    #: Where the post sits in its workspace's approval chain. Null unless it is
+    #: `PENDING_REVIEW` on a blocking chain. **No new statuses**: `PENDING_REVIEW`
+    #: means "at stage N" and this column says which — putting the chain's shape
+    #: into `PostStatus` would make every new chain shape a migration.
+    current_stage = models.ForeignKey(
+        "workspaces.ApprovalStage",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="posts_in_review",
+    )
+    #: The author's *proposal*, captured at submit time and consumed by the
+    #: final approval (P2-10). Deliberately not `scheduled_at`: that column has
+    #: exactly one writer, and a proposal written straight into it would skip
+    #: the horizon, quota and entitlement checks living behind it.
+    proposed_delivery_mode = models.CharField(
+        max_length=16, choices=DeliveryMode.choices, blank=True
+    )
+    proposed_scheduled_at = models.DateTimeField(null=True, blank=True)
+    #: Set when the last approval stage clears (P2-11). While it is set, every
+    #: content mutation is a 409 at the **service** layer — otherwise "approved"
+    #: describes content that nobody approved. Revisions stay readable; an
+    #: `admin` unlocks, and that writes an audit entry.
+    locked_at = models.DateTimeField(null=True, blank=True)
+
     source = models.CharField(max_length=16, choices=PostSource.choices, default=PostSource.MANUAL)
+    #: Where this is *meant* to play, before any `PostTarget` exists. Targets are
+    #: built when the post is scheduled (`build_targets`), so until then the
+    #: calendar has nothing to show a platform badge from; this is the plan the
+    #: Studio or the uploader named. Never consulted to publish.
+    planned_platforms = models.JSONField(default=list, blank=True)
     category = models.ForeignKey(
         "categories.Category",
         null=True,
@@ -136,25 +249,61 @@ class Post(models.Model):
         preview = (self.master_body[:40] + "…") if len(self.master_body) > 40 else self.master_body
         return preview or f"Post {self.pk}"
 
+    def ordered_attachments(self) -> list[PostMediaAttachment]:
+        """This post's media, in carousel order — **base rows only**.
+
+        Deliberately not `self.media_assets.order_by(...)`: ordering through
+        a reverse accessor on MediaAsset would join on *every* post that
+        asset is attached to, not just this one, corrupting both the order
+        and the row count the moment an asset is reused on a second post.
+
+        A bare `.all()` rather than re-chaining `.select_related()` /
+        `.order_by()` here on purpose: PostMediaAttachment.Meta already
+        orders by ("order", "id"), and any extra clause on the manager would
+        build a new queryset that no longer matches a `Prefetch` set up by a
+        caller (content/views.py) — chaining anything defeats the cache and
+        re-queries per post.
+
+        Which is exactly why the per-target alt-text rows (P1-06) are filtered
+        **in Python** rather than with `.filter()`: a filter here would defeat
+        the prefetch and re-query once per post in a list response. The base
+        rows are the ones with no `target_override`; an override row describes
+        the same asset for one platform and is not a second slide.
+        """
+        return [a for a in self.media_attachments.all() if a.target_override_id is None]
+
     def ordered_media(self) -> list[MediaAsset]:
-        # Deliberately not `self.media_assets.order_by(...)`: ordering through
-        # a reverse accessor on MediaAsset would join on *every* post that
-        # asset is attached to, not just this one, corrupting both the order
-        # and the row count the moment an asset is reused on a second post.
-        #
-        # A bare `.all()` rather than re-chaining `.select_related()` /
-        # `.order_by()` here on purpose: PostMediaAttachment.Meta already
-        # orders by ("order", "id"), and any extra clause on the manager would
-        # build a new queryset that no longer matches a `Prefetch` set up by a
-        # caller (content/views.py) — chaining anything defeats the cache and
-        # re-queries per post.
-        return [attachment.media_asset for attachment in self.media_attachments.all()]
+        return [attachment.media_asset for attachment in self.ordered_attachments()]
+
+
+#: Long enough for a full descriptive sentence on the most generous platform
+#: and short enough that a paste of the whole caption is refused. A platform
+#: fact, like the char limits in `rules.py`, not a commercial number.
+ALT_TEXT_MAX_LENGTH = 1000
 
 
 class PostMediaAttachment(models.Model):
     """Through table for `Post.media_assets`, ordered — a carousel's slide
     order is content, not an implementation detail, so it needs a place to
     live that a bare `ManyToManyField` does not reliably preserve.
+
+    **Alt text lives here, not on `MediaAsset`** (P1-06). It is a property of
+    *this use of the file in this post*: the same photograph is "our founder
+    at the 2019 launch" in one post and "the espresso machine we still use" in
+    another. Putting it on the asset would force one of those onto the other
+    and, worse, would put a mutable text column on a row that is immutable by
+    design — `test_media_asset_declares_no_mutable_text_field` is what keeps
+    that from being undone by a one-line convenience.
+
+    Two row shapes share this table:
+
+    * **base** — `target_override` null. The post's ordered media, one row per
+      asset. This is what a carousel is made of.
+    * **override** — `target_override` set. Alt text for one platform only,
+      because Instagram and LinkedIn describe the same image to different
+      audiences. Not a second slide; `Post.ordered_attachments` filters them
+      out, and `test_an_override_row_does_not_duplicate_the_media` is the
+      guard on that.
     """
 
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="media_attachments")
@@ -164,25 +313,63 @@ class PostMediaAttachment(models.Model):
         "content.MediaAsset", on_delete=models.PROTECT, related_name="post_attachments"
     )
     order = models.PositiveSmallIntegerField(default=0)
+    alt_text = models.CharField(max_length=ALT_TEXT_MAX_LENGTH, blank=True)
+    #: Null on a base row. Set on a per-platform override, which carries alt
+    #: text and nothing else — `order` on an override row is meaningless, since
+    #: per-target ordering is `PostTarget.media_override`'s job.
+    target_override = models.ForeignKey(
+        "content.PostTarget",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="media_alt_overrides",
+    )
 
     class Meta:
         ordering: ClassVar[list[str]] = ["order", "id"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
-            models.UniqueConstraint(fields=["post", "media_asset"], name="unique_post_media_asset")
+            # Two partial constraints rather than one over three columns:
+            # Postgres treats repeated NULLs as distinct, so a plain
+            # `UNIQUE(post, media_asset, target_override)` would let a post
+            # carry the same asset twice as a base row and publish a
+            # two-slide carousel of one photograph. Same shape, and the same
+            # reason, as `PostTarget`'s pair of constraints.
+            models.UniqueConstraint(
+                fields=["post", "media_asset"],
+                condition=models.Q(target_override__isnull=True),
+                name="unique_post_media_asset",
+            ),
+            models.UniqueConstraint(
+                fields=["post", "media_asset", "target_override"],
+                condition=models.Q(target_override__isnull=False),
+                name="unique_post_media_asset_target_override",
+            ),
         ]
 
     def __str__(self) -> str:
+        if self.target_override_id is not None:
+            return f"{self.post_id}/{self.target_override_id} alt -> {self.media_asset_id}"
         return f"{self.post_id}[{self.order}] -> {self.media_asset_id}"
 
 
 class MediaKind(models.TextChoices):
     IMAGE = "IMAGE", "Image"
     VIDEO = "VIDEO", "Video"
+    #: A PDF, for LinkedIn's document carousel (P4-04). Its own kind rather
+    #: than an image: a PDF that validated as an image would pass every check
+    #: here and be rejected by the provider, which is the failure mode moving
+    #: constraints to `(platform, format)` exists to prevent.
+    DOCUMENT = "DOCUMENT", "Document"
 
 
 class MediaSource(models.TextChoices):
     UPLOAD = "UPLOAD", "Upload"
     GENERATED = "GENERATED", "Generated"
+    #: Produced by cropping or trimming another asset (P1-12). A separate
+    #: source rather than a flag on `derived_from`: "where did these bytes come
+    #: from" is one question with one answer, and two columns encoding it is
+    #: two columns to disagree.
+    DERIVED = "DERIVED", "Derived"
 
 
 def media_asset_upload_to(instance: MediaAsset, filename: str) -> str:
@@ -218,6 +405,14 @@ class MediaAsset(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="generated_assets",
+    )
+    #: The asset this one was cropped or trimmed from (P1-12). Immutability is
+    #: why this exists: an edit cannot rewrite the original, so it makes a new
+    #: row and says where it came from. `SET_NULL` rather than `CASCADE` —
+    #: deleting an original must not take the crop that is on a published post
+    #: with it.
+    derived_from = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="derivatives"
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -262,6 +457,13 @@ class PostTarget(models.Model):
 
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="targets")
     platform = models.CharField(max_length=16, choices=Platform.choices)
+    #: What shape this target takes on its platform (P4-04). Validated against
+    #: the `(platform, format)` rules row in `clean()` — the enum says what
+    #: exists, the table says what *this* platform offers, and only the second
+    #: is the truth a provider will honour.
+    post_format = models.CharField(
+        max_length=16, choices=PostFormat.choices, default=PostFormat.FEED
+    )
     social_account = models.ForeignKey(
         "channels.SocialAccount",
         null=True,
@@ -269,6 +471,30 @@ class PostTarget(models.Model):
         on_delete=models.SET_NULL,
         related_name="post_targets",
     )
+    # --- per-platform overrides (BUILD-PLAN P1-03) ------------------------
+    #
+    # **Null means inherit**, and that is not the same as empty. A blank
+    # `body_override` is a deliberate empty caption — legitimate on a
+    # video-first platform — while `None` means "whatever the master post
+    # says". Collapsing them would make clearing an override impossible.
+    #
+    # Nothing outside `render_post` reads these. Resolution lives there
+    # precisely so preview and publish cannot resolve them differently
+    # (P1-04), which is the single greatest threat to preview-equals-publish.
+    # DJ001 says avoid `null=True` on a text field, and it is right almost
+    # everywhere. Here the tri-state is the feature: null inherits, "" is a
+    # deliberately empty caption. Collapsing them would make an empty caption
+    # unrepresentable.
+    body_override = models.TextField(null=True, blank=True)  # noqa: DJ001
+    media_override = models.JSONField(null=True, blank=True)
+    #: Per-platform composer fields, validated against the declaration in
+    #: `content.services.rules` (P1-05). Non-null `{}` rather than nullable:
+    #: unlike a body, "no options" and "default options" are the same thing.
+    platform_options = models.JSONField(default=dict, blank=True)
+    #: Which shape the options above were written under, so a payload rendered
+    #: by an older release is recognisable rather than silently misread.
+    options_schema_version = models.PositiveSmallIntegerField(default=0)
+
     rendered_payload = models.JSONField(default=dict, blank=True)
     provider_post_id = models.CharField(max_length=128, blank=True)
     platform_post_id = models.CharField(max_length=128, blank=True)
@@ -305,3 +531,204 @@ class PostTarget(models.Model):
 
     def __str__(self) -> str:
         return f"{self.post_id} -> {self.platform} ({self.state})"
+
+    def clean(self) -> None:
+        """The format has to be one this platform actually declares (P4-04).
+
+        Refused **here, at the write**, not in the renderer: a target carrying
+        an impossible format is a bad row, and the place to say so is where it
+        is created, while someone can still choose another. The renderer's job
+        by then is to draw something, so it falls back to `FEED` with a warning
+        rather than turning a preview into a 500.
+
+        Imported inside the method: `rules.py` reads `content.models` for its
+        enums, so a module-level import here would be a cycle.
+        """
+        from content.services.rules import formats_for
+
+        supported = formats_for(self.platform)
+        if supported and self.post_format not in supported:
+            raise ValidationError(
+                {
+                    "post_format": (
+                        f"{self.platform} does not offer the {self.post_format} format. "
+                        f"Available: {', '.join(sorted(supported))}."
+                    )
+                }
+            )
+
+
+class PostRevision(AppendOnly):
+    """One version of a post's content (P1-08).
+
+    **Append-only, and a restore is a new row.** History that a restore can
+    rewrite is not history — "what did this look like on Tuesday" has to
+    survive somebody putting Tuesday's version back on Friday.
+
+    **Diff plus periodic checkpoint, not a snapshot every time.** A full
+    snapshot per revision stores the whole post again for a one-word edit; a
+    pure diff chain makes reconstruction walk the entire history and, worse,
+    makes retention unsafe — deleting an old row silently invalidates every
+    diff after it. Every `CHECKPOINT_EVERY`-th revision carries a full
+    `snapshot` and the rest carry only `diff`, so reconstruction is bounded and
+    the prune has an anchor it can stop at.
+
+    `author` is nullable because not every revision has a person behind it:
+    a recurrence materialisation or an autopilot draft has no author, and
+    `PROTECT` on a real one would block deleting a user who ever typed.
+    """
+
+    append_only_hint = "restore the revision instead of editing it."
+
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="revisions")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="post_revisions",
+    )
+    #: 1-based and dense per post — it is what a user cites ("restore version
+    #: 4"), so it cannot be the primary key, which is global and gapped.
+    sequence = models.PositiveIntegerField()
+    #: Populated only on a checkpoint; `{}` otherwise. Not nullable — an empty
+    #: mapping and "no snapshot" are the same statement, and two ways to say it
+    #: is one too many.
+    snapshot = models.JSONField(default=dict, blank=True)
+    #: `{field: [before, after]}` against the previous revision. Empty on the
+    #: first, which has nothing to differ from.
+    diff = models.JSONField(default=dict, blank=True)
+    is_checkpoint = models.BooleanField(default=False)
+    reason = models.CharField(max_length=200, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-sequence"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["post", "sequence"], name="unique_post_revision_seq")
+        ]
+        indexes: ClassVar[list[models.Index]] = [
+            # The retention sweep asks "which revisions are older than this
+            # date", across every post at once — no post-leading index helps it.
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.post_id} v{self.sequence}"
+
+
+#: Phase 1 declared this separately as `TemplateKind`, anticipating
+#: `Post.content_kind` and saying so in its own docstring. Phase 3 brought that
+#: column, and two enums over the identical value set is the drift P1-16
+#: refused for `rules.py` — so the template field now reads the one
+#: declaration, and the name survives as an alias for the call sites that
+#: describe a *template's* kind rather than a post's.
+TemplateKind = ContentKind
+
+
+class PostTemplate(models.Model):
+    """A saved starting point (P1-09).
+
+    **Applying copies; it never links.** A post that kept pointing at its
+    template would be rewritten every time the template was edited — including
+    posts already scheduled, and in the worst case already approved. The cost
+    of copying is that a template edit does not propagate, which is the correct
+    behaviour rather than a limitation.
+
+    `payload` is validated against `rules.py` on the way in, not at apply time:
+    a template holding an option Instagram does not have fails at the worst
+    possible moment otherwise.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="post_templates"
+    )
+    name = models.CharField(max_length=120)
+    content_kind = models.CharField(
+        max_length=8, choices=TemplateKind.choices, default=TemplateKind.SOCIAL
+    )
+    #: `{master_body, media_asset_ids: [...], platform_options: {platform: {...}}}`.
+    payload = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="post_templates",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["name"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["workspace", "name"], name="unique_post_template_name_per_workspace"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class RecurrenceRule(models.Model):
+    """ "Every Monday at 09:00" (P1-10).
+
+    `timezone` is an IANA name and the rule is expanded in **local wall time**,
+    then converted to UTC. Expanding in UTC would move the slot an hour twice a
+    year — the exact bug Part 3's "store UTC, convert at edges" rule exists to
+    prevent. What is stored is UTC; what is meant is the office clock.
+
+    `horizon_days` bounds how far ahead the scan materialises, which is what
+    keeps a rule from filling a calendar to the end of time on its first run.
+    """
+
+    #: BUILD-PLAN calls this `source`. It is the template a slot is drawn from,
+    #: and a template rather than a post because a recurrence that copied one
+    #: particular post would republish that post's edits along with it.
+    source = models.ForeignKey(
+        PostTemplate, on_delete=models.CASCADE, related_name="recurrence_rules"
+    )
+    rrule = models.TextField(help_text="RFC 5545 RRULE, without the DTSTART line.")
+    timezone = models.CharField(max_length=64, default="UTC")
+    horizon_days = models.PositiveSmallIntegerField(default=30)
+    active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["active"])]
+
+    def __str__(self) -> str:
+        return f"{self.rrule} ({self.timezone})"
+
+
+class RecurrenceOccurrence(models.Model):
+    """One materialised slot.
+
+    The row exists so a re-scan can tell what it already covered. Its unique
+    constraint is what makes two scans racing each other collide instead of
+    double-creating — the same guarantee, for the same reason, as
+    `unique_autopilot_slot_per_product`.
+    """
+
+    rule = models.ForeignKey(RecurrenceRule, on_delete=models.CASCADE, related_name="occurrences")
+    #: UTC, as every stored instant is. The local time it means is
+    #: reconstructed from `rule.timezone` at display.
+    slot_at = models.DateTimeField()
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="recurrence_occurrences")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["slot_at"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["rule", "slot_at"], name="unique_recurrence_slot")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.rule_id} @ {self.slot_at:%Y-%m-%d %H:%M}"

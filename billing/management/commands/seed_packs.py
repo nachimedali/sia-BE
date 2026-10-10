@@ -16,7 +16,7 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from billing.models import Pack, PackKind
+from billing.models import Currency, Pack, PackKind, PackPrice
 
 PACKS: list[dict[str, Any]] = [
     {
@@ -49,6 +49,23 @@ class Command(BaseCommand):
             code = spec["code"]
             pack, created = Pack.objects.update_or_create(
                 code=code, defaults={k: v for k, v in spec.items() if k != "code"}
+            )
+            # Only the default row. Every other currency is an operator's
+            # decision — a seed that invented a euro price would be guessing at
+            # a number it has no basis for, and a wrong price is worse than an
+            # absent one: the absent one falls back, the wrong one charges.
+            currency, _ = Currency.objects.get_or_create(
+                code=pack.currency.upper(),
+                defaults={"name": pack.currency.upper(), "symbol": "$"},
+            )
+            PackPrice.objects.update_or_create(
+                pack=pack,
+                currency=currency,
+                defaults={
+                    "amount_cents": pack.price_cents,
+                    "stripe_price_id": pack.stripe_price_id,
+                    "is_default": True,
+                },
             )
             verb = "created" if created else "updated"
             self.stdout.write(f"  {verb}: {pack.code} ({pack.display_name})")

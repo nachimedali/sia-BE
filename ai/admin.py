@@ -13,6 +13,7 @@ from django.contrib import admin
 from django.http import HttpRequest
 
 from ai.models import (
+    CreativeOption,
     Generation,
     GenerationCost,
     GenerationVariant,
@@ -71,3 +72,16 @@ class GenerationAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 @admin.register(VoiceProfile)
 class VoiceProfileAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     list_display = ("name", "workspace", "updated_at")
+
+
+@admin.register(CreativeOption)
+class CreativeOptionAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Where an operator adds a scene or retunes a label — the whole point of
+    these being rows. `prompt_fragment` is the sentence the model is given when
+    the option is chosen; `metadata` holds per-kind extras (a light's colour
+    grade, a format's aspect, a preset's values)."""
+
+    list_display = ("kind", "key", "label", "sort_order", "is_active")
+    list_filter = ("kind", "is_active")
+    search_fields = ("key", "label", "description")
+    ordering = ("kind", "sort_order")

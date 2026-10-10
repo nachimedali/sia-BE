@@ -17,6 +17,12 @@ from PIL import Image
 
 from common.mail import _fake_sender
 from common.redis import get_redis
+from workspaces.services import approvals as approvals_service
+
+#: Phase 8's fixtures live with the app, and are registered here because
+#: pytest only lets the root conftest load a plugin: `tests/test_phase8_gates.py`
+#: sits outside `benchmarks/` and needs the same cohort-building fixtures.
+pytest_plugins = ["benchmarks.tests.fixtures"]
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -56,6 +62,25 @@ def _isolate_platform_adapter() -> Iterator[None]:
     _fake_adapter.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_media_editor() -> Iterator[None]:
+    """Same reasoning as the publish adapter above: the fake editor is
+    module-level so a test can inspect its calls after a view has run, which
+    makes its record process-wide state (P1-12)."""
+    from content.editing.fake import _fake_editor
+
+    _fake_editor.clear()
+    yield
+    _fake_editor.clear()
+
+
+@pytest.fixture
+def media_editor() -> Any:
+    from content.editing.fake import _fake_editor
+
+    return _fake_editor
+
+
 @pytest.fixture
 def platform_adapter() -> Any:
     from channels.adapters.fake import _fake_adapter
@@ -63,14 +88,114 @@ def platform_adapter() -> Any:
     return _fake_adapter
 
 
+@pytest.fixture(autouse=True)
+def _reset_gateway() -> Iterator[None]:
+    """The fake billing gateway is module-level so a test can inspect calls
+    after a view has run, which makes its call log process-wide state the way
+    Redis is."""
+    from billing.gateways.fake import _fake_gateway
+
+    _fake_gateway.clear()
+    yield
+    _fake_gateway.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_push_transport() -> Iterator[None]:
+    """The fake push transport is module-level so a test can inspect what a
+    view sent after it has run — which makes its record process-wide state, the
+    same as the mail outbox and the publish adapter (P2-12)."""
+    from notifications.transports import _fake_push
+
+    _fake_push.clear()
+    yield
+    _fake_push.clear()
+
+
+@pytest.fixture
+def push_transport() -> Any:
+    from notifications.transports import _fake_push
+
+    return _fake_push
+
+
+@pytest.fixture(autouse=True)
+def _isolate_metrics_provider() -> Iterator[None]:
+    """Same reasoning as the publish adapter above, for the measurement port
+    (P0-27). Separate fixture because they are separate ports — a single reset
+    covering both would be the first crack in the separation P0-28 asserts."""
+    from analytics.providers.fake import fake_provider
+
+    fake_provider().reset()
+    yield
+    fake_provider().reset()
+
+
+@pytest.fixture
+def metrics_provider() -> Any:
+    from analytics.providers.fake import fake_provider
+
+    return fake_provider()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trendgen_ports() -> Iterator[None]:
+    """Reset the trendgen seam between tests (M0).
+
+    Every port resolves to its in-process adapter by default, so a test that
+    installs no fake sees exactly pre-M0 behaviour. The fixture resets the seam
+    registry rather than naming each port, so adding a third costs nothing here
+    — the ports themselves stay separate, and `integrations/tests/test_seam.py`
+    asserts that.
+    """
+    from integrations import seam
+
+    seam.reset_all()
+    yield
+    seam.reset_all()
+
+
+@pytest.fixture
+def trend_feed() -> Any:
+    """Install the recording trend-feed fake for this test."""
+    from integrations import trendfeed
+
+    fake = trendfeed.FakeTrendFeed()
+    trendfeed.set_override(fake)
+    return fake
+
+
+@pytest.fixture
+def generation_port() -> Any:
+    """Install the recording generation fake for this test."""
+    from integrations import generation
+
+    fake = generation.FakeGeneration()
+    generation.set_override(fake)
+    return fake
+
+
+@pytest.fixture
+def organization(workspace: Any) -> Any:
+    """The org `provision_workspace` created alongside the workspace (P0-45).
+
+    Derived rather than constructed, so a test can never assert against an
+    organization the application would not have made.
+    """
+    return workspace.organization
+
+
 @pytest.fixture
 def paid_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     """Auto-publish is a paid feature (D4), so every connect and publish test
     needs a plan that has it. Pro rather than Advanced: five social accounts
     is the smaller cap of the two, which is what makes the I6 account-cap test
-    meaningful without seeding ten accounts first."""
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    meaningful without seeding ten accounts first.
+
+    The plan is set on the **organization** — since P0-56 that is the only
+    place it lives (L-1: billing pools at the company)."""
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     return workspace
 
 
@@ -112,6 +237,16 @@ def user(db: None) -> Any:
 
 
 @pytest.fixture
+def other_user(db: None) -> Any:
+    """A second account with no workspace of its own until a test gives it one.
+    Every cross-tenant assertion needs one, and four files were making it by
+    hand."""
+    from django.contrib.auth import get_user_model
+
+    return get_user_model().objects.create_user(email="sam@example.com", password=PASSWORD)
+
+
+@pytest.fixture
 def auth_client(user: Any) -> Any:
     """An APIClient carrying `user`'s identity, bypassing the login endpoint."""
     from rest_framework.test import APIClient
@@ -119,6 +254,20 @@ def auth_client(user: Any) -> Any:
     api = APIClient()
     api.force_authenticate(user)
     return api
+
+
+@pytest.fixture
+def plans_by_code(plans: dict[str, Any]) -> dict[str, Any]:
+    """Alias for `plans`, for modules that also import `billing.services.plans`
+    and would otherwise shadow the module with the fixture."""
+    return plans
+
+
+@pytest.fixture
+def seeded_plans(plans: dict[str, Any]) -> dict[str, Any]:
+    """Alias for `plans`, for the handful of modules that also import the
+    `billing.services.plans` module and would otherwise shadow it."""
+    return plans
 
 
 @pytest.fixture
@@ -160,13 +309,19 @@ def _fake_ai_providers(settings: Any) -> None:
 
 @pytest.fixture(autouse=True)
 def _clear_fake_providers() -> Iterator[None]:
-    from ai.providers.fake import _fake_image_provider, _fake_text_provider
+    from ai.providers.fake import (
+        _fake_image_provider,
+        _fake_text_provider,
+        _fake_video_composer,
+        _fake_video_provider,
+    )
 
-    _fake_text_provider.clear()
-    _fake_image_provider.clear()
+    fakes = (_fake_text_provider, _fake_image_provider, _fake_video_provider, _fake_video_composer)
+    for fake in fakes:
+        fake.clear()
     yield
-    _fake_text_provider.clear()
-    _fake_image_provider.clear()
+    for fake in fakes:
+        fake.clear()
 
 
 # --- collaboration & roles (design.md §8.8) -----------------------------------
@@ -174,11 +329,19 @@ def _clear_fake_providers() -> Iterator[None]:
 # tests needed them too.
 @pytest.fixture
 def advanced_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
-    """Advanced, with the collaboration workflow switched on. §4.1: only
-    Advanced has `approval_workflow`."""
-    workspace.plan = plans["advanced"]
-    workspace.requires_approval = True
-    workspace.save(update_fields=["plan", "requires_approval"])
+    """Advanced, with a **blocking** approval chain.
+
+    `requires_approval` was a column until P2-04; it is now
+    `ApprovalChain.blocks_publish` on the workspace's default chain, which is
+    the only thing that can also say how many stages and who. Advanced is what
+    the plan buys — chain *depth* (P2-13) — not approval itself, which C-02
+    makes universal.
+    """
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
+    chain = approvals_service.default_chain(workspace)
+    chain.blocks_publish = True
+    chain.save(update_fields=["blocks_publish"])
     return workspace
 
 
@@ -220,7 +383,7 @@ def viewer_user(advanced_workspace: Any) -> Any:
 @pytest.fixture
 def advanced_social_account(advanced_workspace: Any) -> Any:
     """The `social_account` fixture above pulls in `paid_workspace`, which
-    would set `workspace.plan` back to Pro — a real conflict with
+    would set the organization's plan back to Pro — a real conflict with
     `advanced_workspace`, since both mutate the same cached `workspace`
     fixture instance. This is `social_account`'s shape, built directly on
     `advanced_workspace` instead."""
@@ -248,3 +411,56 @@ def client_as() -> Any:
         return api
 
     return _make
+
+
+@pytest.fixture
+def media_asset(workspace: Any, make_png_upload: Any) -> Any:
+    """Moved here from content/tests/conftest.py once ai/ needed it too."""
+    from content.services.media import ingest_media
+
+    return ingest_media(workspace=workspace, upload=make_png_upload())
+
+
+@pytest.fixture
+def text_provider() -> Any:
+    """The module-level fake text provider, for asserting on what a generation
+    actually asked the vendor for — a vision call that never opened the file
+    would otherwise pass every test above it."""
+    from ai.providers.fake import _fake_text_provider
+
+    return _fake_text_provider
+
+
+@pytest.fixture
+def trend_corpus(category: Any, db: None) -> Any:
+    """A small category corpus with hashtags in it (P1-13).
+
+    Dates are **relative to now**, never absolute: P0-63 was a whole day lost
+    to a fixture whose dates fell out of the 14-day window in August, and the
+    fix was to make that class of bug impossible rather than to move the dates.
+    """
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from trends.models import TrendItem, TrendSource
+
+    source = TrendSource.objects.create(
+        category=category, platform="instagram", kind="REDDIT", vendor="fake"
+    )
+    bodies = [
+        "New glaze day #ceramics #handmade #studio",
+        "Throwing mugs all morning #ceramics #handmade",
+        "Kiln unloading #ceramics",
+        # Says it four times: counted once, because a ranking that counted
+        # mentions would let one spammy caption dominate a whole vertical.
+        "#studio #studio #studio #studio",
+    ]
+    for index, body in enumerate(bodies):
+        TrendItem.objects.create(
+            source=source,
+            external_id=f"item-{index}",
+            body=body,
+            posted_at=timezone.now() - dt.timedelta(days=index + 1),
+        )
+    return source

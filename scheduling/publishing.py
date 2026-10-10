@@ -73,6 +73,11 @@ def build_targets(post: Post) -> list[PostTarget]:
     attempt happens to run first.
     """
     accounts = list(channel_services.active_accounts(post.workspace))
+    # The editor's per-platform switch: a post planned for some platforms goes
+    # only to those. An empty plan is every connected account, as before — a
+    # post nobody narrowed was never meant to skip a channel.
+    if post.planned_platforms:
+        accounts = [account for account in accounts if account.platform in post.planned_platforms]
     if not accounts:
         raise NoConnectedAccountsError(detail={"workspace": post.workspace_id})
 
@@ -154,6 +159,18 @@ def _limiter(account: SocialAccount) -> ProviderRateLimiter:
         capacity=PUBLISH_CAPACITY,
         refill_per_second=PUBLISH_REFILL_PER_SECOND,
     )
+
+
+def capture_limiter(account: SocialAccount) -> ProviderRateLimiter:
+    """The same bucket measurement draws on (C-06).
+
+    Exported so `analytics.services.ingest` shares this budget rather than
+    keeping its own — two independently-sized buckets could jointly exceed the
+    provider's real cap, since neither would know about the other's draw. One
+    bucket with a floor only publishing may cross is what makes "publishing is
+    never blocked by capture" (Part 7 rule 11) a property rather than a hope.
+    """
+    return _limiter(account)
 
 
 def _record_failure(target: PostTarget, error: PlatformError) -> None:

@@ -1,0 +1,7 @@
+:root{--brand-primary:#3F5A1E;--brand-accent:#C8A13B;--ink:#1F2A14;--paper:#F6F1E1}
+body{font-family:"Lato",sans-serif;color:#1F2A14;background:#F6F1E1}
+h1,h2,.title{font-family:"Playfair Display",Georgia,serif;color:#3F5A1E}
+.btn{background:#3F5A1E;color:#FFFFFF;border-color:#3F5A1E}
+.badge{background:#C8A13B}
+.sea{color:#2E8C8A}
+a{color:#3F5A1E}

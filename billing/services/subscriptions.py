@@ -5,21 +5,26 @@ workspace is paid because a checkout session was created — it decides that whe
 the webhook says so. A user who abandons the Stripe page, or whose card is
 declined after the redirect, must not end up entitled.
 
-`Workspace.plan` is what `Entitlements` resolves from, so every path that
-changes billing state ends by writing that field and letting the cache key
-rotate with it.
+`Organization.plan` is what `Entitlements` resolves from (L-1: billing pools at
+the company, not the brand), so every path that changes billing state ends by
+writing that field and letting the cache key rotate with it. Writes go through
+`billing.services.plans.set_plan`, which is the one writer.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import logging
+from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
 
-from billing.gateways.base import CheckoutSession, PortalSession
+from billing.gateways.base import BillingGatewayError, CheckoutSession, PortalSession
 from billing.gateways.stripe import get_billing_gateway
+from billing.models import (
+    UNLIMITED as UNLIMITED_CAP,
+)
 from billing.models import (
     CreditReason,
     Plan,
@@ -27,7 +32,8 @@ from billing.models import (
     SubscriptionStatus,
     VideoReason,
 )
-from billing.services import ledger
+from billing.services import ledger, pricing
+from billing.services.plans import set_plan
 from channels.services import park_accounts_over_cap
 from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
@@ -71,11 +77,27 @@ def start_checkout(
     if plan is None or plan.code == FREE_PLAN_CODE:
         raise OCCSError("That plan cannot be subscribed to.", code="invalid_plan")
 
-    price_id = plan.stripe_price_id_annual if cycle == "annual" else plan.stripe_price_id_monthly
+    # Resolved rather than read off the plan: the price and the Stripe id both
+    # depend on which currency this organization is billed in (per-country
+    # pricing). Falls back to the plan's default row, and to the legacy columns
+    # while the price backfill is still rolling out.
+    resolved = pricing.plan_price(plan, organization=workspace.organization, cycle=cycle)
+    price_id = resolved.stripe_price_id
     if not price_id:
         # A plan with no Stripe price is a configuration error, not a user error.
-        logger.error("plan has no Stripe price id", extra={"plan": plan.code, "cycle": cycle})
+        logger.error(
+            "plan has no Stripe price id",
+            extra={"plan": plan.code, "cycle": cycle, "currency": resolved.currency.code},
+        )
         raise OCCSError("This plan is not available for purchase yet.", code="plan_not_purchasable")
+    if resolved.is_fallback:
+        # Charged in a currency this organization did not ask for, because we
+        # do not price this plan in theirs yet. Not an error — an unpriced
+        # market is an operator's to-do — but it must be visible.
+        logger.warning(
+            "charging a fallback currency",
+            extra={"plan": plan.code, "currency": resolved.currency.code},
+        )
 
     if Subscription.current_for(workspace) is not None:
         raise StateConflict(
@@ -86,13 +108,13 @@ def start_checkout(
 
     # One trial per workspace (§8.1). Stripe enforces the same rule per billing
     # identity, which catches the second workspace on one card.
-    trial_days = plan.trial_days if workspace.trial_ends_at is None else 0
+    trial_days = plan.trial_days if workspace.organization.trial_ends_at is None else 0
 
     session = get_billing_gateway().create_checkout_session(
         mode="subscription",
         workspace_id=workspace.pk,
-        customer_id=workspace.stripe_customer_id or None,
-        customer_email=workspace.owner.email,
+        customer_id=workspace.organization.stripe_customer_id or None,
+        customer_email=workspace.organization.owner.email,
         price_id=price_id,
         trial_days=trial_days,
         success_url=success_url,
@@ -100,19 +122,24 @@ def start_checkout(
     )
     logger.info(
         "checkout session created",
-        extra={"workspace_id": workspace.pk, "plan": plan.code, "cycle": cycle},
+        extra={
+            "workspace_id": workspace.pk,
+            "plan": plan.code,
+            "cycle": cycle,
+            "currency": resolved.currency.code,
+        },
     )
     return session
 
 
 def open_portal(workspace: Workspace, *, return_url: str) -> PortalSession:
-    if not workspace.stripe_customer_id:
+    if not workspace.organization.stripe_customer_id:
         raise StateConflict(
             "This workspace has never been billed, so it has no portal.",
             code="no_billing_customer",
         )
     return get_billing_gateway().create_portal_session(
-        customer_id=workspace.stripe_customer_id, return_url=return_url
+        customer_id=workspace.organization.stripe_customer_id, return_url=return_url
     )
 
 
@@ -177,14 +204,12 @@ def apply_subscription_state(
 
 
 def _move_to_plan(workspace: Workspace, plan: Plan, *, trialing: bool) -> None:
-    fields = ["plan", "updated_at"]
-    workspace.plan = plan
+    set_plan(workspace, plan)
 
-    if trialing and workspace.trial_ends_at is None:
-        workspace.trial_ends_at = timezone.now() + dt.timedelta(days=plan.trial_days)
-        fields.append("trial_ends_at")
-
-    workspace.save(update_fields=fields)
+    organization = workspace.organization
+    if trialing and organization.trial_ends_at is None:
+        organization.trial_ends_at = timezone.now() + dt.timedelta(days=plan.trial_days)
+        organization.save(update_fields=["trial_ends_at", "updated_at"])
 
 
 def _grant_period_allowances(
@@ -225,12 +250,12 @@ def downgrade_to_free(workspace: Workspace, *, reason: str = "trial expired") ->
     Both mark; neither deletes.
     """
     plan = free_plan()
-    if workspace.plan_id == plan.pk:
+    organization = workspace.organization
+    if organization.plan_id == plan.pk:
         return workspace
 
-    previous = workspace.plan.code if workspace.plan else "none"
-    workspace.plan = plan
-    workspace.save(update_fields=["plan", "updated_at"])
+    previous = organization.plan.code if organization.plan else "none"
+    set_plan(workspace, plan)
 
     # The Free allowance replaces the paid one; credits already spent stay spent.
     ledger.grant_credits(
@@ -302,8 +327,8 @@ def grant_due_period_allowances() -> int:
     from billing.models import CreditLedger
 
     granted = 0
-    for workspace in Workspace.objects.select_related("plan").iterator():
-        plan = workspace.plan
+    for workspace in Workspace.objects.select_related("organization__plan").iterator():
+        plan = workspace.organization.plan
         if plan is None:
             continue
 
@@ -330,12 +355,163 @@ def expire_lapsed_trials() -> int:
     than about closing a gate.
     """
     now = timezone.now()
-    candidates = Workspace.objects.filter(trial_ends_at__lt=now).exclude(plan__code=FREE_PLAN_CODE)
+    candidates = Workspace.objects.filter(organization__trial_ends_at__lt=now).exclude(
+        organization__plan__code=FREE_PLAN_CODE
+    )
 
     downgraded = 0
-    for workspace in candidates.select_related("plan").iterator():
+    for workspace in candidates.select_related("organization__plan").iterator():
         if Subscription.current_for(workspace) is not None:
             continue
         downgrade_to_free(workspace, reason="trial expired")
         downgraded += 1
     return downgraded
+
+
+# -----------------------------------------------------------------------------
+# Per-workspace quantity (P0-17, P0-18, P0-23)
+# -----------------------------------------------------------------------------
+def live_workspace_count(organization: Any) -> int:
+    """Workspaces this organization is billed for.
+
+    `OVER_LIMIT` rows are excluded — they are parked by a downgrade and must
+    not keep charging — while `PENDING_BILLING` rows are **included**, because
+    they are exactly the ones we are asking to be billed for.
+    """
+    from workspaces.models import Workspace, WorkspaceStatus
+
+    return (
+        Workspace.objects.filter(organization=organization)
+        .exclude(status=WorkspaceStatus.OVER_LIMIT)
+        .count()
+    )
+
+
+def included_workspaces(organization: Any) -> int:
+    """How many workspaces this organization's plan already covers.
+
+    `Plan.max_workspaces` is an *allowance*, not merely a ceiling — the base
+    price buys that many (P0-17). An unlimited plan includes everything and
+    therefore never bills an overage.
+    """
+    plan = getattr(organization, "plan", None)
+    cap = getattr(plan, "max_workspaces", 1) if plan is not None else 1
+    return 0 if cap == UNLIMITED_CAP else int(cap)
+
+
+def billable_overage(organization: Any) -> int:
+    """Workspaces beyond the included allowance — the quantity actually billed.
+
+    **Not the total count.** Billing the total charges for the workspaces the
+    plan already includes: an organization on Pro, which includes three, would
+    pay 3 x $37 for what its own pricing page calls $37. That was the shape of
+    the bug this function exists to make impossible to write again.
+    """
+    plan = getattr(organization, "plan", None)
+    if plan is not None and getattr(plan, "max_workspaces", 1) == UNLIMITED_CAP:
+        return 0
+    return max(0, live_workspace_count(organization) - included_workspaces(organization))
+
+
+def sync_workspace_quantity(organization: Any) -> bool:
+    """Tells the gateway how many *extra* workspaces to bill for. Returns success.
+
+    **Never raises at the caller** (P0-18). A workspace whose quantity update
+    failed stays `PENDING_BILLING` and read-only; the customer can see what
+    they asked for, support can see why it is parked, and the nightly
+    comparison (P0-62) will surface it if it never resolves. Refusing the
+    workspace instead would lose the request entirely.
+    """
+    from workspaces.models import Workspace, WorkspaceStatus
+
+    subscription = (
+        Subscription.objects.filter(
+            workspace__organization=organization, status__in=SubscriptionStatus.live()
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if subscription is None or not subscription.stripe_subscription_item_id:
+        # Nothing to bill against yet — a trial organization. The workspaces
+        # are real and usable; there is simply no quantity to move.
+        Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.PENDING_BILLING
+        ).update(status=WorkspaceStatus.ACTIVE)
+        return True
+
+    quantity = billable_overage(organization)
+    if quantity == 0:
+        # Everything fits inside the plan's allowance, so there is nothing to
+        # charge and nothing to ask the gateway. The workspaces are billed —
+        # by the base subscription — so they are active, not pending.
+        Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.PENDING_BILLING
+        ).update(status=WorkspaceStatus.ACTIVE)
+        return True
+
+    if not subscription.stripe_overage_item_id:
+        # An overage to charge and no line to charge it on is a configuration
+        # error, not a customer error. The workspace stays PENDING_BILLING and
+        # read-only rather than being refused (P0-18) — the customer can see
+        # what they asked for and support can see why it is parked.
+        logger.error(
+            "subscription has no overage item; workspaces stay pending",
+            extra={"organization_id": organization.pk, "overage": quantity},
+        )
+        return False
+
+    try:
+        get_billing_gateway().update_subscription_quantity(
+            subscription_item_id=subscription.stripe_overage_item_id, quantity=quantity
+        )
+    except BillingGatewayError:
+        logger.warning(
+            "subscription quantity update failed; workspaces stay pending",
+            exc_info=True,
+            extra={"organization_id": organization.pk, "overage": quantity},
+        )
+        return False
+
+    Workspace.objects.filter(
+        organization=organization, status=WorkspaceStatus.PENDING_BILLING
+    ).update(status=WorkspaceStatus.ACTIVE)
+    return True
+
+
+def park_workspaces_over_cap(organization: Any) -> int:
+    """Marks workspaces beyond the plan's cap `OVER_LIMIT` — **oldest survive**
+    (P0-23).
+
+    Same rule and same shape as the social-account cap: the oldest are the ones
+    with history, connected accounts and published posts behind them, so
+    keeping the newest would park the ones that matter. Read-only, never
+    deleted: a downgrade that removed a brand's content would be
+    indistinguishable from data loss.
+    """
+    from workspaces.models import Workspace, WorkspaceStatus
+
+    plan = organization.plan
+    cap = getattr(plan, "max_workspaces", 1) if plan else 1
+    if cap == UNLIMITED_CAP:
+        return 0
+
+    ordered = list(
+        Workspace.objects.filter(organization=organization)
+        .order_by("created_at", "pk")
+        .values_list("pk", flat=True)
+    )
+    over = ordered[cap:]
+    if not over:
+        # A re-upgrade releases what a downgrade parked.
+        return -Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.OVER_LIMIT
+        ).update(status=WorkspaceStatus.ACTIVE)
+
+    Workspace.objects.filter(pk__in=ordered[:cap], status=WorkspaceStatus.OVER_LIMIT).update(
+        status=WorkspaceStatus.ACTIVE
+    )
+    return (
+        Workspace.objects.filter(pk__in=over)
+        .exclude(status=WorkspaceStatus.OVER_LIMIT)
+        .update(status=WorkspaceStatus.OVER_LIMIT)
+    )

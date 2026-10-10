@@ -57,13 +57,28 @@ LOCAL_APPS = [
     "billing",
     "onboarding",
     "content",
+    "collaboration",
+    "notifications",
+    "planning",
+    "taste",
     "products",
     "ai",
     "reminders",
     "scheduling",
     "channels",
     "trends",
+    "tools",
     "analytics",
+    "learn",
+    "benchmarks",
+    # The Brand Core (steps-plan S1): a website import, reviewed section by
+    # section, versioned into the brand kit every generation reads.
+    "brand",
+    "checks",
+    # The seam to the trendgen service (BUILD-PLAN L11-L12). No models; it
+    # holds the ports that `trends/` and the creative half of `ai/` move
+    # behind, so Phase 12 swaps an adapter rather than editing call sites.
+    "integrations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -227,6 +242,27 @@ SPECTACULAR_SETTINGS = {
         # And again for `Platform`, on `SocialAccount.platform` and the
         # connect-completion request's own `platform` field (Phase 9).
         "PlatformEnum": "content.models.Platform",
+        # And again for `Tool`, on `ToolConfig.slug` and `ToolUsage.tool` —
+        # the same six values under two field names (C-11 / P0-04).
+        "ToolEnum": "tools.models.Tool",
+        # `PostStatus` reaches the schema from `PostSerializer` and from the
+        # guest review packet's post summary (P2-09).
+        "PostStatusEnum": "content.models.PostStatus",
+        # `DeliveryMode` on `Post.delivery_mode`, `Post.proposed_delivery_mode`
+        # and the schedule request — one set of values, three field names.
+        "DeliveryModeEnum": "content.models.DeliveryMode",
+        # `Visibility` on `Post`, `Thread` and `Comment` (P2-03).
+        "VisibilityEnum": "common.visibility.Visibility",
+        # `ThreadStatus` collides with `Post.status` on the bare name
+        # `status`; unnamed, spectacular mints "StatusB3fEnum", which is
+        # what a client would then have to import (P2-01).
+        "ThreadStatusEnum": "collaboration.models.ThreadStatus",
+        # Two more on the bare name `status` (P6-04): a report's own schedule
+        # and a run's outcome. Left unnamed they become "Status6c9Enum" and
+        # friends — a hash a client would have to import and that moves the
+        # next time anything else adds a `status`.
+        "ReportScheduleEnum": "analytics.models.ReportSchedule",
+        "ReportRunStatusEnum": "analytics.models.ReportRunStatus",
     },
 }
 
@@ -274,6 +310,27 @@ CELERY_BEAT_SCHEDULE = {
         "task": "reminders.tasks.expire_stale_reminders",
         "schedule": crontab(hour=4, minute=0),
     },
+    # P7-02. Hourly rather than daily: "ends_at has passed" arrives at a
+    # different instant in every timezone we serve, and a campaign that ended
+    # at 23:00 local should not wait most of a day for its read-out. The scan
+    # asks which campaigns are *due* rather than each campaign scheduling its
+    # own close, so a worker down overnight catches up on the next tick.
+    #
+    # 05:10, deliberately after the metric ladder's overnight rungs: a digest
+    # computed before the night's captures landed would grade segments on a
+    # window it had only half measured.
+    "learn-close-due-campaigns": {
+        "task": "learn.tasks.close_due_campaigns",
+        "schedule": crontab(hour="*", minute=10),
+    },
+    # P8. Nightly, after the account snapshot (01:30) that sizes each post's
+    # cohort and after the overnight metric rungs, so a benchmark is never
+    # computed over a window it had only half measured. Projection and
+    # aggregation run as one task so their order cannot drift.
+    "benchmarks-refresh": {
+        "task": "benchmarks.tasks.refresh_benchmarks",
+        "schedule": crontab(hour=4, minute=40),
+    },
     # Every minute, for the same reason the reminder scan is: "a post
     # scheduled for 09:00 goes at 09:00" (design.md §5.1) is not a promise a
     # coarser cadence can keep.
@@ -289,11 +346,41 @@ CELERY_BEAT_SCHEDULE = {
         "task": "analytics.tasks.capture_due_metrics",
         "schedule": crontab(minute=5),
     },
+    # Every ten minutes, and it is the cheap path (P0-31): one call to
+    # `/v1/analytics/delta` returns every snapshot that moved across all
+    # accounts, where the hourly ladder above costs one call per due post. The
+    # ladder stays as the bootstrap and the repair path, because the feed is a
+    # rolling seven-day log and cannot replay history.
+    "analytics-follow-metrics-delta": {
+        "task": "analytics.tasks.follow_metrics_delta",
+        "schedule": crontab(minute="*/10"),
+    },
+    # Nightly, after the ledger reconciliation it complements. Reports only —
+    # a repair here would hide the write path that caused the drift (P0-62).
+    "billing-reconcile-organizations": {
+        "task": "billing.tasks.reconcile_organizations",
+        "schedule": crontab(hour=3, minute=15),
+    },
+    # 02:45, as BUILD-PLAN Phase 0 specifies, alongside the plan-trial sweep.
+    "billing-expire-addon-trials": {
+        "task": "billing.tasks.expire_addon_trials",
+        "schedule": crontab(hour=2, minute=45),
+    },
     # Daily: follower counts move slowly, and this is the denominator
     # `engagement_rate` falls back to where a platform reports no impressions.
     "analytics-snapshot-accounts": {
         "task": "analytics.tasks.snapshot_accounts",
         "schedule": crontab(hour=1, minute=30),
+    },
+    # Hourly, and deliberately not monthly: "the first of the month" arrives
+    # at a different instant in every zone we serve, so a single monthly tick
+    # would be the wrong moment for nearly every customer (P6-07). The job
+    # asks which reports are *owed* a run, so ticking 24 times produces one
+    # document, and a worker down over a boundary catches up rather than
+    # skipping the month.
+    "analytics-run-due-reports": {
+        "task": "analytics.tasks.run_due_reports",
+        "schedule": crontab(minute=35),
     },
     # Nightly, as §8.9 specifies. After the capture and snapshot jobs, so it
     # scores against the freshest numbers rather than yesterday's.
@@ -309,6 +396,28 @@ CELERY_BEAT_SCHEDULE = {
         "task": "products.tasks.run_due_autopilot",
         "schedule": crontab(hour=5, minute=0),
     },
+    # Nightly, in the quiet hour before the billing sweeps. Version history
+    # ages out under `Plan.version_history_days`; the job stops at a checkpoint
+    # rather than at a date, so a run that is skipped for a week costs nothing
+    # but a little storage (P1-08).
+    "content-prune-post-revisions": {
+        "task": "content.tasks.prune_post_revisions",
+        "schedule": crontab(hour=1, minute=50),
+    },
+    # Hourly, though each rule only fills its own `horizon_days` window — the
+    # scan recomputes a grid rather than draining a queue, so running it more
+    # often costs one query per active rule and running it less often costs
+    # nothing at all. Hourly rather than daily because a rule created at 10:00
+    # for "every day at 09:00" should have tomorrow's draft ready before
+    # someone opens the calendar this afternoon, not the next morning (P1-10).
+    #
+    # **A missed run is not a missed post.** The grid recomputes the *current*
+    # window; it never replays slots that passed while nothing was running,
+    # which is why a worker down for a week backfills instead of flooding.
+    "content-materialise-recurrence": {
+        "task": "content.tasks.recurrence_materialise",
+        "schedule": crontab(minute=20),
+    },
 }
 
 # -----------------------------------------------------------------------------
@@ -319,6 +428,13 @@ STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 USE_FAKE_BILLING = env.bool("USE_FAKE_BILLING", default=not STRIPE_SECRET_KEY)
+
+# P6-05. No PDF engine ships yet — the real one needs a headless browser or a
+# typesetting library, which is a system dependency a fresh checkout must not
+# require (Part 7 rule 6). Defaults on, so every report path runs end to end
+# with the fake; flipping it off without wiring an engine raises loudly rather
+# than emitting a blank document.
+USE_FAKE_REPORT_RENDERER = env.bool("USE_FAKE_REPORT_RENDERER", default=True)
 
 # Public URL of the frontend. Email links point here, not at the API.
 SITE_URL = env("SITE_URL", default="http://localhost:3000")
@@ -342,6 +458,10 @@ IMAGE_PROVIDER_BASE_URL = env(
 )
 IMAGE_PROVIDER_API_KEY = env("IMAGE_PROVIDER_API_KEY", default="")
 IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-image")
+
+# No vendor is chosen yet (C-11 / P0-04). Empty means video generation reports
+# "no provider configured" rather than silently falling back to the fake.
+VIDEO_PROVIDER_API_KEY = env("VIDEO_PROVIDER_API_KEY", default="")
 
 USE_FAKE_AI_PROVIDERS = env.bool(
     "USE_FAKE_AI_PROVIDERS", default=not (LLM_API_KEY and IMAGE_PROVIDER_API_KEY)
@@ -380,6 +500,22 @@ ZERNIO_API_KEY = env("ZERNIO_API_KEY", default="")
 ZERNIO_TIMEOUT_SECONDS = env.int("ZERNIO_TIMEOUT_SECONDS", default=30)
 
 USE_FAKE_PLATFORM_ADAPTER = env.bool("USE_FAKE_PLATFORM_ADAPTER", default=not ZERNIO_API_KEY)
+
+# -----------------------------------------------------------------------------
+# Media editing (P1-12). Image editing runs on Pillow, already a dependency, so
+# it needs no vendor and defaults to the real adapter. Video trimming needs a
+# codec — a system dependency Part 7 rule 6 says a fresh checkout must not
+# require — so it resolves to nothing until a backend is named, and the
+# service says so plainly rather than a fake producing a clip nobody rendered.
+# -----------------------------------------------------------------------------
+VIDEO_EDITOR_BACKEND = env("VIDEO_EDITOR_BACKEND", default="")
+USE_FAKE_MEDIA_EDITOR = env.bool("USE_FAKE_MEDIA_EDITOR", default=False)
+
+# HMAC secret for the `comment.received` webhook (P0-35). Empty means the
+# endpoint refuses every delivery, which is the right default: an unconfigured
+# webhook that accepted anything would be an open write path into the audience
+# tables.
+ZERNIO_WEBHOOK_SECRET = env("ZERNIO_WEBHOOK_SECRET", default="")
 
 # The publishing provider fetches media by URL, so a storage-relative path is
 # unusable to it. S3/MinIO already yields absolute URLs; local disk does not.
@@ -424,3 +560,14 @@ LOGGING = {
         "django.db.backends": {"level": "WARNING", "propagate": True},
     },
 }
+
+# Whether the seed migrations (`*_seed_*`) write the catalogue. On everywhere a
+# human runs the app, so `migrate` alone yields plans, categories and Studio
+# controls. Off under test settings only: the suite builds its own rows and a
+# pre-filled table collides with them. Never a production switch.
+SEED_CATALOG_ON_MIGRATE = env.bool("SEED_CATALOG_ON_MIGRATE", default=True)
+
+# Website reading for the brand import (steps-plan S1). The fake serves fixture
+# sites from `brand/fixtures/sites/` so a fresh checkout needs no network; set
+# False to crawl real websites (the crawler only reads public addresses).
+USE_FAKE_SITE_FETCHER = env.bool("USE_FAKE_SITE_FETCHER", default=True)

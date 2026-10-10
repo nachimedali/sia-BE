@@ -12,7 +12,7 @@ import pytest
 from config.celery import QUEUE_NAMES, app
 
 
-def test_all_six_queues_are_declared() -> None:
+def test_every_queue_is_declared() -> None:
     declared = {queue.name for queue in app.conf.task_queues}
     assert declared == {
         "publish_q",
@@ -21,8 +21,12 @@ def test_all_six_queues_are_declared() -> None:
         "ai_q",
         "metrics_q",
         "trends_q",
+        # P2-12.
+        "notify_q",
+        # P7-01.
+        "analyze_q",
     }
-    assert len(QUEUE_NAMES) == 6
+    assert len(QUEUE_NAMES) == 8
 
 
 @pytest.mark.parametrize(
@@ -33,15 +37,42 @@ def test_all_six_queues_are_declared() -> None:
         ("reminders.tasks.send_reminder", "remind_q"),
         ("scheduling.tasks.remind_due", "remind_q"),
         ("content.tasks.media_ingest", "media_q"),
+        # Learn's own pool (P7-01): minutes-to-hours batch work must not sit in
+        # a queue anything time-critical shares.
+        ("learn.tasks.run_learn", "analyze_q"),
+        ("learn.tasks.close_due_campaigns", "analyze_q"),
+        # Cohort benchmarks (P8) read a whole window of every contributor's
+        # posts: the same batch posture as Learn, so the same pool.
+        ("benchmarks.tasks.refresh_benchmarks", "analyze_q"),
+        # Periodic content bookkeeping shares the pool the billing sweeps use;
+        # what matters is that it is *declared*, not that it is alone (P1-08,
+        # P1-10).
+        ("content.tasks.prune_post_revisions", "metrics_q"),
+        ("content.tasks.recurrence_materialise", "metrics_q"),
         ("ai.tasks.video_render", "media_q"),
         ("ai.tasks.generate_image", "ai_q"),
         ("analytics.tasks.poll_metrics", "metrics_q"),
+        # Report rendering is measurement work on the measurement pool
+        # (P6-05/P6-07): batch posture, and a slow render must never sit in
+        # front of a publish.
+        ("analytics.tasks.run_due_reports", "metrics_q"),
         ("trends.tasks.extract_recipes", "trends_q"),
+        ("notifications.tasks.deliver_notification", "notify_q"),
     ],
 )
 def test_tasks_route_to_their_queue(task_name: str, expected_queue: str) -> None:
     route = app.amqp.router.route({}, task_name)
     assert route["queue"].name == expected_queue
+
+
+def test_notifications_do_not_share_the_reminder_pool() -> None:
+    """A busy thread can fan out to a whole team at once. Sharing `remind_q`
+    would let that burst sit in front of the reminder telling somebody to
+    publish at 09:00 (P2-12)."""
+    notify = app.amqp.router.route({}, "notifications.tasks.deliver_notification")["queue"].name
+    remind = app.amqp.router.route({}, "reminders.tasks.send_reminder")["queue"].name
+    assert notify == "notify_q"
+    assert notify != remind
 
 
 def test_video_rendering_is_isolated_from_the_ai_pool() -> None:

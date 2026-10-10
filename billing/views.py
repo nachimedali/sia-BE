@@ -36,7 +36,7 @@ from billing.services.entitlements import entitlements_for
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
-from common.workspaces import active_workspace
+from common.workspaces import request_workspace
 
 
 def _billing_page() -> str:
@@ -78,7 +78,7 @@ class EntitlementsView(APIView):
         ),
     )
     def get(self, request: Request) -> Response:
-        return Response(entitlements_for(active_workspace(request)).as_dict())
+        return Response(entitlements_for(request_workspace(request)).as_dict())
 
 
 class _WorkspaceLedgerView(WorkspaceScopedQuerySetMixin, ListAPIView):  # type: ignore[type-arg]
@@ -125,7 +125,7 @@ class SubscribeView(APIView):
 
         success_url, cancel_url = _return_urls("checkout")
         session = subscriptions.start_checkout(
-            active_workspace(request),
+            request_workspace(request),
             plan_code=payload.validated_data["plan_code"],
             cycle=payload.validated_data["cycle"],
             success_url=success_url,
@@ -170,7 +170,7 @@ class PurchaseView(APIView):
 
         success_url, cancel_url = _return_urls("purchase")
         session = purchases.start_purchase(
-            active_workspace(request),
+            request_workspace(request),
             pack_code=payload.validated_data["pack_code"],
             success_url=success_url,
             cancel_url=cancel_url,
@@ -187,7 +187,7 @@ class BillingPortalView(APIView):
         summary="Open the Stripe customer portal",
     )
     def post(self, request: Request) -> Response:
-        session = subscriptions.open_portal(active_workspace(request), return_url=_billing_page())
+        session = subscriptions.open_portal(request_workspace(request), return_url=_billing_page())
         return Response({"portal_url": session.url})
 
 

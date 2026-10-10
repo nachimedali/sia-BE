@@ -84,8 +84,8 @@ def test_grounding_respects_the_plans_history_horizon(
     """A Free workspace's 7-day window cannot see a post from last month, so
     the prompt is ungrounded rather than grounded in data the plan does not
     include."""
-    workspace.plan = plans["free"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
     for rate in (0.01, 0.02, 0.03, 0.04, 0.40):
         PostMetric.objects.create(
             post_target=make_target(workspace, user, social_account, age_days=30),
@@ -106,9 +106,10 @@ def test_grounding_never_reaches_a_provider(
     _population(paid_workspace, user, social_account)
 
     def explode(**_kwargs: Any) -> Any:
-        raise AssertionError("prompt assembly must not reach a platform adapter")
+        raise AssertionError("prompt assembly must not reach a provider")
 
-    monkeypatch.setattr("channels.adapters.fake.FakePlatformAdapter.fetch_metrics", explode)
+    monkeypatch.setattr("analytics.providers.fake.FakeMetricsProvider.fetch", explode)
+    monkeypatch.setattr("channels.adapters.fake.FakePlatformAdapter.publish", explode)
 
     prompt = assemble_text_prompt(idea="launch day", workspace=paid_workspace)
 

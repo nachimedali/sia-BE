@@ -18,12 +18,13 @@ mocks standing in for a vendor:
   classify_constraints`, the vision-as-labelling call design.md §5 already
   puts on the LLM provider (see `ai/providers/base.py`).
 
-**Text-in-image legibility is the one left undone.** It needs OCR, which
-needs a vendor this codebase does not have credentials for or a documented
-choice of yet, and it only matters once image generation produces text
-overlays — a Phase 14 (`ShotSpec` overlays) concern. The check exists and
-always passes, with that reason recorded on every `QualityCheck` row rather
-than silently omitted (design.md §15.8 A71).
+**Text-in-image legibility is not checked, and does not pretend to be**
+(C-11 / P0-04). The stub that always passed was removed rather than left in
+place: a check reporting success it never performed is worse than an absent
+one. Reinstating it needs OCR behind a port with a fake, like every other
+external dependency — a vendor this codebase has neither credentials for nor a
+documented choice of — and it only matters once image generation produces text
+overlays (design.md §15.8 A71).
 """
 
 from __future__ import annotations
@@ -196,10 +197,14 @@ def run_image_quality_gate(
         if violated:
             reasons.append(f"brand_constraints: violates {violated}")
 
-    checks["text_legibility"] = {
-        "passed": True,
-        "detail": "not yet implemented — deferred to Phase 14 overlays (A71)",
-    }
+    # **No `text_legibility` key.** It used to be here, always passing, with a
+    # note saying it was deferred — and C-11 is explicit that a quality check
+    # which always passes is worse than no check, because it implies coverage
+    # that does not exist. A caller reading `checks` now sees legibility is
+    # absent rather than seeing it pass, which is the true statement.
+    #
+    # Reinstating it means OCR behind a port with a fake, like every other
+    # external dependency. Until then the honest surface is silence.
 
     return QualityResult(
         passed=not reasons,
@@ -225,4 +230,42 @@ def run_text_quality_gate(*, body: str, banned_phrases: list[str]) -> QualityRes
 
     return QualityResult(
         passed=not reasons, checks=checks, identity_score=None, rejected_reason="; ".join(reasons)
+    )
+
+
+# -----------------------------------------------------------------------------
+# Video (steps-plan S3)
+# -----------------------------------------------------------------------------
+#: What a social platform accepts as a video upload, and so what a render must
+#: come back as. A render in any other container cannot be published.
+_PUBLISHABLE_VIDEO_MIME = frozenset({"video/mp4"})
+#: How far a render's length may drift from what was bought, in seconds.
+VIDEO_DURATION_TOLERANCE_S = 0.5
+
+
+def run_video_quality_gate(
+    *, content: bytes, mime: str, duration_seconds: float, expected_seconds: float
+) -> QualityResult:
+    """Artifact checks on a rendered clip or reel, before anything is charged.
+
+    Structural, and honest about it: the container is an ISO-BMFF file (an
+    `ftyp` box where MP4 puts one), the type is one platforms take, and the
+    length is what the person paid for. **It does not look at the frames** —
+    nothing in this stack decodes video — so a warped label is not caught
+    here, and nothing claims it is. Brand policy is a separate layer (C-09).
+    """
+    checks = {
+        "container": len(content) > 12 and content[4:8] == b"ftyp",
+        "mime": mime in _PUBLISHABLE_VIDEO_MIME,
+        "duration": abs(duration_seconds - expected_seconds) <= VIDEO_DURATION_TOLERANCE_S,
+    }
+    reason = ""
+    if not (checks["container"] and checks["mime"]):
+        reason = "The render came back in a format that cannot be published."
+    elif not checks["duration"]:
+        reason = (
+            f"The render came back {duration_seconds:.1f} s long instead of {expected_seconds:g} s."
+        )
+    return QualityResult(
+        passed=not reason, checks=checks, identity_score=None, rejected_reason=reason
     )

@@ -37,8 +37,8 @@ def packs(db):
 
 @pytest.fixture
 def pro_workspace(workspace, plans):
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     return workspace
 
 
@@ -221,7 +221,7 @@ def test_a_subscription_checkout_is_not_treated_as_a_pack(workspace, packs) -> N
     )
 
     workspace.refresh_from_db()
-    assert workspace.stripe_customer_id == "cus_9"
+    assert workspace.organization.stripe_customer_id == "cus_9"
     assert not CreditLedger.objects.filter(reason=CreditReason.PURCHASE).exists()
 
 

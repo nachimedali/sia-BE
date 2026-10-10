@@ -113,8 +113,8 @@ def test_a_free_workspace_is_skipped(
 ) -> None:
     """Repurposing is paid (§4.1), so candidates are not built for a workspace
     that could never open them."""
-    workspace.plan = plans["free"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
     _population(workspace, user, social_account)
 
     assert repurposing.scan_all() == 0

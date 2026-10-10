@@ -80,18 +80,71 @@ class FeatureNotAvailable(PaymentRequired):
     default_detail = "This feature is not available on your plan."
 
 
-class InsufficientCredits(PaymentRequired):
+class Purchasable(PaymentRequired):
+    """A 402 the customer can clear **without leaving the screen**.
+
+    The distinction from the rest of the family is what can be done about it.
+    `FeatureNotAvailable` needs a different plan; running out of credits needs
+    ten dollars, and sending someone to a pricing page to spend it turns a
+    thirty-second purchase into an abandoned session.
+
+    `purchase` carries the packs that would actually unblock *this* request,
+    priced in the organization's own currency. Built at the raise site rather
+    than in the exception handler, because only the service knows which
+    workspace ran out and therefore which currency to quote.
+    """
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        detail: dict[str, Any] | None = None,
+        code: str | None = None,
+        suggested_plan: str = "pro",
+        cta: str = DEFAULT_UPGRADE_CTA,
+        purchase: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message, detail=detail, code=code, suggested_plan=suggested_plan, cta=cta)
+        #: Empty is legitimate and means "nothing on sale fixes this" — an
+        #: exhausted video allowance on a plan with no video packs, say. The UI
+        #: renders the upgrade path alone rather than an empty buy button.
+        self.purchase: list[dict[str, Any]] = purchase or []
+
+
+class InsufficientCredits(Purchasable):
     default_code = "insufficient_credits"
     default_detail = "You do not have enough credits for this generation."
 
 
-class InsufficientVideoUnits(PaymentRequired):
+class InsufficientVideoUnits(Purchasable):
     default_code = "insufficient_video_units"
     default_detail = "You do not have enough video allowance for this generation."
 
 
 class QuotaExceeded(PaymentRequired):
     default_code = "quota_exceeded"
+
+
+class AddonNotEnabled(PaymentRequired):
+    """402 at the add-on, not at the plan (P0-25).
+
+    A distinct code because it leads to a distinct screen: the customer may
+    already be on the top plan, in which case an upgrade prompt is both wrong
+    and insulting.
+    """
+
+    default_code = "addon_not_enabled"
+
+
+class SoftBudgetExceeded(PaymentRequired):
+    """402 at a ceiling the workspace set for itself (P0-25).
+
+    Also distinct, and for a stronger reason: nothing can be bought to fix it.
+    The fix is an admin in this workspace raising its own budget, so the UI
+    must be able to say "this workspace's budget" rather than "your plan".
+    """
+
+    default_code = "soft_budget_exceeded"
     default_detail = "You have reached your plan's limit for this resource."
 
 
@@ -104,6 +157,19 @@ class StateConflict(OCCSError):
     status_code = status.HTTP_409_CONFLICT
     default_code = "state_conflict"
     default_detail = "The resource is not in a state that allows this transition."
+
+
+class NotFoundError(OCCSError):
+    """404. **The answer to every cross-tenant id** (Part 7 rule 3).
+
+    Never 403. A 403 confirms the row exists and merely belongs to someone
+    else, which is an enumeration oracle; a 404 says only that this caller has
+    no such thing, which is both true and useless to an attacker. Now three
+    dimensions wide — organization, workspace and, from Phase 2, visibility.
+    """
+
+    status_code = status.HTTP_404_NOT_FOUND
+    default_code = "not_found"
 
 
 class ProviderError(OCCSError):
@@ -236,6 +302,11 @@ def exception_handler(exc: Exception, context: dict[str, Any]) -> Response | Non
         wait = getattr(exc, "wait", None)
         if isinstance(exc, drf_exceptions.Throttled) and wait is not None:
             response["Retry-After"] = str(round(wait))
+
+    if isinstance(exc, Purchasable) and exc.purchase:
+        # Only when there is something to sell. An empty key would render as a
+        # buy button with nothing behind it.
+        payload["error"]["purchase"] = exc.purchase
 
     if (
         response.status_code == status.HTTP_402_PAYMENT_REQUIRED

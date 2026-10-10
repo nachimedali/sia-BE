@@ -23,7 +23,7 @@ pytestmark = pytest.mark.django_db
 def _armed_reminder(workspace: Any, user: Any, *, in_minutes: int = 2) -> Reminder:
     post = create_post(workspace=workspace, author=user, master_body="Check out our new drop")
     scheduled_at = timezone.now() + dt.timedelta(minutes=in_minutes)
-    schedule_post(post=post, delivery_mode="REMINDER", scheduled_at=scheduled_at)
+    schedule_post(post=post, delivery_mode="REMINDER", scheduled_at=scheduled_at, actor=user)
     return Reminder.objects.get(post=post)
 
 
@@ -134,12 +134,12 @@ def test_confirm_flips_post_to_published(workspace: Any, user: Any, outbox: list
         reminder = _armed_reminder(workspace, user)
         traveller.shift(dt.timedelta(minutes=2, seconds=1))
         services.send_due()
-    token = _token_from_outbox(outbox)
+        token = _token_from_outbox(outbox)
 
-    response = _public_client().post(f"/api/v1/reminders/{token}/confirm/")
+        response = _public_client().post(f"/api/v1/reminders/{token}/confirm/")
 
-    assert response.status_code == 200
-    assert response.json()["state"] == ReminderState.CONFIRMED
+        assert response.status_code == 200
+        assert response.json()["state"] == ReminderState.CONFIRMED
     reminder.refresh_from_db()
     assert reminder.state == ReminderState.CONFIRMED
     assert reminder.confirmed_at is not None
@@ -157,25 +157,27 @@ def test_snooze_reschedules_and_skip_terminates(
         reminder = _armed_reminder(workspace, user)
         traveller.shift(dt.timedelta(minutes=2, seconds=1))
         services.send_due()
-    token = _token_from_outbox(outbox)
+        token = _token_from_outbox(outbox)
 
-    new_time = timezone.now() + dt.timedelta(hours=3)
-    snooze_response = _public_client().post(
-        f"/api/v1/reminders/{token}/snooze/", {"snoozed_to": new_time.isoformat()}, format="json"
-    )
-    assert snooze_response.status_code == 200
-    assert snooze_response.json()["state"] == ReminderState.SNOOZED
-    reminder.refresh_from_db()
-    assert reminder.state == ReminderState.SNOOZED
-    assert reminder.send_at == new_time
-    reminder.post.refresh_from_db()
-    assert reminder.post.scheduled_at == new_time
-    assert reminder.post.status == PostStatus.REMINDER_ARMED  # unchanged by snoozing
+        new_time = timezone.now() + dt.timedelta(hours=3)
+        snooze_response = _public_client().post(
+            f"/api/v1/reminders/{token}/snooze/",
+            {"snoozed_to": new_time.isoformat()},
+            format="json",
+        )
+        assert snooze_response.status_code == 200
+        assert snooze_response.json()["state"] == ReminderState.SNOOZED
+        reminder.refresh_from_db()
+        assert reminder.state == ReminderState.SNOOZED
+        assert reminder.send_at == new_time
+        reminder.post.refresh_from_db()
+        assert reminder.post.scheduled_at == new_time
+        assert reminder.post.status == PostStatus.REMINDER_ARMED  # unchanged by snoozing
 
-    # The same (still-usable, snoozed) token now terminates the reminder.
-    skip_response = _public_client().post(f"/api/v1/reminders/{token}/skip/")
-    assert skip_response.status_code == 200
-    assert skip_response.json()["state"] == ReminderState.SKIPPED
+        # The same (still-usable, snoozed) token now terminates the reminder.
+        skip_response = _public_client().post(f"/api/v1/reminders/{token}/skip/")
+        assert skip_response.status_code == 200
+        assert skip_response.json()["state"] == ReminderState.SKIPPED
     reminder.refresh_from_db()
     assert reminder.state == ReminderState.SKIPPED
     reminder.post.refresh_from_db()

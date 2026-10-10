@@ -1,21 +1,21 @@
-"""The completeness scorer (implementation.md Phase 5.3).
+"""The completeness scorer (implementation.md Phase 5.3, reworked for the product
+brief — `new_temp/product-new.html`).
 
-Eight weighted checks, summing to 100. `references` alone decides
-`is_generation_ready` (I7) — the other seven are quality-of-generation
-signal, not a gate, which is why a 0%-complete product with one reference
-image is still generation-ready.
+Eleven weighted checks summing to 100. `references` alone decides
+`is_generation_ready` (I7): the rest are quality-of-generation signal, which is
+why a 0%-complete product with one reference image is still generation-ready.
+`required` marks what the form needs before it offers "Stage for generation";
+it is a *form* gate and never a server refusal — a half-filled product is saved
+as a draft, not rejected.
 
-`motion_reference` has no field of its own on `Product`: design.md §6.4 does
-not list one, and Phase 14 (video) is where a dedicated motion-reference
-concept would earn a column. Read literally in the meantime as "if this
-product claims the `video` format, at least one of its reference images
-should actually be a video" — reusing `MediaAsset.kind` rather than inventing
-new state (design.md §15.6 A54).
+The definitions are data and are served (`GET /products/completeness-checks/`)
+so the browser's live panel reads its weights from here rather than carrying a
+second copy that would drift. The predicates are not shared: the form evaluates
+its own unsaved state, and the number it shows is replaced by this one the
+moment the product is saved.
 
 Recomputed by an explicit service call from every mutation path
-(`products.services.products`), not a Django signal — the rest of this
-codebase has no signal wiring, and implementation.md's "signal or explicit
-service call" leaves the choice open (design.md §15.6 A54).
+(`products.services.products`), not a Django signal (Part 7 rule 8).
 """
 
 from __future__ import annotations
@@ -23,8 +23,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from content.models import MediaKind
-from products.models import Product, ProductFormat
+from products.models import Product
+
+#: A photo shot type tag per reference image is what "tagged" means.
+TAGGED_PHOTOS_MIN = 3
+SHORT_DESCRIPTION_MIN = 40
+FEATURES_MIN = 2
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,8 @@ class Check:
     key: str
     label: str
     weight: int
+    required: bool
+    section: str
     predicate: Callable[[Product], bool]
 
 
@@ -39,48 +45,85 @@ def _has_references(product: Product) -> bool:
     return product.reference_images.exists()
 
 
-def _has_description(product: Product) -> bool:
-    return len(product.description.strip()) >= 10
+def _photos_tagged(product: Product) -> bool:
+    ids = {str(pk) for pk in product.reference_images.values_list("pk", flat=True)}
+    tagged = [k for k in product.reference_tags if k in ids]
+    return len(ids) >= TAGGED_PHOTOS_MIN and len(tagged) >= TAGGED_PHOTOS_MIN
 
 
-def _has_restrictions(product: Product) -> bool:
-    return len(product.restrictions) > 0
+def _has_name(product: Product) -> bool:
+    return len(product.name.strip()) >= 3
 
 
-def _has_voice(product: Product) -> bool:
-    return bool(product.voice.strip())
+def _has_category(product: Product) -> bool:
+    return product.category_id is not None
 
 
-def _has_formats(product: Product) -> bool:
-    return len(product.formats) > 0
+def _has_short_description(product: Product) -> bool:
+    return len(product.short_description.strip()) >= SHORT_DESCRIPTION_MIN
 
 
-def _has_platforms(product: Product) -> bool:
+def _has_features(product: Product) -> bool:
+    return len(product.features) >= FEATURES_MIN
+
+
+def _has_tone(product: Product) -> bool:
+    """Sliders, a preset, or the older free-text voice descriptor the product
+    page still edits — all three say "this product has a voice"."""
+    return bool(product.tone) or bool(product.tone_preset) or bool(product.voice.strip())
+
+
+def _has_words(product: Product) -> bool:
+    return bool(product.use_words or product.avoid_words)
+
+
+def _claims_proven(product: Product) -> bool:
+    return all(claim.get("proof_media") for claim in product.claims)
+
+
+def _rules_reviewed(product: Product) -> bool:
+    return product.rules_reviewed_at is not None
+
+
+def _has_platform(product: Product) -> bool:
     return len(product.platforms) > 0
 
 
-def _has_ctas(product: Product) -> bool:
-    return len(product.ctas) > 0
-
-
-def _has_motion_reference(product: Product) -> bool:
-    if ProductFormat.VIDEO not in product.formats:
-        return True  # not applicable — nothing to satisfy
-    return product.reference_images.filter(kind=MediaKind.VIDEO).exists()
-
-
-# Order matches implementation.md Phase 5.3's own listing. Weights sum to 100;
-# `references` carries the most because it is also the I7 gate.
+# Weights sum to 100; `references` carries the most because it is also the I7 gate.
 CHECKS: tuple[Check, ...] = (
-    Check("references", "At least one reference image", 25, _has_references),
-    Check("description", "A product description", 15, _has_description),
-    Check("restrictions", "At least one hard restriction", 10, _has_restrictions),
-    Check("voice", "A voice descriptor", 10, _has_voice),
-    Check("formats", "At least one preferred format", 10, _has_formats),
-    Check("platforms", "At least one target platform", 10, _has_platforms),
-    Check("ctas", "At least one call to action", 10, _has_ctas),
-    Check("motion_reference", "A video reference for the video format", 10, _has_motion_reference),
+    Check("references", "At least 1 photo", 18, True, "photos", _has_references),
+    Check("photos_tagged", "3 or more photos, tagged", 8, False, "photos", _photos_tagged),
+    Check("name", "Product name", 14, True, "identity", _has_name),
+    Check("category", "Category", 6, True, "identity", _has_category),
+    Check(
+        "short_description",
+        "Short description, 40+ characters",
+        12,
+        True,
+        "identity",
+        _has_short_description,
+    ),
+    Check("features", "Key features", 5, False, "identity", _has_features),
+    Check("tone", "Tone of voice set", 6, False, "voice", _has_tone),
+    Check("words", "Words to use or avoid", 4, False, "voice", _has_words),
+    Check("claims", "Claims backed by proof", 5, False, "rules", _claims_proven),
+    Check("rules_reviewed", "Rules reviewed", 10, True, "rules", _rules_reviewed),
+    Check("platforms", "At least 1 platform", 12, True, "stages", _has_platform),
 )
+
+
+def check_definitions() -> list[dict[str, object]]:
+    """What the form's panel renders its weights and required flags from."""
+    return [
+        {
+            "key": c.key,
+            "text": c.label,
+            "weight": c.weight,
+            "is_required": c.required,
+            "section": c.section,
+        }
+        for c in CHECKS
+    ]
 
 
 def score_product(product: Product) -> tuple[int, list[dict[str, object]]]:

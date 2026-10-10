@@ -36,8 +36,8 @@ def autopilot_workspace(workspace: Any, plans: dict[str, Any]) -> Any:
     from billing.services.ledger import grant_credits, grant_video_units
     from channels.models import SocialAccount
 
-    workspace.plan = plans["pro"]
-    workspace.save(update_fields=["plan"])
+    workspace.organization.plan = plans["pro"]
+    workspace.organization.save(update_fields=["plan"])
     grant_credits(workspace, 100, note="test funding")
     grant_video_units(workspace, plans["pro"].included_videos, note="test allowance")
     # Autopilot exists to fill a calendar that publishes itself, so the default
@@ -69,6 +69,11 @@ def autopilot_product(autopilot_workspace: Any, make_png_upload: Any) -> Any:
 
 @pytest.fixture
 def autopilot_config(autopilot_product: Any, generation_costs: None) -> Any:
+    """A configured autopilot — which since Phase 5 means a configured *brand*
+    too: a run refuses without an active taste profile, because a draft that
+    could never be approved is one the customer paid for and cannot use."""
     from products.models import AutopilotConfig
+    from taste.services.profiles import activate, create_profile
 
+    activate(create_profile(workspace=autopilot_product.workspace))
     return AutopilotConfig.objects.create(product=autopilot_product, enabled=True)

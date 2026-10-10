@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
 from billing.services.entitlements import entitlements_for
-from common.workspaces import active_workspace
+from billing.services.flags import flag_enabled
+from common.workspaces import request_workspace
 
 
 def HasFeature(feature: str) -> type[BasePermission]:  # noqa: N802 — reads as a class
@@ -34,8 +36,31 @@ def HasFeature(feature: str) -> type[BasePermission]:  # noqa: N802 — reads as
         def has_permission(self, request: Request, view: Any) -> bool:
             if not request.user or not request.user.is_authenticated:
                 return False
-            entitlements_for(active_workspace(request)).require_feature(feature)
+            entitlements_for(request_workspace(request)).require_feature(feature)
             return True
 
     _HasFeature.__name__ = f"HasFeature({feature!r})"
     return _HasFeature
+
+
+def HasFlag(key: str) -> type[BasePermission]:  # noqa: N802 — reads as a class
+    """`permission_classes = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]`.
+
+    The rollout twin of `HasFeature`, and it answers with a **404**, not a 402
+    or a 403. Part 3: flag off means pre-phase behaviour, and before the phase
+    shipped the route did not exist — a 402 would offer to sell an upgrade that
+    changes nothing, and a 403 would say the caller lacks a permission they
+    actually hold.
+    """
+
+    class _HasFlag(BasePermission):
+        def has_permission(self, request: Request, view: Any) -> bool:
+            if not request.user or not request.user.is_authenticated:
+                return False
+            workspace = request_workspace(request)
+            if not flag_enabled(workspace.organization, key):
+                raise NotFound
+            return True
+
+    _HasFlag.__name__ = f"HasFlag({key!r})"
+    return _HasFlag

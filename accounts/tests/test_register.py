@@ -27,9 +27,9 @@ def test_register_creates_workspace_membership_and_free_plan(plans, outbox) -> N
     user = User.objects.get(email="jordan@example.com")
     assert user.is_email_verified is False
 
-    workspace = Workspace.objects.get(owner=user)
-    assert workspace.plan is not None
-    assert workspace.plan.code == "free"
+    workspace = Workspace.objects.get(organization__owner=user)
+    assert workspace.organization.plan is not None
+    assert workspace.organization.plan.code == "free"
     assert workspace.onboarding_complete is False
     assert workspace.slug
 
