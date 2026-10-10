@@ -12,10 +12,12 @@ import datetime as dt
 from typing import Any, ClassVar
 
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.request import Request
 
 from ai.models import Generation
+from checks.serializers import CheckSummarySerializer
 from common.workspaces import request_workspace, scope_related_field_to_workspace
 from content.models import (
     ALT_TEXT_MAX_LENGTH,
@@ -231,6 +233,21 @@ class PostSerializer(serializers.ModelSerializer[Post]):
         read_only=True
     )
     platform_options = serializers.SerializerMethodField()
+    #: S4 — the review queue's badge. Read from annotations the posts list and
+    #: detail put on the same query (`checks.queries.annotate`), so a page of
+    #: a hundred posts is badged without a hundred more requests. `verdict`
+    #: `NONE` when the post was never checked; `null` when the step is off.
+    checks = serializers.SerializerMethodField()
+
+    @extend_schema_field(CheckSummarySerializer(allow_null=True))
+    def get_checks(self, obj: Post) -> dict[str, Any] | None:
+        # The view annotates only when the step is on, so the annotation's
+        # presence is the flag — one signal, not two that could disagree.
+        if not hasattr(obj, "checks_latest"):
+            return None
+        from checks.services import fingerprint, summary
+
+        return summary(obj.checks_latest, current=fingerprint(obj))
 
     def get_effective_at(self, obj: Post) -> dt.datetime | None:
         """The time the calendar places this post at: the schedule once it has
@@ -278,6 +295,7 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "proposed_scheduled_at",
             "generation",
             "platform_options",
+            "checks",
             "created_at",
             "updated_at",
         )

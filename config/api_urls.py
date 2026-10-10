@@ -88,6 +88,7 @@ from brand.views import (
 )
 from categories.views import CategoryListView
 from channels.views import ChannelConnectView, SocialAccountViewSet
+from checks.views import PostChecksView
 from collaboration.views import (
     ReviewApproveView,
     ReviewCommentView,
@@ -421,6 +422,9 @@ urlpatterns = [
     # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the
     # same guarantee the sweep (A52) checks, applied where it does not reach.
     path("posts/<int:pk>/share/", ReviewLinkView.as_view(), name="post-share"),
+    # S4: the post's pre-publish checks. `{pk}` resolves through a workspace-
+    # and visibility-filtered queryset in the view (Part 7 rule 3).
+    path("posts/<int:pk>/checks/", PostChecksView.as_view(), name="post-checks"),
     path(
         "posts/<int:pk>/share/<int:link_id>/revoke/",
         ReviewLinkRevokeView.as_view(),

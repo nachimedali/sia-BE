@@ -74,6 +74,7 @@ LOCAL_APPS = [
     # The Brand Core (steps-plan S1): a website import, reviewed section by
     # section, versioned into the brand kit every generation reads.
     "brand",
+    "checks",
     # The seam to the trendgen service (BUILD-PLAN L11-L12). No models; it
     # holds the ports that `trends/` and the creative half of `ai/` move
     # behind, so Phase 12 swaps an adapter rather than editing call sites.

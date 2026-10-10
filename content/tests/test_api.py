@@ -84,7 +84,9 @@ def test_post_list_does_not_n_plus_one_media(
 
     # Auth, count, the page of posts, one prefetch for their attachments and one
     # for their targets — flat regardless of how many posts are on the page.
-    with django_assert_max_num_queries(5):
+    # 6: the five the list always took, plus one S4 flag read — per request,
+    # not per post (`checks/tests` pins the badge itself as row-independent).
+    with django_assert_max_num_queries(6):
         response = auth_client.get(POSTS_URL)
     assert response.status_code == 200
     assert len(response.json()["results"]) == 5
@@ -154,7 +156,9 @@ def test_post_list_does_not_n_plus_one_targets(
 
     # Auth, count, the page, the attachments prefetch and the targets
     # prefetch — flat in the number of posts.
-    with django_assert_max_num_queries(5):
+    # 6: the five the list always took, plus one S4 flag read — per request,
+    # not per post (`checks/tests` pins the badge itself as row-independent).
+    with django_assert_max_num_queries(6):
         response = auth_client.get(POSTS_URL)
     assert response.status_code == 200
     assert all(len(row["targets"]) == 2 for row in response.json()["results"])

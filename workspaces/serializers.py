@@ -6,6 +6,7 @@ import functools
 import zoneinfo
 from typing import Any, ClassVar
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from billing.models import OrganizationAddon
@@ -25,6 +26,7 @@ from workspaces.models import (
     Organization,
     Role,
     Workspace,
+    resolved_permissions,
 )
 
 
@@ -88,6 +90,10 @@ class MembershipSerializer(serializers.ModelSerializer[Membership]):
         source="invited_by.email", read_only=True, default=None
     )
     is_owner = serializers.SerializerMethodField()
+    #: What this member may do — the authority, resolved the way the gates
+    #: resolve it (`member_permissions`' dual read), so a screen that hides a
+    #: button and the endpoint that refuses it agree about one person.
+    permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = Membership
@@ -96,11 +102,16 @@ class MembershipSerializer(serializers.ModelSerializer[Membership]):
             "user",
             "user_email",
             "role",
+            "permissions",
             "invited_by_email",
             "is_owner",
             "created_at",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = fields
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_permissions(self, obj: Membership) -> list[str]:
+        return sorted(resolved_permissions(obj.role, obj.permissions))
 
     def get_is_owner(self, obj: Membership) -> bool:
         # Not the same fact as `role == OWNER`: nothing enforces the two stay

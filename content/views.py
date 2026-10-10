@@ -24,10 +24,12 @@ from rest_framework.views import APIView
 
 from ai.serializers import GenerationSerializer
 from billing.permissions import HasFlag
-from billing.services.flags import CONTENT_MODEL_V2
+from billing.services.flags import CHECKS_S4, CONTENT_MODEL_V2, flag_enabled
+from checks import queries as check_queries
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
+from common.visibility import VisibilityScopedQuerySetMixin
 from common.workspaces import authenticated_user, request_workspace
 from content.editing.base import CropBox
 from content.models import (
@@ -115,7 +117,9 @@ _ORDERED_MEDIA_ATTACHMENTS = Prefetch(
 )
 
 
-class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
+class PostViewSet(
+    WorkspaceScopedQuerySetMixin, VisibilityScopedQuerySetMixin, viewsets.ModelViewSet[Post]
+):
     serializer_class = PostSerializer
     permission_classes: list[Any] = [IsAuthenticated]
     pagination_class = DefaultPagination
@@ -147,6 +151,11 @@ class PostViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Post]):
         """
         queryset = super().get_queryset()
         queryset = self._filter_by_content_kind(queryset)
+        if self.action in {"list", "retrieve"} and flag_enabled(
+            request_workspace(self.request).organization, CHECKS_S4
+        ):
+            # S4: the check badge comes from this query, never one per row.
+            queryset = check_queries.annotate(queryset)
         if self.action == "list":
             # The calendar's filters, window and derived columns. Run here for
             # the reason the status filter is: the list paginates, and a filter

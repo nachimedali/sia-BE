@@ -102,6 +102,13 @@ def permissions_for(role: str) -> set[str]:
     return set(_PRESETS[role])
 
 
+def resolved_permissions(role: str, stored: list[str] | None) -> set[str]:
+    """A member's authority: the stored set when there is one, else the role's
+    preset. The one dual-read — the gate and the roster both call it, so the
+    screen and the endpoint cannot disagree about one person."""
+    return set(stored) if stored else permissions_for(role)
+
+
 def generate_referral_code() -> str:
     """Affiliates are deferred (§12), but the code ships in v1 so attribution
     can be backfilled without a migration over live rows."""

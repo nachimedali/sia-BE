@@ -33,7 +33,6 @@ from billing.services.entitlements import entitlements_for
 from billing.services.flags import VIDEO_S3
 from common.workspaces import authenticated_user, request_workspace
 from content.models import MediaAsset, Post
-from content.services.revisions import UNEDITABLE_STATUSES
 from workspaces.models import Permission, Workspace
 from workspaces.permissions import HasPermission
 
@@ -159,7 +158,9 @@ class VideoRenderListView(APIView):
             "Credits are taken only if the render passes the quality gate. 409 "
             "`estimate_changed` (with the new estimate) when the price moved since it was "
             "confirmed; 402 `insufficient_credits` when the balance less what is held cannot "
-            "cover it; 409 `render_not_reviewable` when `retry_of` is not a failed render."
+            "cover it; 409 `render_not_reviewable` when `retry_of` is not a failed render; "
+            "409 `post_locked` / `post_not_editable` when `post` cannot change. For a `post`, "
+            "the same clip already rendering or rendered is returned rather than charged again."
         ),
     )
     def post(self, request: Request) -> Response:
@@ -177,10 +178,6 @@ class VideoRenderListView(APIView):
             post = Post.objects.filter(workspace=workspace, pk=data["post"]).first()
             if post is None:
                 raise NotFound
-            if post.status in UNEDITABLE_STATUSES:
-                raise video.RenderNotReviewableError(
-                    "This post can no longer change.", detail={"post": post.pk}
-                )
         render = video.start_render(
             workspace,
             user=authenticated_user(request),

@@ -15,6 +15,7 @@ from categories.models import Category
 from collaboration import services as collaboration
 from common.exceptions import OCCSError, StateConflict
 from content.models import (
+    SLOTTED_STATUSES,
     ContentKind,
     MediaAsset,
     Post,
@@ -118,6 +119,8 @@ def create_post(
 #: are all written by other phases' services (autopilot, repurposing) through
 #: this same function, and none of them should silently undo an approval.
 _CONTENT_FIELDS = frozenset({"master_body", "media_asset_ids", "doc_body"})
+#: Statuses an approval stands behind. A content change in any of them voids it.
+_REVIEWED_STATUSES = frozenset({PostStatus.APPROVED, *SLOTTED_STATUSES})
 
 
 def update_post(
@@ -170,8 +173,19 @@ def update_post(
         setattr(post, name, value)
 
     update_fields = [*fields.keys()]
-    reverted = touches_content and post.status == PostStatus.APPROVED
+    # Approval attaches to content, and so does a slot: a post already
+    # scheduled (or with a reminder armed) was approved as it *was*. Editing it
+    # — a new clip, a new caption — sends it back to review, and its time is
+    # kept as the proposal `_finalise_approval` reschedules from, so the slot
+    # comes back the moment it is re-approved and not before (L-2).
+    reverted = touches_content and post.status in _REVIEWED_STATUSES
+    held_slot = None
     if reverted:
+        if post.status in SLOTTED_STATUSES:
+            from scheduling.services import hold_slot_for_review
+
+            held_slot = post.scheduled_at
+            update_fields += hold_slot_for_review(post)
         post.status = PostStatus.PENDING_REVIEW
         update_fields.append("status")
 
@@ -186,7 +200,10 @@ def update_post(
             workspace=post.workspace,
             verb="post.edited_after_approval",
             target_repr=str(post),
-            meta={"post": post.pk},
+            meta={
+                "post": post.pk,
+                **({"slot_held": held_slot.isoformat()} if held_slot else {}),
+            },
         )
 
     if touches_content:

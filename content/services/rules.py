@@ -95,6 +95,17 @@ class FormatRule:
     #: Formats that cannot exist without media — a reel with no video is not a
     #: reel. `0` is the honest default: a plain feed post is text alone.
     min_media: int = 0
+    #: The width/height ratios this format shows without cropping (S4), or
+    #: `None` when the platform states none. Read by the pre-publish checks,
+    #: which report a picture outside the range — never the adaptation engine,
+    #: which publishes what it is given.
+    aspect_range: tuple[float, float] | None = None
+    #: The narrowest image this format shows sharply, in pixels.
+    min_width: int | None = None
+    #: The bands the platform draws its own interface over, as fractions of
+    #: the frame height from the top and from the bottom. Text placed there is
+    #: hidden behind the profile row or the caption and buttons.
+    safe_zone: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +125,13 @@ class PlatformRule:
     options: tuple[Option, ...] = ()
 
 
+#: The common frames, named once (S4). Vertical full-screen is 9:16 with a
+#: little tolerance; the feed range is the familiar 4:5 to 1.91:1.
+VERTICAL = (0.55, 0.57)
+FEED_RANGE = (0.8, 1.91)
+#: Where the platforms' own interface sits over a full-screen vertical post.
+VERTICAL_UI = (0.14, 0.20)
+
 #: The media-kind sets, named once. The table below is meant to be *read* —
 #: `frozenset({MediaKind.IMAGE, MediaKind.VIDEO})` repeated nine times is noise
 #: that hides the one row where it differs.
@@ -127,12 +145,33 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     Platform.INSTAGRAM: PlatformRule(
         char_limit=2200,
         formats={
-            PostFormat.FEED: FormatRule(max_media=10, allowed_media_kinds=VISUAL),
-            PostFormat.CAROUSEL: FormatRule(max_media=10, allowed_media_kinds=VISUAL, min_media=2),
+            PostFormat.FEED: FormatRule(
+                max_media=10, allowed_media_kinds=VISUAL, aspect_range=FEED_RANGE, min_width=1080
+            ),
+            PostFormat.CAROUSEL: FormatRule(
+                max_media=10,
+                allowed_media_kinds=VISUAL,
+                min_media=2,
+                aspect_range=FEED_RANGE,
+                min_width=1080,
+            ),
             # One video, and it must be there — a reel with no video is not a
             # reel, which is what `min_media` exists to say.
-            PostFormat.REEL: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
-            PostFormat.STORY: FormatRule(max_media=1, allowed_media_kinds=VISUAL, min_media=1),
+            PostFormat.REEL: FormatRule(
+                max_media=1,
+                allowed_media_kinds=MOTION,
+                min_media=1,
+                aspect_range=VERTICAL,
+                safe_zone=VERTICAL_UI,
+            ),
+            PostFormat.STORY: FormatRule(
+                max_media=1,
+                allowed_media_kinds=VISUAL,
+                min_media=1,
+                aspect_range=VERTICAL,
+                min_width=1080,
+                safe_zone=VERTICAL_UI,
+            ),
         },
         hashtag_placement="trailing_block",
         supports_thread=False,
@@ -147,8 +186,12 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     Platform.LINKEDIN: PlatformRule(
         char_limit=3000,
         formats={
-            PostFormat.FEED: FormatRule(max_media=9, allowed_media_kinds=VISUAL),
-            PostFormat.CAROUSEL: FormatRule(max_media=9, allowed_media_kinds=STILLS, min_media=2),
+            PostFormat.FEED: FormatRule(
+                max_media=9, allowed_media_kinds=VISUAL, aspect_range=FEED_RANGE, min_width=1200
+            ),
+            PostFormat.CAROUSEL: FormatRule(
+                max_media=9, allowed_media_kinds=STILLS, min_media=2, min_width=1080
+            ),
             # The document post. One file, and `DOCUMENT` is its own kind
             # rather than an image: a PDF that validated as an image would be
             # rejected by the provider after passing every check here.
@@ -174,7 +217,13 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     Platform.TIKTOK: PlatformRule(
         char_limit=2200,
         formats={
-            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+            PostFormat.FEED: FormatRule(
+                max_media=1,
+                allowed_media_kinds=MOTION,
+                min_media=1,
+                aspect_range=VERTICAL,
+                safe_zone=VERTICAL_UI,
+            ),
         },
         hashtag_placement="inline",
         supports_thread=False,
@@ -187,7 +236,13 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
         char_limit=5000,
         formats={
             PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
-            PostFormat.SHORT: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+            PostFormat.SHORT: FormatRule(
+                max_media=1,
+                allowed_media_kinds=MOTION,
+                min_media=1,
+                aspect_range=VERTICAL,
+                safe_zone=VERTICAL_UI,
+            ),
         },
         hashtag_placement="inline",
         supports_thread=False,
@@ -214,9 +269,24 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
     Platform.FACEBOOK: PlatformRule(
         char_limit=5000,
         formats={
-            PostFormat.FEED: FormatRule(max_media=10, allowed_media_kinds=VISUAL),
-            PostFormat.STORY: FormatRule(max_media=1, allowed_media_kinds=VISUAL, min_media=1),
-            PostFormat.REEL: FormatRule(max_media=1, allowed_media_kinds=MOTION, min_media=1),
+            PostFormat.FEED: FormatRule(
+                max_media=10, allowed_media_kinds=VISUAL, aspect_range=FEED_RANGE, min_width=1080
+            ),
+            PostFormat.STORY: FormatRule(
+                max_media=1,
+                allowed_media_kinds=VISUAL,
+                min_media=1,
+                aspect_range=VERTICAL,
+                min_width=1080,
+                safe_zone=VERTICAL_UI,
+            ),
+            PostFormat.REEL: FormatRule(
+                max_media=1,
+                allowed_media_kinds=MOTION,
+                min_media=1,
+                aspect_range=VERTICAL,
+                safe_zone=VERTICAL_UI,
+            ),
         },
         hashtag_placement="inline",
         supports_thread=False,

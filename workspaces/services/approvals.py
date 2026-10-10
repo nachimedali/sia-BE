@@ -309,7 +309,22 @@ def submit_for_review(
         actor=actor,
         recipients=_reviewers(post),
     )
+    # S4: check it now, so the reviewer opens a post already checked. Explicit,
+    # like the fan-out above; after commit, so a rolled-back submit runs nothing.
+    from checks.services import queue_after_submit
+
+    queue_after_submit(post, actor=actor)
     return post
+
+
+def _ensure_checks_allow(post: Post, *, actor: User | None) -> None:
+    """S4: a post a pre-publish check blocks cannot be approved — by a member
+    or by a guest. A 409, because it is this content's state that refuses, and
+    the buttons the UI greys out are only a hint of it. Imported here: the
+    checks read content, which imports this module."""
+    from checks.services import ensure_not_blocked
+
+    ensure_not_blocked(post, actor=actor)
 
 
 def _check_stage_authority(post: Post, stage: ApprovalStage, actor: User) -> None:
@@ -354,19 +369,11 @@ def approve(
                 }
             )
 
-    if current is None:
-        # A non-blocking chain, or a blocking one with no stages configured.
-        # One approval finishes it.
-        _record(
-            post,
-            action=ApprovalActionType.APPROVE,
-            actor=actor,
-            note=note,
-            required_permission=Permission.APPROVE,
-        )
-        return _finalise_approval(post, scheduler=actor)
-
-    _check_stage_authority(post, current, actor)
+    if current is not None:
+        _check_stage_authority(post, current, actor)
+    # After the stage and authority checks: someone not on this stage's list
+    # gets their 403, not a 409 about content they may not decide on anyway.
+    _ensure_checks_allow(post, actor=actor)
     _record(
         post,
         action=ApprovalActionType.APPROVE,
@@ -375,6 +382,10 @@ def approve(
         stage=current,
         required_permission=Permission.APPROVE,
     )
+    if current is None:
+        # A non-blocking chain, or a blocking one with no stages configured.
+        # One approval finishes it.
+        return _finalise_approval(post, scheduler=actor)
     return _advance(post, stage=current, scheduler=actor)
 
 
@@ -424,6 +435,7 @@ def approve_as_guest(post: Post, *, link: Any) -> Post:
     than being scheduled by nobody.
     """
     _require_transition(post, ApprovalActionType.APPROVE)
+    _ensure_checks_allow(post, actor=None)
     current = post.current_stage
     _record(
         post,

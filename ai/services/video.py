@@ -410,11 +410,36 @@ def start_render(
             "Only a failed render can be retried.", detail={"retry_of": retry_of.pk}
         )
 
+    if post is not None:
+        # Locked (approved) or gone: the post's own 409s, from the one guard
+        # every edit passes — a clip for a post that cannot change is refused
+        # before anything is held.
+        from content.services.posts import ensure_editable
+
+        ensure_editable(post)
+
     entitlements = entitlements_for(workspace)
     with transaction.atomic():
         # The same lock every spend takes: two confirmations racing for the
         # last free credits serialise here, and the second sees the first's hold.
         Workspace.objects.select_for_update().filter(pk=workspace.pk).exists()
+        if post is not None:
+            # **Animating twice never charges twice.** The same clip of the same
+            # still for the same post, already rendering or rendered, is that
+            # render — a double click, a retried request, a second tab. Checked
+            # under the lock, so two racing requests cannot both miss it.
+            existing = (
+                VideoRender.objects.filter(
+                    workspace=workspace,
+                    post=post,
+                    spec=spec.stored(),
+                    status__in=(*ACTIVE, VideoRenderStatus.SUCCEEDED),
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if existing is not None:
+                return existing
         entitlements.require_credits(priced.credits, held=held_credits(workspace))
         render = VideoRender.objects.create(
             workspace=workspace,

@@ -125,6 +125,13 @@ BRAND_IMPORT_S1 = "brand_import_s1"
 #: sent to — a flag hides a feature, it does not take a clip off a post.
 VIDEO_S3 = "video_s3"
 
+#: steps-plan S4 — pre-publish checks: size and frame, text legibility, safe
+#: zones, brand palette and platform policy, the review queue's badges, and the
+#: gate that refuses to approve or schedule a blocked post. Off restores
+#: pre-step behaviour: no checks run, the endpoints answer 404, and nothing is
+#: refused for a check.
+CHECKS_S4 = "checks_s4"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -135,6 +142,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     STUDIO_VARIANTS_V2: True,
     BRAND_IMPORT_S1: True,
     VIDEO_S3: True,
+    CHECKS_S4: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

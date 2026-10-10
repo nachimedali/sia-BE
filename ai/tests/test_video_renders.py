@@ -639,3 +639,74 @@ def test_flag_off_hides_every_video_endpoint(auth_client: Any, pro: Any, still: 
     assert auth_client.get(RENDERS).status_code == 404
     assert auth_client.post(SEND, {"renders": [1]}, format="json").status_code == 404
     assert auth_client.get(f"{RENDERS}1/").status_code == 404
+
+
+# --- the post editor's Animate (S3, hardened) -----------------------------------------
+@pytest.fixture
+def draft(pro: Any, still: Any, user: Any) -> Any:
+    from content.services.posts import create_post
+
+    return create_post(workspace=pro, author=user, master_body="Draft", media_assets=[still])
+
+
+def test_animating_twice_returns_the_same_render_and_charges_once(
+    auth_client: Any, pro: Any, still: Any, draft: Any
+) -> None:
+    request = {**confirmed(auth_client, clip(still)), "post": draft.pk}
+
+    first = auth_client.post(RENDERS, request, format="json").json()
+    second = auth_client.post(RENDERS, request, format="json").json()
+
+    assert second["id"] == first["id"]
+    assert CreditLedger.objects.filter(workspace=pro, note__startswith="video render").count() == 1
+    assert len(_fake_video_provider.calls) == 1
+    # A different clip of the same still is a different render.
+    other = auth_client.post(
+        RENDERS,
+        {**confirmed(auth_client, clip(still, motion="orbit")), "post": draft.pk},
+        format="json",
+    ).json()
+    assert other["id"] != first["id"]
+
+
+def test_the_original_image_is_never_changed(auth_client: Any, still: Any, draft: Any) -> None:
+    before = (still.checksum, still.file.name, still.width, still.height)
+
+    body = auth_client.post(
+        RENDERS, {**confirmed(auth_client, clip(still)), "post": draft.pk}, format="json"
+    ).json()
+
+    still.refresh_from_db()
+    assert (still.checksum, still.file.name, still.width, still.height) == before
+    assert body["output"]["id"] != still.pk and body["output"]["derived_from"] == still.pk
+    assert list(draft.media_assets.values_list("pk", flat=True)) == [
+        still.pk
+    ]  # staged, not written
+
+
+def test_a_locked_post_refuses_animate_with_a_409(
+    auth_client: Any, pro: Any, still: Any, draft: Any
+) -> None:
+    draft.locked_at = timezone.now()
+    draft.save(update_fields=["locked_at"])
+    before = balance(pro)
+
+    response = auth_client.post(
+        RENDERS, {**confirmed(auth_client, clip(still)), "post": draft.pk}, format="json"
+    )
+
+    assert response.status_code == 409 and response.json()["error"]["code"] == "post_locked"
+    assert balance(pro) == before and not VideoRender.objects.exists()
+
+
+def test_a_published_post_refuses_animate_with_a_409(
+    auth_client: Any, still: Any, draft: Any
+) -> None:
+    draft.status = PostStatus.PUBLISHED
+    draft.save(update_fields=["status"])
+
+    response = auth_client.post(
+        RENDERS, {**confirmed(auth_client, clip(still)), "post": draft.pk}, format="json"
+    )
+
+    assert response.status_code == 409 and response.json()["error"]["code"] == "post_not_editable"

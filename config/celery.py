@@ -83,6 +83,8 @@ app.conf.task_routes = {
     # The website import (S1): a few page fetches then one inference call —
     # provider latency, and a person is watching the progress bar.
     "brand.tasks.*": {"queue": "ai_q"},
+    # Pre-publish checks (S4) call the OCR and policy readers: provider latency.
+    "checks.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
     # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody

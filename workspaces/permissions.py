@@ -24,7 +24,7 @@ from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
 from common.workspaces import request_workspace
-from workspaces.models import Membership, permissions_for
+from workspaces.models import Membership, resolved_permissions
 
 
 def caller_permissions(request: Request) -> set[str]:
@@ -62,7 +62,7 @@ def member_permissions(user: Any, workspace: Any) -> set[str]:
     if membership is None:
         return set()
     role, stored = membership
-    return set(stored) if stored else permissions_for(role)
+    return resolved_permissions(role, stored)
 
 
 def HasPermission(permission: str) -> type[BasePermission]:  # noqa: N802 — reads as a class

@@ -112,6 +112,10 @@ def schedule_post(
     entitlements = entitlements_for(post.workspace)
     entitlements.require_scheduling_horizon(scheduled_at)
 
+    # S4: a check that blocks this content stops it here, whatever the UI drew.
+    from checks.services import ensure_not_blocked
+
+    ensure_not_blocked(post, actor=actor)
     post = _gate_approval(post, actor=actor)
 
     # L-4/P0-20: the quota trial is metered here, at the moment a post is
@@ -171,6 +175,20 @@ def _clear_slot(post: Post) -> None:
     ).delete()
     post.delivery_mode = ""
     post.scheduled_at = None
+
+
+def hold_slot_for_review(post: Post) -> list[str]:
+    """Clear an armed slot while the post goes back to review, keeping the time
+    as the post's proposal — which `_finalise_approval` schedules from once it
+    is approved again (and refuses to, if that time has passed by then).
+
+    Returns the fields it changed; the caller saves them with the status change,
+    so nothing is ever armed for content no one approved. Not saved here.
+    """
+    post.proposed_delivery_mode = post.delivery_mode
+    post.proposed_scheduled_at = post.scheduled_at
+    _clear_slot(post)
+    return ["delivery_mode", "scheduled_at", "proposed_delivery_mode", "proposed_scheduled_at"]
 
 
 def unschedule_post(post: Post, *, actor: User) -> Post:
