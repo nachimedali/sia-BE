@@ -129,6 +129,7 @@ from reminders.views import (
     ReminderSnoozeView,
     ReminderViewSet,
 )
+from search.views import SearchView
 from taste.views import (
     ContentCandidateViewSet,
     RuleSetViewSet,
@@ -425,6 +426,9 @@ urlpatterns = [
     # S4: the post's pre-publish checks. `{pk}` resolves through a workspace-
     # and visibility-filtered queryset in the view (Part 7 rule 3).
     path("posts/<int:pk>/checks/", PostChecksView.as_view(), name="post-checks"),
+    # The top bar's search (A-14). Each source is scoped to the request's
+    # workspace — and posts to its audience — exactly as its list endpoint is.
+    path("search/", SearchView.as_view(), name="search"),
     path(
         "posts/<int:pk>/share/<int:link_id>/revoke/",
         ReviewLinkRevokeView.as_view(),
