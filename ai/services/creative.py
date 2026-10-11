@@ -80,12 +80,17 @@ VIDEO_KINDS = frozenset(
 )
 
 
+#: Kinds that are not Studio controls: the Motion step's own catalogue and a
+#: campaign plan's price lines (steps-plan S5), each read by its own service.
+SERVED_ELSEWHERE = VIDEO_KINDS | {CreativeKind.PLAN_PRICE}
+
+
 def catalog() -> dict[str, list[CreativeOption]]:
     """Every active row, grouped by kind and in display order — **including
     kinds with no rows**, so a client never has to ask whether a key exists.
-    The video kinds are not here; they have their own endpoint."""
+    The video kinds and plan prices are not here; they have their own readers."""
     grouped: dict[str, list[CreativeOption]] = {
-        kind.value: [] for kind in CreativeKind if kind not in VIDEO_KINDS
+        kind.value: [] for kind in CreativeKind if kind not in SERVED_ELSEWHERE
     }
     for row in CreativeOption.objects.filter(is_active=True, kind__in=grouped):
         grouped[row.kind].append(row)

@@ -132,6 +132,13 @@ VIDEO_S3 = "video_s3"
 #: refused for a check.
 CHECKS_S4 = "checks_s4"
 
+#: steps-plan S5 — the campaign brief, the generated plan and seeding the
+#: calendar with drafts. Off restores pre-step behaviour: the brief, plan,
+#: seed and progress endpoints answer 404 and a campaign is the Phase 3
+#: container it was. Plans already generated and drafts already seeded stay
+#: where they are — a flag hides a feature, it does not delete a post.
+CAMPAIGN_BRIEF_S5 = "campaign_brief_s5"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -143,6 +150,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     BRAND_IMPORT_S1: True,
     VIDEO_S3: True,
     CHECKS_S4: True,
+    CAMPAIGN_BRIEF_S5: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

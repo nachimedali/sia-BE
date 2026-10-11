@@ -21,3 +21,13 @@ def run_bulk_item(item_id: int) -> None:
     already written down and visible to the customer.
     """
     bulk.run_item(item_id)
+
+
+@shared_task(name="planning.tasks.run_campaign_plan")
+def run_campaign_plan(plan_id: int) -> None:
+    """Writes one campaign plan (steps-plan S5). On `ai_q`, beside every other
+    provider call. No retry policy: `run_plan` records failure on the row, and
+    a retried task finds the plan no longer `QUEUED` and stops."""
+    from planning.services.plans import run_plan
+
+    run_plan(plan_id)

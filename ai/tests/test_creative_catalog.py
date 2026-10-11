@@ -10,11 +10,16 @@ from django.core.exceptions import ValidationError
 
 from ai.creative_seed import CATALOG, SEED_VERSION
 from ai.models import CreativeKind, CreativeOption
+from ai.plan_seed import PLAN_CATALOG
 from ai.services.creative import MULTI, SINGLE
 from ai.video_seed import VIDEO_CATALOG
 from products.brief import TONE_KEYS
 
-ROWS = [(kind, row) for kind, rows in {**CATALOG, **VIDEO_CATALOG}.items() for row in rows]
+ROWS = [
+    (kind, row)
+    for kind, rows in {**CATALOG, **VIDEO_CATALOG, **PLAN_CATALOG}.items()
+    for row in rows
+]
 
 
 def keys(kind: str) -> set[str]:
@@ -22,8 +27,9 @@ def keys(kind: str) -> set[str]:
 
 
 def test_every_kind_is_seeded_and_every_kind_seeded_exists() -> None:
-    seeded = {**CATALOG, **VIDEO_CATALOG}
+    seeded = {**CATALOG, **VIDEO_CATALOG, **PLAN_CATALOG}
     assert not set(CATALOG) & set(VIDEO_CATALOG)
+    assert not set(PLAN_CATALOG) & (set(CATALOG) | set(VIDEO_CATALOG))
     assert set(seeded) == {kind.value for kind in CreativeKind}
     assert all(seeded[kind] for kind in seeded)
 
@@ -150,7 +156,7 @@ def test_presets_only_name_choices_that_exist() -> None:
 
 @pytest.mark.django_db
 def test_a_seeded_row_still_passes_the_models_own_validation_when_saved() -> None:
-    for kind, rows in {**CATALOG, **VIDEO_CATALOG}.items():
+    for kind, rows in {**CATALOG, **VIDEO_CATALOG, **PLAN_CATALOG}.items():
         for position, row in enumerate(rows):
             CreativeOption.objects.create(kind=kind, sort_order=position, **row)
     assert CreativeOption.objects.count() == len(ROWS)

@@ -141,17 +141,116 @@ class CampaignItem(models.Model):
         related_name="campaign_additions",
     )
     added_at = models.DateTimeField(auto_now_add=True)
+    #: The plan slot this draft was seeded for (steps-plan S5), as
+    #: `v{plan version}:{slot key}`; blank for a post added by hand. Unique per
+    #: campaign, so seeding the same plan twice — a double click, a retried
+    #: request, a second tab — collides here instead of making a second draft.
+    plan_slot = models.CharField(max_length=40, blank=True)
 
     class Meta:
         ordering: ClassVar[list[str]] = ["-added_at", "-id"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
             # A post belongs to a campaign once. Racing adds collide here
             # rather than double-counting the campaign's volume.
-            models.UniqueConstraint(fields=["campaign", "post"], name="campaign_item_is_unique")
+            models.UniqueConstraint(fields=["campaign", "post"], name="campaign_item_is_unique"),
+            models.UniqueConstraint(
+                fields=["campaign", "plan_slot"],
+                condition=~models.Q(plan_slot=""),
+                name="campaign_plan_slot_is_unique",
+            ),
         ]
 
     def __str__(self) -> str:
         return f"post {self.post_id} in {self.campaign_id}"
+
+
+class CampaignBrief(models.Model):
+    """What a campaign is for (steps-plan S5): who, what is offered, what
+    proves it, and what the team can actually do.
+
+    **The goal is not here.** It is the campaign's own `goals[0]` and window,
+    because Phase 6 and Phase 7 already measure those — a second copy here
+    would be a goal two readers disagree about.
+
+    Proof is stored as **keys**, not text: `planning.services.briefs` offers
+    what the workspace can prove (Brand Core claims with their evidence,
+    measured medians) and the brief records which were picked. A key that no
+    longer resolves is dropped from the plan rather than shown from a stale
+    copy. What the user types themselves is `own_proof`, labelled "you said"
+    everywhere and never as verified.
+    """
+
+    campaign = models.OneToOneField(Campaign, on_delete=models.CASCADE, related_name="brief_form")
+    audience = models.TextField(blank=True)
+    segments = models.JSONField(default=list, blank=True)
+    offer = models.CharField(max_length=300, blank=True)
+    proof_keys = models.JSONField(default=list, blank=True)
+    own_proof = models.JSONField(default=list, blank=True)
+    #: `{team, hours_per_week, budget, posts_per_week, channels: [platform]}`.
+    #: Every number here is the user's, and the plan quotes them as such.
+    constraints = models.JSONField(default=dict, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"brief for {self.campaign_id}"
+
+
+class PlanStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    SUCCEEDED = "SUCCEEDED", "Succeeded"
+    FAILED = "FAILED", "Failed"
+
+
+class CampaignPlan(models.Model):
+    """One generated plan for a campaign (steps-plan S5). Versioned, never
+    edited: a regeneration is a new row, so a seeded draft can always say which
+    plan it came from.
+
+    `credits` is the price the person confirmed; while the plan is in flight it
+    is held (`plans.held_credits`), and the ledger is written once, in the
+    transaction that marks it `SUCCEEDED` — the video render's discipline.
+    """
+
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="plans")
+    version = models.PositiveIntegerField()
+    status = models.CharField(max_length=10, choices=PlanStatus.choices, default=PlanStatus.QUEUED)
+    phase = models.CharField(max_length=24, blank=True)
+    progress = models.FloatField(default=0.0)
+    estimate_id = models.CharField(max_length=32)
+    credits = models.PositiveIntegerField()
+    lines = models.JSONField(default=list, blank=True)
+    #: Everything the plan was written from, frozen at confirm time: the brief,
+    #: the resolved proof, the voice and the measured baselines. The no-numbers
+    #: check runs against this, so it is the plan's whole world.
+    inputs = models.JSONField(default=dict, blank=True)
+    plan = models.JSONField(default=dict, blank=True)
+    #: `model` when the provider's text passed every check, `template` when it
+    #: did not (or was not asked) and the deterministic wording was used.
+    written_by = models.CharField(max_length=10, blank=True)
+    error_code = models.CharField(max_length=40, blank=True)
+    error = models.CharField(max_length=300, blank=True)
+    charge = models.ForeignKey(
+        "billing.CreditLedger", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-version"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["campaign", "version"], name="campaign_plan_version")
+        ]
+
+    def __str__(self) -> str:
+        return f"plan v{self.version} for {self.campaign_id} ({self.status})"
 
 
 class Label(models.Model):

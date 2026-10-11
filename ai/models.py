@@ -405,6 +405,9 @@ class CreativeKind(models.TextChoices):
     REEL_STYLE = "reel_style", "Reel style"
     MUSIC = "music", "Music bed"
     VIDEO_EXTRA = "video_extra", "Video surcharge"
+    # A campaign plan's price lines (steps-plan S5, `planning/plan_seed.py`).
+    # `metadata.credits` on each row, so the price is an admin edit.
+    PLAN_PRICE = "plan_price", "Campaign plan price"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
