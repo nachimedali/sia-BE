@@ -16,6 +16,8 @@ from typing import Any
 
 from django.conf import settings
 
+from ai.providers.switches import uses_fake
+
 
 def get_video_provider() -> Any | None:
     """The configured provider, or `None` when there is not one.
@@ -24,7 +26,7 @@ def get_video_provider() -> Any | None:
     deployment fact the pipeline turns into a clear 422 for the user, not an
     error condition callers should have to catch.
     """
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("VIDEO"):
         from ai.providers.fake import _fake_video_provider
 
         return _fake_video_provider
@@ -39,7 +41,7 @@ def get_video_provider() -> Any | None:
 def get_video_composer() -> Any | None:
     """The reel composer (`ai.providers.base.VideoComposer`), or `None` when no
     vendor is configured — the same contract as `get_video_provider`."""
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("VIDEO"):
         from ai.providers.fake import _fake_video_composer
 
         return _fake_video_composer

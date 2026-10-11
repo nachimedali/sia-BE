@@ -229,21 +229,34 @@ def assemble_image_prompt(
     render_style: str = "",
     scene: str = "",
     direction: list[str] | None = None,
+    rephrased: str = "",
+    keep_out: list[str] | None = None,
 ) -> GroundedPrompt:
+    """`rephrased` is the Studio brief as the text model rewrote it
+    (`ai.services.rephrase`); given, it stands in for the idea, the style, the
+    scene and the look, while `keep_out`, the restrictions and the prefix are
+    still added here verbatim — the rewrite never touches a rule."""
     signal = _category_signal(workspace)
     grounding: dict[str, object] = {
         "restrictions": bool(product and product.restrictions),
         "category_signal": signal is not None,
     }
 
-    user_lines = [IMAGE_PROMPT_PREFIX, idea.strip()]
-    if render_style:
-        user_lines.append(f"Render style: {render_style}.")
-    if scene:
-        user_lines.append(f"Scene: {scene}.")
-    if direction:
-        user_lines.append("\n".join(direction))
+    user_lines = [IMAGE_PROMPT_PREFIX]
+    if rephrased:
+        user_lines.append(rephrased.strip())
+        user_lines += keep_out or []
         grounding["creative_direction"] = True
+        grounding["rephrased"] = True
+    else:
+        user_lines.append(idea.strip())
+        if render_style:
+            user_lines.append(f"Render style: {render_style}.")
+        if scene:
+            user_lines.append(f"Scene: {scene}.")
+        if direction:
+            user_lines.append("\n".join(direction))
+            grounding["creative_direction"] = True
     user_lines += _restriction_lines(product)
 
     if signal:

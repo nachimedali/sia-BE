@@ -18,9 +18,11 @@ from django.utils import timezone
 
 from accounts.models import User
 from ai.models import CreativeOption
+from billing.services.flags import PRODUCT_SCAN_ASSIST, flag_enabled
 from brand.fetching import FetchedImage, get_site_fetcher
+from brand.inference import PRODUCT_FIELDS, get_brand_inference
 from brand.models import ImportStatus, ProductImport, ProductStage
-from brand.services.extract import parse_page
+from brand.services.extract import Page, _found, parse_page
 from brand.services.imports import InvalidWebsiteError, advance, fail, json_body, url_parts
 from brand.services.product_page import extract_product
 from common.exceptions import ProviderError
@@ -130,6 +132,8 @@ def run_product_import(run: ProductImport) -> ProductImport:
         ):
             return fail(run, _NOT_A_PRODUCT, read)
 
+        _assist(run, page, result)
+
         advance(
             run,
             ProductStage.DONE,
@@ -142,6 +146,21 @@ def run_product_import(run: ProductImport) -> ProductImport:
     except Exception:  # any reading failure is a FAILED import, never a 500 in a task
         return fail(run, _BROKEN, read)
     return run
+
+
+def _assist(run: ProductImport, page: Page, result: dict[str, Any]) -> None:
+    """The text model fills the description fields the markup left empty,
+    with text taken off the page (`brand.inference.validate_product`). Labelled
+    `inferred` so the form can say who found it. Never fails the import."""
+    missing = [field for field in PRODUCT_FIELDS if field not in result]
+    if not missing or not flag_enabled(run.workspace.organization, PRODUCT_SCAN_ASSIST):
+        return
+    name = str((result.get("name") or {}).get("value") or "")
+    filled = get_brand_inference().infer_product(
+        name=name, text="\n".join(page.blocks), missing=missing
+    )
+    for field, value in filled.items():
+        result[field] = _found(value, page.url, "inferred")
 
 
 def product_image(run: ProductImport, index: int) -> FetchedImage:

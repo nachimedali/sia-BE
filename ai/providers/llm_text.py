@@ -19,6 +19,7 @@ from typing import Any
 from django.conf import settings
 
 from ai.providers.base import TextGenerationResult, TextVariant, unwrap_json_response
+from ai.providers.switches import uses_fake
 
 
 def _client() -> Any:
@@ -153,7 +154,7 @@ class LLMTextProvider:
 
 def get_text_provider() -> Any:
     """Resolves the configured provider. Swapping is a settings change (A8)."""
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("TEXT"):
         from ai.providers.fake import _fake_text_provider
 
         return _fake_text_provider

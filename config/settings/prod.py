@@ -40,6 +40,10 @@ SENTRY_DSN = env("SENTRY_DSN", default="")
 # fallback so a missing one stops the boot instead.
 USE_FAKE_PLATFORM_ADAPTER = False
 USE_FAKE_AI_PROVIDERS = False
+USE_FAKE_TEXT_PROVIDER = False
+USE_FAKE_IMAGE_PROVIDER = False
+USE_FAKE_VIDEO_PROVIDER = False
+USE_FAKE_CHECKS_PROVIDER = False
 USE_FAKE_MEDIA_EDITOR = False
 USE_FAKE_TREND_VENDORS = False
 # The filesystem fake is served without auth (config/urls.py). A deploy that

@@ -262,10 +262,11 @@ def test_a_confirmed_clip_renders_into_a_derived_video_and_is_charged_once(
     render = VideoRender.objects.get(pk=body["id"])
     assert render.charge is not None and render.charge.delta == -6
     assert CreditLedger.objects.filter(workspace=pro, note__startswith="video render").count() == 1
-    # The provider was told how the camera moves — not what the product is.
-    assert _fake_video_provider.calls == [
-        CreativeOption.objects.get(kind="motion", key="push").prompt_fragment
-    ]
+    # The provider was told how the camera moves — the motion row, rewritten
+    # into one brief (the fake text model keeps the row's words).
+    push = CreativeOption.objects.get(kind="motion", key="push").prompt_fragment
+    assert _fake_video_provider.calls == [render.rephrased_prompt]
+    assert push.rstrip(".").lower() in render.rephrased_prompt.lower()
     manifest = read_fake_manifest(render.output.file.open("rb").read())  # type: ignore[union-attr]
     assert manifest["role"] == "start" and manifest["aspect"] == "9:16"
 
@@ -710,3 +711,78 @@ def test_a_published_post_refuses_animate_with_a_409(
     )
 
     assert response.status_code == 409 and response.json()["error"]["code"] == "post_not_editable"
+
+
+# --- the motion brief, rewritten by the text model ----------------------------------------
+MOTION_REWRITE = (
+    "The camera pushes in slowly toward the bottle; light glints along the glass "
+    "while the label, cap and shape stay exactly as in the still."
+)
+
+
+class ScriptedText:
+    def __init__(self, reply: str = MOTION_REWRITE, *, error: Exception | None = None) -> None:
+        self.reply = reply
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    def generate(self, *, system: str, prompt: str, n: int, model: str | None = None) -> Any:
+        from types import SimpleNamespace
+
+        self.calls.append({"system": system, "prompt": prompt})
+        if self.error:
+            raise self.error
+        return SimpleNamespace(variants=[SimpleNamespace(body=self.reply)], model="nv-model")
+
+
+@pytest.fixture
+def scripted(monkeypatch: pytest.MonkeyPatch) -> ScriptedText:
+    from ai.services import rephrase
+
+    model = ScriptedText()
+    monkeypatch.setattr(rephrase, "get_text_provider", lambda: model)
+    return model
+
+
+def test_a_clip_animates_with_the_rewritten_motion_brief(
+    auth_client: Any, pro: Any, still: Any, scripted: ScriptedText
+) -> None:
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+
+    render = VideoRender.objects.get(pk=body["id"])
+    assert render.rephrased_prompt == MOTION_REWRITE and render.rephrased_by == "nv-model"
+    assert _fake_video_provider.calls == [MOTION_REWRITE]
+    system = scripted.calls[0]["system"].lower()
+    assert "one simple" in system and "verbs" in system and "never redesign" in system
+    asked = scripted.calls[0]["prompt"]
+    assert "start frame" in asked
+    assert CreativeOption.objects.get(kind="motion", key="push").prompt_fragment in asked
+
+
+def test_a_motion_rewrite_with_an_invented_number_falls_back_to_the_row(
+    auth_client: Any, pro: Any, still: Any, scripted: ScriptedText
+) -> None:
+    scripted.reply = MOTION_REWRITE + " Loved by 40000 customers."
+
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+
+    render = VideoRender.objects.get(pk=body["id"])
+    push = CreativeOption.objects.get(kind="motion", key="push").prompt_fragment
+    assert render.rephrased_by == "template"
+    assert _fake_video_provider.calls == [push]
+
+
+def test_flag_off_animates_with_the_motion_row_unchanged(
+    auth_client: Any, pro: Any, still: Any, scripted: ScriptedText
+) -> None:
+    from billing.services.flags import STUDIO_REPHRASE
+
+    FeatureFlag.objects.create(organization=pro.organization, key=STUDIO_REPHRASE, enabled=False)
+
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+
+    render = VideoRender.objects.get(pk=body["id"])
+    push = CreativeOption.objects.get(kind="motion", key="push").prompt_fragment
+    assert scripted.calls == []
+    assert render.rephrased_prompt == "" and render.rephrased_by == ""
+    assert _fake_video_provider.calls == [push]

@@ -69,11 +69,11 @@ from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
 from ai.services import creative as creative_service
 from ai.services import hashtags as hashtag_service
-from ai.services import prompting, quality
+from ai.services import prompting, quality, rephrase
 from ai.services.costing import resolve_pricing
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
-from billing.services.flags import STUDIO_VARIANTS_V2, flag_enabled
+from billing.services.flags import STUDIO_REPHRASE, STUDIO_VARIANTS_V2, flag_enabled
 from common.exceptions import InsufficientCredits, OCCSError, ProviderError
 from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
@@ -294,6 +294,8 @@ def _attempt_image(
         render_style=generation.render_style,
         scene=generation.scene,
         direction=creative_service.image_lines(generation.creative),
+        rephrased=generation.rephrased_prompt,
+        keep_out=creative_service.keep_out_lines(generation.creative),
     )
     restrictions = generation.product.restrictions if generation.product else []
 
@@ -432,6 +434,28 @@ def _persist_variants(
             )
 
 
+def _rephrase(generation: Generation) -> None:
+    """The Studio brief, rewritten by the text model into one prompt
+    (`ai.services.rephrase`). Studio image runs only — autopilot and every
+    caller without a brief send exactly what they always sent."""
+    if generation.kind != GenerationKind.IMAGE or not creative_service.wants_copy(
+        generation.creative
+    ):
+        return
+    if not flag_enabled(generation.workspace.organization, STUDIO_REPHRASE):
+        return
+    choices = []
+    if generation.render_style:
+        choices.append(f"Render style: {generation.render_style}.")
+    if generation.scene:
+        choices.append(f"Scene: {generation.scene}.")
+    choices += creative_service.look_lines(generation.creative)
+    rewritten = rephrase.image_brief(idea=generation.prompt, choices=choices)
+    generation.rephrased_by = rewritten.by
+    generation.rephrased_prompt = "" if rewritten.by == rephrase.TEMPLATE else rewritten.text
+    generation.save(update_fields=["rephrased_prompt", "rephrased_by"])
+
+
 def run_generation(generation: Generation, *, n: int = 3) -> Generation:
     """Idempotent on a non-`PENDING` row — a retried Celery task must not
     regenerate (and re-debit) a generation that already resolved."""
@@ -461,6 +485,9 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
     )
 
     started = time.monotonic()
+    # Once per generation, before the attempts: a rejected attempt retries the
+    # same brief, so there is nothing to rewrite again.
+    _rephrase(generation)
     passing: list[tuple[Any, quality.QualityResult]] = []
     meta: dict[str, Any] = {}
     attempts_made = 0

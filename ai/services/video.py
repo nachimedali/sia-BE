@@ -58,10 +58,11 @@ from ai.models import (
 )
 from ai.providers.base import CaptionCue, EndCard, ReelShot, VideoResult
 from ai.providers.video import get_video_composer, get_video_provider
-from ai.services import quality
+from ai.services import quality, rephrase
 from ai.services.creative import VIDEO_KINDS
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
+from billing.services.flags import STUDIO_REPHRASE, flag_enabled
 from common.exceptions import InsufficientCredits, OCCSError, ProviderError, StateConflict
 from content.models import MediaAsset, MediaKind, MediaSource, Post, PostSource
 from content.services.media import ingest_media
@@ -537,11 +538,25 @@ def _render_clip(render: VideoRender) -> VideoResult:
         kind=CreativeKind.VIDEO_ASPECT, key=render.spec["aspect"]
     ).first()
     image = _bytes(render.source)
+    prompt = motion.prompt_fragment if motion else ""
+    if prompt and flag_enabled(render.workspace.organization, STUDIO_REPHRASE):
+        # The motion row, rewritten into one brief (`ai.services.rephrase`);
+        # the row's own words when the rewrite fails its checks.
+        rewritten = rephrase.motion_brief(
+            motion=prompt,
+            role=render.spec.get("role", "start"),
+            seconds=float(render.spec["seconds"]),
+            product=render.product.name if render.product else "",
+        )
+        prompt = rewritten.text
+        render.rephrased_by = rewritten.by
+        render.rephrased_prompt = "" if rewritten.by == rephrase.TEMPLATE else rewritten.text
+        render.save(update_fields=["rephrased_prompt", "rephrased_by"])
     _advance(render, *PHASES[1])
     result: VideoResult = provider.animate(
         image=image,
         role=render.spec.get("role", "start"),
-        prompt=motion.prompt_fragment if motion else "",
+        prompt=prompt,
         aspect=str(aspect.metadata["aspect"]) if aspect else REEL_ASPECT,
         duration_seconds=float(render.spec["seconds"]),
     )

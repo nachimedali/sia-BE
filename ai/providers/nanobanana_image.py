@@ -26,6 +26,7 @@ from django.conf import settings
 from PIL import Image
 
 from ai.providers.base import ImageGenerationResult, ImageVariant, unwrap_json_response
+from ai.providers.switches import uses_fake
 from common.exceptions import ProviderError
 
 _BATCH_POLL_ATTEMPTS = 30
@@ -137,7 +138,7 @@ class NanoBananaImageProvider:
 
 def get_image_provider() -> Any:
     """Resolves the configured provider. Swapping is a settings change (A8)."""
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("IMAGE"):
         from ai.providers.fake import _fake_image_provider
 
         return _fake_image_provider

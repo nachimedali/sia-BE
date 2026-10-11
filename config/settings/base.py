@@ -463,9 +463,15 @@ IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-ima
 # "no provider configured" rather than silently falling back to the fake.
 VIDEO_PROVIDER_API_KEY = env("VIDEO_PROVIDER_API_KEY", default="")
 
-USE_FAKE_AI_PROVIDERS = env.bool(
-    "USE_FAKE_AI_PROVIDERS", default=not (LLM_API_KEY and IMAGE_PROVIDER_API_KEY)
-)
+# One fake switch per vendor (`ai.providers.switches`), each on until its key
+# is set: the NVIDIA key alone makes text real and leaves image and video on
+# their fakes. `USE_FAKE_AI_PROVIDERS` forces every port onto its fake.
+USE_FAKE_AI_PROVIDERS = env.bool("USE_FAKE_AI_PROVIDERS", default=False)
+USE_FAKE_TEXT_PROVIDER = env.bool("USE_FAKE_TEXT_PROVIDER", default=not LLM_API_KEY)
+USE_FAKE_IMAGE_PROVIDER = env.bool("USE_FAKE_IMAGE_PROVIDER", default=not IMAGE_PROVIDER_API_KEY)
+USE_FAKE_VIDEO_PROVIDER = env.bool("USE_FAKE_VIDEO_PROVIDER", default=not VIDEO_PROVIDER_API_KEY)
+# The pre-publish OCR and policy checks (S4) have no vendor yet.
+USE_FAKE_CHECKS_PROVIDER = env.bool("USE_FAKE_CHECKS_PROVIDER", default=True)
 
 # Embeddings share the LLM gateway (`LLM_BASE_URL`/`LLM_API_KEY`) and the same
 # fake switch — one vendor relationship, three endpoints. Changing the model

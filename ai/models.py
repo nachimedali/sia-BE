@@ -129,6 +129,11 @@ class Generation(models.Model):
     render_style = models.CharField(max_length=64, blank=True)
     scene = models.CharField(max_length=200, blank=True)
     motion = models.CharField(max_length=64, blank=True)
+    # The Studio brief as the text model rewrote it (`ai.services.rephrase`),
+    # and which model wrote it — "template" when the rewrite failed its checks
+    # and the brief went as written; both empty when it was never rephrased.
+    rephrased_prompt = models.TextField(blank=True, default="")
+    rephrased_by = models.CharField(max_length=64, blank=True, default="")
     duration = models.PositiveIntegerField(null=True, blank=True)
     #: **Every Studio control, as the user set it** — scene, light, camera,
     #: who is in the frame, moods, palette, language, call to action, format,
@@ -540,6 +545,9 @@ class VideoRender(models.Model):
     #: The post copy: the caption of the post this lands on, and the source of
     #: a reel's burned-in captions.
     text = models.TextField(blank=True)
+    # The motion brief as the text model rewrote it; see `Generation`.
+    rephrased_prompt = models.TextField(blank=True, default="")
+    rephrased_by = models.CharField(max_length=64, blank=True, default="")
     #: The still a clip animates, or a reel's first shot: what the output is
     #: `derived_from`.
     source = models.ForeignKey(

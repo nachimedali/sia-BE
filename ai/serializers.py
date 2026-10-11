@@ -104,6 +104,8 @@ class GenerationSerializer(serializers.ModelSerializer[Generation]):
             "render_style",
             "scene",
             "creative",
+            "rephrased_prompt",
+            "rephrased_by",
             "motion",
             "duration",
             "is_batch",

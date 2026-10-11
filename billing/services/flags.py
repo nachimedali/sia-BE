@@ -139,6 +139,17 @@ CHECKS_S4 = "checks_s4"
 #: where they are — a flag hides a feature, it does not delete a post.
 CAMPAIGN_BRIEF_S5 = "campaign_brief_s5"
 
+#: The text model rewrites a Studio brief (the user's choices) into one
+#: art-director prompt before it reaches the image or video model, following
+#: the goose-skills creative rules. Off sends the labelled choices exactly as
+#: before. Autopilot and other non-Studio runs are never rephrased.
+STUDIO_REPHRASE = "studio_rephrase"
+
+#: S1's product import asks the text model for the fields the page's markup
+#: left empty (short and long description, features), keeping only text that
+#: appears on the page. Off reads product pages with the rules alone.
+PRODUCT_SCAN_ASSIST = "product_scan_assist"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -151,6 +162,8 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     VIDEO_S3: True,
     CHECKS_S4: True,
     CAMPAIGN_BRIEF_S5: True,
+    STUDIO_REPHRASE: True,
+    PRODUCT_SCAN_ASSIST: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

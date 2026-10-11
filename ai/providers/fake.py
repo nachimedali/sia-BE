@@ -170,6 +170,16 @@ class FakeTextProvider:
                 )
                 for i in range(n)
             ]
+        elif system.startswith(("You turn a product photography brief", "You write the motion")):
+            # The Studio brief rewrite (`ai.services.rephrase`): the labelled
+            # lines as one paragraph, every choice's words kept, nothing added
+            # — what a real model is asked to do, done mechanically.
+            prose = " ".join(
+                f"{value.strip().rstrip('.')}."
+                for line in prompt.strip().splitlines()
+                if (value := line.split(": ", 1)[-1]).strip()
+            )
+            variants = [TextVariant(body=prose) for _ in range(n)]
         else:
             variants = [
                 TextVariant(

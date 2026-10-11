@@ -16,6 +16,7 @@ from typing import Any
 from django.conf import settings
 
 from ai.providers.base import unwrap_json_response
+from ai.providers.switches import uses_fake
 from common.exceptions import ProviderError
 
 
@@ -60,7 +61,7 @@ class OpenAIEmbeddingProvider:
 
 def get_embedding_provider() -> Any:
     """Resolves the configured provider. Swapping is a settings change (A8)."""
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("TEXT"):
         from ai.providers.fake import _fake_embedding_provider
 
         return _fake_embedding_provider

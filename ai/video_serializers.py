@@ -114,6 +114,8 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
             "render_s",
             "spec",
             "text",
+            "rephrased_prompt",
+            "rephrased_by",
             "product",
             "stills",
             "output",

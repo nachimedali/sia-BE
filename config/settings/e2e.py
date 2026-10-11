@@ -42,3 +42,6 @@ AUTH_THROTTLES = {
     "auth:reset": {"capacity": 500},
     "auth:resend": {"capacity": 500},
 }
+
+# Playwright never reaches an AI vendor, whatever keys the local `.env` holds.
+USE_FAKE_AI_PROVIDERS = True

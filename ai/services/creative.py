@@ -182,6 +182,11 @@ def _moods(creative: dict[str, Any]) -> list[CreativeOption]:
 
 def image_lines(creative: dict[str, Any]) -> list[str]:
     """What the image model is told about the brief's look and feel."""
+    return look_lines(creative) + keep_out_lines(creative)
+
+
+def look_lines(creative: dict[str, Any]) -> list[str]:
+    """The look and feel alone — what `rephrase` may rewrite."""
     lines: list[str] = []
     for kind, lead in _IMAGE_LEADS:
         row = _chosen(creative, kind)
@@ -190,10 +195,13 @@ def image_lines(creative: dict[str, Any]) -> list[str]:
     moods = [m.prompt_fragment for m in _moods(creative) if m.prompt_fragment]
     if moods:
         lines.append("Mood: " + "; ".join(moods) + ".")
-    avoid = (creative.get("avoid") or "").strip()
-    if avoid:
-        lines.append(f"Keep out of the frame: {avoid}.")
     return lines
+
+
+def keep_out_lines(creative: dict[str, Any]) -> list[str]:
+    """What must stay out of the frame — a rule, so never rewritten."""
+    avoid = (creative.get("avoid") or "").strip()
+    return [f"Keep out of the frame: {avoid}."] if avoid else []
 
 
 def caption_lines(creative: dict[str, Any]) -> list[str]:
