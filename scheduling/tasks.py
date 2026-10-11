@@ -15,7 +15,7 @@ from typing import Any
 from celery import shared_task
 
 from channels.adapters.base import PlatformError
-from scheduling import publishing
+from scheduling import heads_up, publishing
 
 #: Doubling from one minute, capped so a long provider outage still gets a
 #: retry every ten minutes rather than drifting into hours.
@@ -62,3 +62,11 @@ def _countdown(retries: int, error: PlatformError) -> float:
     # `float(...)` because mypy widens `int ** int` to Any (a negative
     # exponent would make it a float), and this function promises a float.
     return float(min(RETRY_BACKOFF_SECONDS * 2**retries, RETRY_BACKOFF_MAX_SECONDS))
+
+
+@shared_task(name="scheduling.tasks.remind_upcoming_posts")
+def remind_upcoming_posts() -> int:
+    """Heads-up emails to authors before their posts go live. `remind_*` so
+    the routing table sends it to `remind_q` with the other time-critical
+    mail."""
+    return heads_up.send_due()

@@ -172,6 +172,10 @@ class Post(models.Model):
     # endpoint owns have no chance to run against yet (design.md A49).
     delivery_mode = models.CharField(max_length=16, choices=DeliveryMode.choices, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
+    #: The slot the author's heads-up email announced (`scheduling.heads_up`).
+    #: A slot, not a flag: rescheduling leaves it behind, and that mismatch is
+    #: what earns the new time its own heads-up.
+    heads_up_sent_for = models.DateTimeField(null=True, blank=True)
 
     # --- approval (BUILD-PLAN P2-07, P2-10, P2-11) -------------------------
     #: Where the post sits in its workspace's approval chain. Null unless it is

@@ -150,6 +150,13 @@ STUDIO_REPHRASE = "studio_rephrase"
 #: appears on the page. Off reads product pages with the rules alone.
 PRODUCT_SCAN_ASSIST = "product_scan_assist"
 
+#: Transactional email: the six-digit verification code beside the link, the
+#: welcome once an address is first confirmed, and the heads-up to a post's
+#: author before it goes live. Off restores pre-change behaviour: the
+#: verification email carries the link alone, `verify-code` answers 404, and
+#: neither the welcome nor the heads-up is sent.
+TRANSACTIONAL_EMAIL = "transactional_email"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -164,6 +171,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     CAMPAIGN_BRIEF_S5: True,
     STUDIO_REPHRASE: True,
     PRODUCT_SCAN_ASSIST: True,
+    TRANSACTIONAL_EMAIL: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

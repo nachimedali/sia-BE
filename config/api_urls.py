@@ -21,6 +21,7 @@ from accounts.views import (
     RegisterView,
     ResendVerificationView,
     ThrottledTokenObtainPairView,
+    VerifyCodeView,
     VerifyEmailView,
 )
 from ai.video_views import (
@@ -190,6 +191,7 @@ urlpatterns = [
     path("auth/logout/", TokenBlacklistView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
     path("auth/verify-email/", VerifyEmailView.as_view(), name="auth-verify-email"),
+    path("auth/verify-code/", VerifyCodeView.as_view(), name="auth-verify-code"),
     path("auth/resend-verify/", ResendVerificationView.as_view(), name="auth-resend-verify"),
     path("auth/password/reset/", PasswordResetRequestView.as_view(), name="auth-password-reset"),
     path(

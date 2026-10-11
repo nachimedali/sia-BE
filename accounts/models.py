@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import hmac
 import secrets
 from typing import Any, ClassVar
 
@@ -42,6 +43,7 @@ class User(AbstractUser):
 
 class EmailTokenPurpose(models.TextChoices):
     VERIFY = "VERIFY", "Verify email"
+    VERIFY_CODE = "VERIFY_CODE", "Verify email by code"
     RESET = "RESET", "Reset password"
     INVITE = "INVITE", "Workspace invitation"
 
@@ -57,6 +59,9 @@ class EmailToken(models.Model):
 
     DEFAULT_TTL: ClassVar[dict[str, dt.timedelta]] = {
         EmailTokenPurpose.VERIFY: dt.timedelta(days=3),
+        # Short, because six digits is a small space: the attempt cap below
+        # and this window together are what make guessing pointless.
+        EmailTokenPurpose.VERIFY_CODE: dt.timedelta(minutes=15),
         EmailTokenPurpose.RESET: dt.timedelta(hours=1),
         EmailTokenPurpose.INVITE: dt.timedelta(days=14),
     }
@@ -68,6 +73,9 @@ class EmailToken(models.Model):
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
+    #: Wrong guesses against a `VERIFY_CODE` token. Unused by the long tokens,
+    #: which cannot be guessed and are looked up by hash instead.
+    attempts = models.PositiveSmallIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -85,6 +93,12 @@ class EmailToken(models.Model):
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @classmethod
+    def _supersede(cls, user: Any, purpose: str) -> None:
+        cls.objects.filter(user=user, purpose=purpose, used_at__isnull=True).update(
+            used_at=timezone.now()
+        )
+
+    @classmethod
     def issue(cls, user: Any, purpose: str) -> tuple[EmailToken, str]:
         """Mints a token, invalidating any outstanding one for the same purpose.
 
@@ -92,9 +106,7 @@ class EmailToken(models.Model):
         earlier link live, widening the window on an email that may have been
         sent to a mistyped address.
         """
-        cls.objects.filter(user=user, purpose=purpose, used_at__isnull=True).update(
-            used_at=timezone.now()
-        )
+        cls._supersede(user, purpose)
 
         raw = secrets.token_urlsafe(32)
         token = cls.objects.create(
@@ -120,6 +132,59 @@ class EmailToken(models.Model):
             token.used_at = timezone.now()
             token.save(update_fields=["used_at"])
             return token
+
+    #: Wrong guesses a code survives. The fifth miss spends it.
+    MAX_CODE_ATTEMPTS: ClassVar[int] = 5
+
+    @staticmethod
+    def _code_hash(code: str, salt: str) -> str:
+        # `salt$digest`, 64 chars, so it fits `token_hash` and stays unique
+        # even when two users draw the same six digits.
+        return f"{salt}${EmailToken.hash_token(salt + code)[:47]}"
+
+    @classmethod
+    def issue_code(cls, user: Any) -> tuple[EmailToken, str]:
+        """Mints a six-digit verification code, superseding any earlier one.
+
+        A code is typed rather than clicked, so unlike `issue()` it is looked
+        up by user rather than by hash, and carries an attempt count.
+        """
+        purpose = EmailTokenPurpose.VERIFY_CODE
+        cls._supersede(user, purpose)
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        token = cls.objects.create(
+            user=user,
+            purpose=purpose,
+            token_hash=cls._code_hash(code, secrets.token_hex(8)),
+            expires_at=timezone.now() + cls.DEFAULT_TTL[purpose],
+        )
+        return token, code
+
+    @classmethod
+    def consume_code(cls, user: Any, code: str) -> bool:
+        """Spends the user's live code if `code` matches it.
+
+        A miss counts against the code and spends it at `MAX_CODE_ATTEMPTS`,
+        so the answer to a wrong guess and to a burned code is the same.
+        """
+        with transaction.atomic():
+            token = (
+                cls.objects.select_for_update()
+                .filter(user=user, purpose=EmailTokenPurpose.VERIFY_CODE, used_at__isnull=True)
+                .first()
+            )
+            if token is None or not token.is_usable:
+                return False
+            salt = token.token_hash.split("$", 1)[0]
+            if hmac.compare_digest(token.token_hash, cls._code_hash(code, salt)):
+                token.used_at = timezone.now()
+                token.save(update_fields=["used_at"])
+                return True
+            token.attempts += 1
+            if token.attempts >= cls.MAX_CODE_ATTEMPTS:
+                token.used_at = timezone.now()
+            token.save(update_fields=["attempts", "used_at"])
+            return False
 
     @property
     def is_usable(self) -> bool:

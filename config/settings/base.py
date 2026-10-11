@@ -79,6 +79,8 @@ LOCAL_APPS = [
     # holds the ports that `trends/` and the creative half of `ai/` move
     # behind, so Phase 12 swaps an adapter rather than editing call sites.
     "integrations",
+    # Workspace search behind the top bar's `/app/search` (A-14). No models.
+    "search",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -306,6 +308,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "reminders.tasks.send_due_reminders",
         "schedule": crontab(minute="*"),
     },
+    # Every minute, like the reminder scan: the heads-up names a countdown, and
+    # a scan that ran every quarter hour would send "2 hours" at 1h46.
+    "scheduling-remind-upcoming-posts": {
+        "task": "scheduling.tasks.remind_upcoming_posts",
+        "schedule": crontab(minute="*"),
+    },
     "reminders-expire-stale": {
         "task": "reminders.tasks.expire_stale_reminders",
         "schedule": crontab(hour=4, minute=0),
@@ -438,6 +446,22 @@ USE_FAKE_REPORT_RENDERER = env.bool("USE_FAKE_REPORT_RENDERER", default=True)
 
 # Public URL of the frontend. Email links point here, not at the API.
 SITE_URL = env("SITE_URL", default="http://localhost:3000")
+
+# Email
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = env("EMAIL_HOST", default="localhost")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER or "no-reply@attractvision.com"
+)
+
+# How long before its slot a scheduled post's author gets the heads-up email.
+# Not commercial: it is notification timing, the same kind of value as the
+# reminder TTLs, and every plan gets the same lead.
+POST_HEADS_UP_LEAD_MINUTES = env.int("POST_HEADS_UP_LEAD_MINUTES", default=120)
 
 # -----------------------------------------------------------------------------
 # AI providers — design.md §9, D8/D9. Text targets a generic OpenAI-Chat-

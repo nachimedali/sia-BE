@@ -21,12 +21,12 @@ SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 X_FRAME_OPTIONS = "DENY"
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+# Backend, port and TLS come from base.py's env reads; the four below are read
+# again without a fallback so a deploy missing them fails at boot instead of
+# trying to relay through localhost.
 EMAIL_HOST = env("EMAIL_HOST")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
-EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")
 
 SENTRY_DSN = env("SENTRY_DSN", default="")

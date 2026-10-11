@@ -1,0 +1,20 @@
+Your post goes live in {{ countdown }}
+
+Hello {{ first_name }},
+
+This is your heads-up: the post below {% if auto_publish %}publishes on {{ platforms|join:", " }}{% else %}is due on {{ platforms|join:", " }}, and your publish packet arrives at the slot{% endif %} in {{ countdown }}.
+
+{{ slot_day }}, {{ slot_time }} ({{ timezone }}) · {{ workspace_name }}
+
+  {{ post_title }}
+  {{ caption_excerpt }}
+{% if fix_count %}
+{{ fix_count }} fix{{ fix_count|pluralize:"es" }} before it goes out: {{ fix_summary }}
+{% endif %}
+Review the post: {{ post_url }}
+Reschedule: {{ reschedule_url }}
+
+Looks right? There is nothing to do. To stop it, open the post and choose
+Unschedule.
+
+You get this {{ lead_time }} before each scheduled post in {{ workspace_name }}.
