@@ -117,15 +117,17 @@ def test_real_text_provider_sends_system_and_user_messages(
 ) -> None:
     result = LLMTextProvider().generate(system="be nice", prompt="say hi", n=2)
 
+    assert len(text_transport) == 2
     sent = json.loads(text_transport[0].content)
-    assert sent["n"] == 2
+    assert sent["n"] == 1
     assert sent["messages"] == [
         {"role": "system", "content": "be nice"},
         {"role": "user", "content": "say hi"},
     ]
+    assert len(result.variants) == 2
     assert result.variants[0].body == "a cosy morning, remastered"
-    assert result.tokens_in == 12
-    assert result.tokens_out == 34
+    assert result.tokens_in == 24
+    assert result.tokens_out == 68
 
 
 def test_real_text_provider_carries_the_bearer_token(

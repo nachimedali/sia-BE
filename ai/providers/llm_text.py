@@ -42,27 +42,39 @@ def _image_url_part(image_bytes: bytes) -> dict[str, Any]:
     `classify_constraints` both attach a picture to a chat message and must
     agree on how."""
     encoded = base64.b64encode(image_bytes).decode()
-    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
+    mime = "image/jpeg" if image_bytes.startswith(b"\xff\xd8") else "image/png"
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
 
 
 def _complete(*, messages: list[dict[str, Any]], model: str, n: int) -> TextGenerationResult:
-    """One chat-completion call, parsed into the shape every text-returning
-    method on this provider needs. `generate` and `caption` differ only in
-    what messages they send — this is everything after that: the request,
-    the variant list, the usage numbers, the timing."""
+    """Chat-completion calls, looped with n=1 until n variants are generated
+    (ensuring compatibility with providers enforcing n=1). Parsed into the shape
+    every text-returning method on this provider needs."""
     started = time.monotonic()
+    variants: list[TextVariant] = []
+    tokens_in = 0
+    tokens_out = 0
+    target_n = max(1, n)
+
     with _client() as client:
-        payload = _post(client, {"model": model, "n": n, "messages": messages})
-    variants = [
-        TextVariant(body=choice["message"]["content"]) for choice in payload.get("choices", [])
-    ]
-    usage = payload.get("usage", {})
+        while len(variants) < target_n:
+            payload = _post(client, {"model": model, "n": 1, "messages": messages})
+            choices = payload.get("choices", [])
+            for choice in choices:
+                body = choice.get("message", {}).get("content", "")
+                variants.append(TextVariant(body=body))
+            usage = payload.get("usage", {})
+            tokens_in += usage.get("prompt_tokens", 0)
+            tokens_out += usage.get("completion_tokens", 0)
+            if not choices:
+                break
+
     return TextGenerationResult(
         variants=variants,
         provider=settings.LLM_PROVIDER,
         model=model,
-        tokens_in=usage.get("prompt_tokens", 0),
-        tokens_out=usage.get("completion_tokens", 0),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
         latency_ms=int((time.monotonic() - started) * 1000),
     )
 

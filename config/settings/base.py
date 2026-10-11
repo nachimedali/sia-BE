@@ -446,10 +446,10 @@ SITE_URL = env("SITE_URL", default="http://localhost:3000")
 # (D8). Same USE_FAKE_* shape as billing/storage: no keys configured means no
 # provider to fake around.
 # -----------------------------------------------------------------------------
-LLM_PROVIDER = env("LLM_PROVIDER", default="openai")
-LLM_BASE_URL = env("LLM_BASE_URL", default="https://api.openai.com/v1")
-LLM_API_KEY = env("LLM_API_KEY", default="")
-LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="gpt-4o-mini")
+LLM_PROVIDER = env("LLM_PROVIDER", default="nvidia")
+LLM_BASE_URL = env("LLM_BASE_URL", default="https://integrate.api.nvidia.com/v1")
+LLM_API_KEY = env("LLM_API_KEY", default=env("NVIDIA_API_KEY", default=""))
+LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="meta/muse-glimmer-30b")
 LLM_TIMEOUT_SECONDS = env.int("LLM_TIMEOUT_SECONDS", default=30)
 
 IMAGE_PROVIDER = env("IMAGE_PROVIDER", default="nanobanana")
