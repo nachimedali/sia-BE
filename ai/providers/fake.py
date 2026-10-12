@@ -257,6 +257,7 @@ class FakeImageProvider:
                 "batch": batch,
                 "model": model,
                 "style": style,
+                "reference_count": len(reference_images),
             }
         )
         width, height = _size_for_aspect(aspect)

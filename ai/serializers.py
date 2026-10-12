@@ -61,6 +61,8 @@ class GenerationVariantSerializer(serializers.ModelSerializer[GenerationVariant]
             "headline",
             "hashtags",
             "identity_score",
+            "reference_similarity",
+            "reference_closest",
             "media_asset",
             "platform",
             "rank",

@@ -45,3 +45,10 @@ AUTH_THROTTLES = {
 
 # Playwright never reaches an AI vendor, whatever keys the local `.env` holds.
 USE_FAKE_AI_PROVIDERS = True
+
+# The Playbook runs on its fake collectors and a fake picture reader: the suite
+# never reaches YouTube, Google or an image host.
+USE_FAKE_PLAYBOOK_COLLECTORS = True
+USE_FAKE_REFERENCE_IMAGES = True
+PLAYBOOK_SHOW_SAMPLE = True
+PLAYBOOK_SAMPLE_IMAGE_BASE = f"{SITE_URL}/playbook-sample/"

@@ -157,6 +157,13 @@ PRODUCT_SCAN_ASSIST = "product_scan_assist"
 #: neither the welcome nor the heads-up is sent.
 TRANSACTIONAL_EMAIL = "transactional_email"
 
+#: The Playbook (`/app/playbook`): trending public posts from YouTube and Google
+#: Trends, picked as references and composed from (`GenerationMode.RECIPE`). Off
+#: restores pre-change behaviour: the Playbook endpoints answer 404, as the
+#: route did after P0-04 removed it. Generations already composed stay where
+#: they are — a flag hides a feature, it does not delete a picture.
+PLAYBOOK_V1 = "playbook_v1"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -172,6 +179,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     STUDIO_REPHRASE: True,
     PRODUCT_SCAN_ASSIST: True,
     TRANSACTIONAL_EMAIL: True,
+    PLAYBOOK_V1: True,
     # **Off, and the one exception to the pre-launch default above.** Phase 8's
     # entry gate (P8-01) is a legal review of data-ownership terms, and none is
     # recorded. The code is built and tested dark; switching it on is a

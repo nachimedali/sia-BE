@@ -87,6 +87,9 @@ app.conf.task_routes = {
     "checks.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
+    # The Playbook's collection is the same kind of work as trend harvest:
+    # elastic, lowest priority, and a refused run keeps the last wall.
+    "playbook.tasks.*": {"queue": "trends_q"},
     # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody
     # is waiting on them, and they must never delay a scheduled publish.
     "billing.tasks.*": {"queue": "metrics_q"},

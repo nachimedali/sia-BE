@@ -111,6 +111,12 @@ def _check_aspect(width: int, height: int, requested_aspect: str) -> tuple[bool,
 #: implementation would be a second opinion about what "similar" means.
 REPURPOSE_MAX_SIMILARITY = 0.8
 
+#: A Playbook composition may learn from someone else's post, never resemble
+#: it as an asset. The same ceiling as a repurpose, because it is the same
+#: judgement — "recognisably new, not the same picture" — and a second number
+#: would be a second opinion about what "too close" means.
+REFERENCE_MAX_SIMILARITY = REPURPOSE_MAX_SIMILARITY
+
 
 def run_image_quality_gate(
     *,
@@ -121,6 +127,7 @@ def run_image_quality_gate(
     text_provider: TextProvider,
     identity_similarity_threshold: float,
     origin_images: list[bytes] | None = None,
+    inspiration_images: list[bytes] | None = None,
 ) -> QualityResult:
     """`origin_images` is the post being repurposed, when there is one.
 
@@ -128,6 +135,11 @@ def run_image_quality_gate(
     the product's references, but no longer than `REPURPOSE_MAX_SIMILARITY` to
     the original post's own asset. Absent for every other generation mode, where
     there is no original to be too close to.
+
+    `inspiration_images` are the Playbook references a composition learned
+    from: a ceiling only, `reference_distance`, scored against the closest one.
+    They never count toward product identity, which is measured against the
+    product's own photographs alone.
     """
     checks: dict[str, Any] = {}
     reasons: list[str] = []
@@ -145,7 +157,9 @@ def run_image_quality_gate(
 
     with Image.open(io.BytesIO(content)) as img:
         width, height = img.size
-        candidate_hash = _dhash(img) if (reference_images or origin_images) else None
+        candidate_hash = (
+            _dhash(img) if (reference_images or origin_images or inspiration_images) else None
+        )
 
     aspect_ok, aspect_detail = _check_aspect(width, height, requested_aspect)
     checks["resolution_and_aspect"] = {
@@ -186,6 +200,24 @@ def run_image_quality_gate(
             reasons.append(
                 f"repurpose_distance: score {origin_score:.2f} above "
                 f"ceiling {REPURPOSE_MAX_SIMILARITY:.2f} — too close to the original"
+            )
+
+    reference_score: float | None = None
+    if inspiration_images and candidate_hash is not None:
+        scores = [_similarity_from_hash(candidate_hash, ref) for ref in inspiration_images]
+        reference_score = max(scores)
+        closest = scores.index(reference_score)
+        reference_ok = reference_score <= REFERENCE_MAX_SIMILARITY
+        checks["reference_distance"] = {
+            "passed": reference_ok,
+            "score": reference_score,
+            "closest": closest,
+            "ceiling": REFERENCE_MAX_SIMILARITY,
+        }
+        if not reference_ok:
+            reasons.append(
+                f"reference_distance: score {reference_score:.2f} above "
+                f"ceiling {REFERENCE_MAX_SIMILARITY:.2f} — too close to a reference"
             )
 
     violated: list[str] = []

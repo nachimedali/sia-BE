@@ -231,11 +231,16 @@ def assemble_image_prompt(
     direction: list[str] | None = None,
     rephrased: str = "",
     keep_out: list[str] | None = None,
+    rules: list[str] | None = None,
 ) -> GroundedPrompt:
     """`rephrased` is the Studio brief as the text model rewrote it
     (`ai.services.rephrase`); given, it stands in for the idea, the style, the
     scene and the look, while `keep_out`, the restrictions and the prefix are
-    still added here verbatim — the rewrite never touches a rule."""
+    still added here verbatim — the rewrite never touches a rule.
+
+    `rules` are a Playbook composition's reference rules
+    (`ai.services.references.rule_lines`): which attached picture is which, and
+    what may never be taken from a reference. Verbatim for the same reason."""
     signal = _category_signal(workspace)
     grounding: dict[str, object] = {
         "restrictions": bool(product and product.restrictions),
@@ -257,6 +262,9 @@ def assemble_image_prompt(
         if direction:
             user_lines.append("\n".join(direction))
             grounding["creative_direction"] = True
+    if rules:
+        user_lines.append("\n".join(rules))
+        grounding["references"] = True
     user_lines += _restriction_lines(product)
 
     if signal:

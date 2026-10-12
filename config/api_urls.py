@@ -116,6 +116,12 @@ from planning.views import (
     SavedViewViewSet,
     TimetableViewSet,
 )
+from playbook.views import (
+    PlaybookComposeView,
+    PlaybookPostView,
+    PlaybookVocabularyView,
+    PlaybookWallView,
+)
 from products.views import (
     AutopilotApproveView,
     AutopilotQueueView,
@@ -431,6 +437,11 @@ urlpatterns = [
     # The top bar's search (A-14). Each source is scoped to the request's
     # workspace — and posts to its audience — exactly as its list endpoint is.
     path("search/", SearchView.as_view(), name="search"),
+    # --- playbook ---
+    path("playbook/posts/", PlaybookWallView.as_view(), name="playbook-posts"),
+    path("playbook/posts/<int:pk>/", PlaybookPostView.as_view(), name="playbook-post"),
+    path("playbook/vocabulary/", PlaybookVocabularyView.as_view(), name="playbook-vocabulary"),
+    path("playbook/compose/", PlaybookComposeView.as_view(), name="playbook-compose"),
     path(
         "posts/<int:pk>/share/<int:link_id>/revoke/",
         ReviewLinkRevokeView.as_view(),

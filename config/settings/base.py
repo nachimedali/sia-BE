@@ -81,6 +81,8 @@ LOCAL_APPS = [
     "integrations",
     # Workspace search behind the top bar's `/app/search` (A-14). No models.
     "search",
+    # The Playbook: trending public posts to compose from (`/app/playbook`).
+    "playbook",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -400,6 +402,12 @@ CELERY_BEAT_SCHEDULE = {
     # asks which configs are owed a run, so the cadence lives on the config
     # where an operator can retune it, not in this schedule. After the trend
     # and repurpose jobs, so a drafting run is grounded in the freshest corpus.
+    # Every half hour, though each Playbook source runs only on its own
+    # `refresh_minutes` — the cadence (and YouTube's quota) lives on the row.
+    "playbook-collect": {
+        "task": "playbook.tasks.collect_playbook",
+        "schedule": crontab(minute="*/30"),
+    },
     "products-run-due-autopilot": {
         "task": "products.tasks.run_due_autopilot",
         "schedule": crontab(hour=5, minute=0),
@@ -518,6 +526,40 @@ REDDIT_USER_AGENT = env("REDDIT_USER_AGENT", default="occs-trends/1.0")
 USE_FAKE_TREND_VENDORS = env.bool(
     "USE_FAKE_TREND_VENDORS", default=not (TREND_VENDOR_API_KEY and YOUTUBE_API_KEY)
 )
+
+# -----------------------------------------------------------------------------
+# Playbook — the wall of trending public posts (`playbook/`), filled by two free
+# providers ported from trendgen: YouTube's Data API (`YOUTUBE_API_KEY`, above)
+# and Google Trends' public RSS (no key). A provider without its key collects
+# from the fake, whose rows are marked and never served unless
+# `PLAYBOOK_SHOW_SAMPLE` is on — which `prod.py` pins off.
+# -----------------------------------------------------------------------------
+# Every Playbook variable reads an empty value as "use the default", so the
+# keys can sit blank in `.env` without failing an int or list parse at boot.
+PLAYBOOK_DEFAULT_REGION = env("PLAYBOOK_DEFAULT_REGION", default="") or "TN"
+#: The markets seeded with sources. A new market is a row, or this list and
+#: `seed_playbook_sources`.
+PLAYBOOK_REGIONS = env.list("PLAYBOOK_REGIONS", default=[]) or ["TN"]
+USE_FAKE_PLAYBOOK_COLLECTORS = env.bool("USE_FAKE_PLAYBOOK_COLLECTORS", default=False)
+PLAYBOOK_SHOW_SAMPLE = env.bool("PLAYBOOK_SHOW_SAMPLE", default=False)
+#: Where the frontend serves the fake collector's sample pictures.
+PLAYBOOK_SAMPLE_IMAGE_BASE = env("PLAYBOOK_SAMPLE_IMAGE_BASE", default="")
+PLAYBOOK_COLLECTOR_TIMEOUT_SECONDS = int(
+    env("PLAYBOOK_COLLECTOR_TIMEOUT_SECONDS", default="") or 15
+)
+PLAYBOOK_USER_AGENT = env("PLAYBOOK_USER_AGENT", default="") or "composevision-playbook/1.0"
+
+# Reading a reference post's picture for the image model (`ai.providers.
+# reference_images`). Only these hosts — the providers' own image CDNs — are
+# ever fetched; a leading dot allows subdomains. Never stored.
+REFERENCE_IMAGE_HOSTS = env.list("REFERENCE_IMAGE_HOSTS", default=[]) or [
+    "i.ytimg.com",
+    "i9.ytimg.com",
+    ".ggpht.com",
+]
+REFERENCE_IMAGE_MAX_BYTES = int(env("REFERENCE_IMAGE_MAX_BYTES", default="") or 5 * 1024 * 1024)
+REFERENCE_IMAGE_TIMEOUT_SECONDS = int(env("REFERENCE_IMAGE_TIMEOUT_SECONDS", default="") or 10)
+USE_FAKE_REFERENCE_IMAGES = env.bool("USE_FAKE_REFERENCE_IMAGES", default=False)
 
 # -----------------------------------------------------------------------------
 # Publishing provider — design.md §9, D2/D3, verified by V1 (§14). All platform

@@ -240,6 +240,13 @@ class GenerationVariant(models.Model):
     #: the quality gate measured it. **Null** for text variants and for rows
     #: from before this was kept — unknown is not a low score.
     identity_score = models.FloatField(null=True, blank=True)
+    #: A Playbook composition only: how close the render sits to the nearest
+    #: reference post, 0-1, and which one (0 = R1). The gate refuses anything
+    #: above `quality.REFERENCE_MAX_SIMILARITY`; what passed is shown beside
+    #: the picture. Null when no reference picture was read — unknown, not
+    #: "unlike".
+    reference_similarity = models.FloatField(null=True, blank=True)
+    reference_closest = models.PositiveSmallIntegerField(null=True, blank=True)
     platform = models.CharField(max_length=16, blank=True)
     rank = models.PositiveSmallIntegerField(default=0)
     rationale = models.CharField(max_length=300, blank=True)

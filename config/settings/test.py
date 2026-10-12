@@ -40,6 +40,9 @@ USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True
 USE_FAKE_TREND_VENDORS = True
+USE_FAKE_PLAYBOOK_COLLECTORS = True
+USE_FAKE_REFERENCE_IMAGES = True
+PLAYBOOK_SHOW_SAMPLE = True
 USE_FAKE_MEDIA_EDITOR = True
 # The root conftest turns the master `USE_FAKE_AI_PROVIDERS` on for every
 # test. The per-port switches are pinned off so the master alone decides: a
