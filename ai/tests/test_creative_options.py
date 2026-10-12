@@ -127,10 +127,11 @@ def test_the_catalog_offers_studio_home_outdoor_and_tunisian_scenes(seeded: None
     assert list(cast) == ["product-only", "hands", "model", "duo", "group", "creator"]
 
 
-def test_content_languages_are_french_and_english_only(seeded: None) -> None:
-    """L-6. A third language is a change request, not a row."""
+def test_content_languages_are_french_english_and_italian_only(seeded: None) -> None:
+    """L-6, amended 2026-10-12 to add Italian. A fourth language is a change
+    request, not a row."""
     codes = CreativeOption.objects.filter(kind=CreativeKind.LANGUAGE).values_list("key", flat=True)
-    assert set(codes) == {"fr", "en"}
+    assert set(codes) == {"fr", "en", "it"}
 
 
 def test_every_row_has_text_and_an_icon_to_draw(seeded: None) -> None:

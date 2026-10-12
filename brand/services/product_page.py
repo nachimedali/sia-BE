@@ -8,6 +8,12 @@ Sources, most structured first — the first one that states a field wins it:
 4. OpenGraph `product` tags,
 5. the page's own markup (`<h1>`, meta description, product-looking images).
 
+Images are the one exception to "first wins": a page's zoom gallery is the
+shop's own list of every product photo, so when it holds more than the winning
+source named (JSON-LD often names one) the gallery replaces that list. It
+replaces rather than extends, because the same photo usually appears in both
+under different URLs.
+
 **Only what a source states is returned.** A field nobody states is absent —
 never a category guessed from the title, never a price in a currency the page
 did not show. Claims are matched from the catalogue's own phrases
@@ -80,6 +86,24 @@ def _images(urls: list[str], base: str) -> list[str]:
         if url not in out:
             out.append(url)
     return out[:MAX_IMAGES]
+
+
+def _distinct_photos(urls: list[str]) -> list[str]:
+    """A gallery repeats itself — a desktop and a mobile carousel, one naming
+    the file and one not (`…/image_1920/side.webp?u=1` and `…/image_1920?u=1`).
+    Same path, or one path plus a single trailing segment, is the same photo."""
+    out: list[str] = []
+    paths: list[str] = []
+    for url in urls:
+        path = urlsplit(url).path.rstrip("/")
+        if any(
+            path == seen or path.rsplit("/", 1)[0] == seen or seen.rsplit("/", 1)[0] == path
+            for seen in paths
+        ):
+            continue
+        out.append(url)
+        paths.append(path)
+    return out
 
 
 def _ld_image_urls(value: Any) -> list[str]:
@@ -243,6 +267,9 @@ def extract_product(
     # 5 · the page's own markup
     put("name", (page.headings[0] if page.headings else "")[:80], url)
     put("short", short_from(metas.get("description", "")), url)
+    gallery = _images(_distinct_photos(page.gallery), url)
+    if len(gallery) > len(out.get("images", {}).get("value", [])):
+        out["images"] = _found(gallery, url)
     put(
         "images",
         _images([src for src, hint in page.images if not _NOT_PRODUCT.search(hint)], url),

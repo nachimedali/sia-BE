@@ -33,6 +33,7 @@ SEEDS = [
     "ai.migrations.0009_revise_reason",
     "ai.migrations.0011_catalog_v2",
     "ai.migrations.0013_video_catalog",
+    "ai.migrations.0017_italian_language",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -68,6 +69,8 @@ def test_the_seed_migrations_populate_every_catalogue_a_fresh_install_needs() ->
     # S3: the Motion step's controls, each with its price on the row.
     for kind in ("video_length", "motion", "video_aspect", "reel_style", "music", "video_extra"):
         assert CreativeOption.objects.filter(kind=kind).exists(), kind
+    # L-6 amended: Italian reaches a database seeded before it existed.
+    assert CreativeOption.objects.filter(kind="language", key="it", is_active=True).exists()
     clip = CreativeOption.objects.get(kind="video_length", key="clip-5")
     assert clip.metadata["credits"] == 6
     assert TrendSource.objects.filter(workspace__isnull=True).count() == counts["TrendSource"]

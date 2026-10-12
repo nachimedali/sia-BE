@@ -141,6 +141,59 @@ def test_navigation_and_logos_are_not_features_or_photos() -> None:
     assert "https://djerbaolive.tn/assets/logo.png" not in value(result, "images")
 
 
+# The shape of an Odoo shop page (lesportif.com.tn): JSON-LD names one image,
+# the gallery carousel carries every photo as a zoom-sized link.
+GALLERY_PAGE = """<html lang="fr"><head>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "Product",
+ "name": "Chaussure Nike Cosmic Runner", "image": "https://shop.tn/web/image/product.template/1/image_1024"}
+</script></head><body>
+<img src="/web/image/product.brand/15/ls_menu_logo" alt="">
+<div id="o-carousel-product">
+ <img src="/web/image/product.product/9/image_1024"
+      data-zoom-image="/web/image/product.product/9/image_1920/Cosmic%20Runner?unique=a">
+ <img src="/web/image/product.image/2/image_1024"
+      data-zoom-image="/web/image/product.image/2/image_1920/side.webp?unique=b">
+ <img src="/web/image/product.image/3/image_1024"
+      data-zoom-image="/web/image/product.image/3/image_1920/sole.webp?unique=c">
+</div>
+<div class="o_wsale_product_images_mobile">
+ <img src="/web/image/product.product/9/image_128"
+      data-zoom-image="/web/image/product.product/9/image_1920?unique=a">
+ <img src="/web/image/product.image/2/image_128"
+      data-zoom-image="/web/image/product.image/2/image_1920?unique=b">
+</div>
+<img src="/web/image/product.public.category/302/image_1024" alt="">
+</body></html>"""
+
+
+def test_a_zoom_gallery_outnumbering_the_structured_images_gives_every_photo() -> None:
+    result = extract_product(parse_page("https://shop.tn/shop/9626-cosmic", GALLERY_PAGE))
+
+    assert result["via"] == "json-ld"
+    assert value(result, "images") == [
+        "https://shop.tn/web/image/product.product/9/image_1920/Cosmic%20Runner?unique=a",
+        "https://shop.tn/web/image/product.image/2/image_1920/side.webp?unique=b",
+        "https://shop.tn/web/image/product.image/3/image_1920/sole.webp?unique=c",
+    ]  # the mobile carousel's copies, named without the filename, are the same photos
+
+
+@pytest.mark.parametrize("attr", ["data-large_image", "data-image-large-src", "data-zoom"])
+def test_woocommerce_and_prestashop_gallery_attributes_are_read(attr: str) -> None:
+    html = "".join(f'<img src="/s{i}.jpg" {attr}="/l{i}.jpg">' for i in range(3))
+    result = extract_product(parse_page("https://shop.tn/p", f"<html><body>{html}</body></html>"))
+
+    assert value(result, "images") == [f"https://shop.tn/l{i}.jpg" for i in range(3)]
+
+
+def test_a_structured_source_listing_as_many_photos_keeps_its_own() -> None:
+    result = extract_product(
+        _page("https://nabeulceramics.com/product/dinner-plate"), claim_rows=CLAIMS
+    )
+
+    # Its two JSON-LD images stand; a gallery no longer than that does not replace them.
+    assert value(result, "images")[0] == "https://nabeulceramics.com/img/plate.jpg"
+
+
 def test_a_short_description_is_whole_sentences() -> None:
     text = "One. " + "A sentence that keeps going for quite a while to fill the space. " * 4
     short = short_from(text)

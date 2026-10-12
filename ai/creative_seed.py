@@ -748,7 +748,7 @@ PALETTES = [
     ),
 ]
 
-# --- languages (locked to FR/EN, L-6) ---------------------------------------------
+# --- languages (FR/EN/IT, L-6 as amended 2026-10-12) --------------------------------
 LANG_ICON = [
     "M3 5h8",
     "M7 3v2",
@@ -778,6 +778,16 @@ LANGUAGES = [
         "copywriter would, not as a translation.",
         code="en",
         name="English",
+    ),
+    _opt(
+        "it",
+        "IT",
+        LANG_ICON,
+        description="Italian",
+        fragment="Write the headline and caption in natural, idiomatic Italian as a native "
+        "copywriter would, not as a translation.",
+        code="it",
+        name="Italian",
     ),
 ]
 

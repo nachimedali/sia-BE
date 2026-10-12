@@ -130,8 +130,8 @@ def test_metadata_contracts_the_code_reads() -> None:
         }
 
 
-def test_languages_stay_french_and_english() -> None:
-    assert keys("language") == {"fr", "en"}  # L-6
+def test_languages_stay_french_english_and_italian() -> None:
+    assert keys("language") == {"fr", "en", "it"}  # L-6, amended 2026-10-12
 
 
 def test_the_toggles_the_code_names_exist() -> None:
