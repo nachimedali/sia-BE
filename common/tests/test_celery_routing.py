@@ -33,6 +33,8 @@ def test_every_queue_is_declared() -> None:
     ("task_name", "expected_queue"),
     [
         ("scheduling.tasks.publish_due_posts", "publish_q"),
+        ("scheduling.tasks.publish_reconcile", "publish_q"),
+        ("scheduling.tasks.publish_sweep_orphan_drafts", "publish_q"),
         ("content.tasks.publish_target", "publish_q"),
         ("reminders.tasks.send_reminder", "remind_q"),
         ("scheduling.tasks.remind_due", "remind_q"),

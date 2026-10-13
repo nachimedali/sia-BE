@@ -51,6 +51,9 @@ from social_providers.socialapi.errors import (
         (500, "system.internal", CallKind.UNAVAILABLE, True, False),
         (502, "", CallKind.UNAVAILABLE, True, False),
         (504, "publishing.delivery.timeout", CallKind.UNAVAILABLE, True, False),
+        (422, "publishing.delivery.all_failed", CallKind.INVALID, False, False),
+        # An unlisted delivery code is never retried on its namespace alone.
+        (422, "publishing.delivery.platform_refused", CallKind.INVALID, False, False),
         (None, "", CallKind.UNAVAILABLE, True, False),
         # the upstream platform, by status
         (401, "platform.tiktok.token_expired", CallKind.REAUTH, False, True),

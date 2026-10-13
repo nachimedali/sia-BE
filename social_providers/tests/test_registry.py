@@ -48,10 +48,14 @@ def test_an_unknown_provider_is_refused_and_flagged(settings: Any) -> None:
 @override_settings(
     USE_FAKE_PLATFORM_ADAPTER=None, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY="k"
 )
-def test_auto_mode_serves_the_fakes_until_socialapi_is_built() -> None:
-    # Key present, ports not built yet: the fakes answer, and say so.
-    assert registry.use_fakes("publish") is True
-    assert isinstance(get_platform_adapter(), FakePlatformAdapter)
+def test_auto_mode_serves_each_port_from_socialapi_once_it_is_built() -> None:
+    # Key present: the built ports (connect, publish) are real; measurement is
+    # not built yet, so the fake answers it, and says so.
+    from social_providers.socialapi.publish import SocialAPIAdapter
+
+    assert registry.use_fakes("publish") is False
+    assert isinstance(get_platform_adapter(), SocialAPIAdapter)
+    assert registry.use_fakes("metrics") is True
     assert get_metrics_registry().all()[0].key != "socialapi"
 
 
@@ -70,10 +74,11 @@ def test_auto_mode_without_a_key_uses_the_fakes() -> None:
 @override_settings(
     USE_FAKE_PLATFORM_ADAPTER=False, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY="k"
 )
-def test_forcing_the_real_provider_before_it_is_built_fails_loudly() -> None:
+def test_forcing_the_real_provider_before_a_port_is_built_fails_loudly() -> None:
+    from social_providers.socialapi.publish import SocialAPIAdapter
+
+    assert isinstance(get_platform_adapter(), SocialAPIAdapter)
     with pytest.raises(ProviderNotReadyError, match="SOCIAL_PROVIDER=zernio"):
-        get_platform_adapter()
-    with pytest.raises(ProviderNotReadyError):
         get_metrics_registry()
 
 
@@ -130,4 +135,5 @@ def test_status_reports_each_port(settings: Any) -> None:
     state = registry.status()
     assert state["provider"] == "socialapi"
     assert state["fake_mode"] == "auto"
-    assert state["ports"]["publish"] == {"built": False, "serving": "fake"}
+    assert state["ports"]["publish"] == {"built": True, "serving": "socialapi"}
+    assert state["ports"]["metrics"] == {"built": False, "serving": "fake"}

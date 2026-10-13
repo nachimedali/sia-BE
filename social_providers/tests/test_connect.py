@@ -16,7 +16,6 @@ import httpx
 import pytest
 
 from channels.adapters.base import PlatformError
-from social_providers.registry import ProviderNotReadyError
 from social_providers.socialapi.budget import TeamBudget
 from social_providers.socialapi.client import SocialAPIClient
 from social_providers.socialapi.connect import SocialAPIConnectAdapter, brand_name
@@ -64,11 +63,6 @@ def body(request: httpx.Request) -> dict[str, Any]:
 
 def not_found() -> httpx.Response:
     return httpx.Response(404, json={"error": {"code": "not_found", "message": "gone"}})
-
-
-@pytest.fixture(autouse=True)
-def _clean_budget(budget: TeamBudget) -> None:
-    """Every test starts from an empty team bucket (conftest `budget`)."""
 
 
 # -----------------------------------------------------------------------------
@@ -442,16 +436,6 @@ def test_pinterest_boards_are_listed_for_the_composer() -> None:
         )
         == []
     )
-
-
-def test_publishing_is_refused_until_its_port_is_built() -> None:
-    adapter, seen = vendor({})
-
-    with pytest.raises(ProviderNotReadyError):
-        adapter.publish(
-            platform="instagram", provider_account_id="a", payload={}, idempotency_key="k"
-        )
-    assert seen == []
 
 
 def test_no_code_path_deletes_a_brand() -> None:

@@ -15,3 +15,8 @@ def budget(settings: object) -> Iterator[TeamBudget]:
     team.reset()
     yield team
     team.reset()
+
+
+@pytest.fixture(autouse=True)
+def _clean_budget(budget: TeamBudget) -> None:
+    """Every SocialAPI test starts from an empty team bucket."""

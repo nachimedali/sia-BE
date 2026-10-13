@@ -352,6 +352,20 @@ CELERY_BEAT_SCHEDULE = {
         "task": "scheduling.tasks.publish_due_posts",
         "schedule": crontab(minute="*"),
     },
+    # SocialAPI publishes in the background (SA-32): this reads the outcome
+    # of each accepted publish, deletes drafts that will never go out and
+    # frees provider media. The poll stays after webhooks land (SA-42) as the
+    # net under a lost delivery.
+    "scheduling-publish-reconcile": {
+        "task": "scheduling.tasks.publish_reconcile",
+        "schedule": crontab(minute="*/2"),
+    },
+    # Drafts a crash left at the provider before the journal recorded them.
+    # Hourly: they cost nothing and never go live.
+    "scheduling-publish-sweep-orphan-drafts": {
+        "task": "scheduling.tasks.publish_sweep_orphan_drafts",
+        "schedule": crontab(minute=25),
+    },
     # Hourly, because the metric ladder's tightest rung is T+1h (design.md
     # §8.9). The scan asks which targets are *owed* a capture rather than each
     # publish queueing five future tasks, so a missed hour backfills on the
@@ -627,6 +641,13 @@ SOCIALAPI_PUBLISH_RESERVE_RATIO = float(env("SOCIALAPI_PUBLISH_RESERVE_RATIO", d
 SOCIALAPI_READ_SAMPLE_RATE = float(env("SOCIALAPI_READ_SAMPLE_RATE", default="") or 0.1)
 #: How long the call log is kept for the cockpit.
 SOCIALAPI_CALL_RETENTION_DAYS = int(env("SOCIALAPI_CALL_RETENTION_DAYS", default="") or 30)
+# How published media reaches SocialAPI (SA-31): `url` sends a signed URL of our
+# storage, `upload` sends the bytes. Blank = auto: `upload` for local or private
+# storage (the vendor rejects private addresses), `url` for public object storage.
+SOCIALAPI_MEDIA_MODE = env("SOCIALAPI_MEDIA_MODE", default="")
+# How long a signed media URL handed to the provider stays valid. The vendor
+# fetches at publish time; TikTok keeps pulling while it processes.
+SOCIALAPI_MEDIA_URL_TTL_SECONDS = int(env("SOCIALAPI_MEDIA_URL_TTL_SECONDS", default="") or 21600)
 
 # The publishing provider fetches media by URL, so a storage-relative path is
 # unusable to it. S3/MinIO already yields absolute URLs; local disk does not.

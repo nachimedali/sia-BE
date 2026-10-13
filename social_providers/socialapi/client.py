@@ -135,6 +135,29 @@ class SocialAPIClient:
     def delete(self, path: str, *, priority: str = Priority.BACKGROUND) -> SocialAPIResponse:
         return self.request("DELETE", path, priority=priority, call_class=CallClass.WRITE)
 
+    def put_external(self, url: str, *, content: Any, content_type: str, size: int = 0) -> None:
+        """PUT bytes to a presigned storage URL the vendor handed out (the
+        large-file upload path). Not a SocialAPI API call — no key, no budget
+        — but the same transport, so tests see it. `content` may be an
+        iterator of chunks, streamed rather than held in memory."""
+        headers = {"Content-Type": content_type}
+        if size:
+            headers["Content-Length"] = str(size)
+        try:
+            with httpx.Client(timeout=_timeout(CallClass.MEDIA), transport=self._transport) as http:
+                response = http.put(url, content=content, headers=headers)
+        except httpx.HTTPError as exc:
+            raise SocialAPIError(
+                f"The media upload could not be sent ({type(exc).__name__}).",
+                kind=classify(None, ""),
+            ) from exc
+        if response.status_code >= 400:
+            raise SocialAPIError(
+                f"The media upload was refused ({response.status_code}).",
+                kind=classify(response.status_code, ""),
+                status=response.status_code,
+            )
+
     # --- the one path every call takes ------------------------------------------------
     def request(
         self,

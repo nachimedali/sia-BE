@@ -445,6 +445,30 @@ class PostTargetState(models.TextChoices):
     FAILED = "FAILED", "Failed"
 
 
+class ProviderState(models.TextChoices):
+    """Where this target stands **at the provider** — the publish journal
+    (SA-32, `social-provider-plan.md` G1).
+
+    SocialAPI has no idempotency key on posts, so exactly-once is ours to
+    keep: the draft's id is written here *before* it is published, and a retry
+    reads this first. A crash can then leave an unpublished draft (swept by the
+    reconciler), never a second live post. Blank for a provider that publishes
+    in one synchronous call (Zernio, the fake by default).
+    """
+
+    NONE = "", "Not started"
+    #: Media uploaded to the provider; no post exists there yet.
+    MEDIA_UPLOADED = "media_uploaded", "Media uploaded"
+    #: A draft exists at the provider. Drafts are free and never go live.
+    DRAFT_CREATED = "draft_created", "Draft created"
+    #: Publish was requested; the outcome arrives by webhook or reconciliation.
+    PUBLISH_REQUESTED = "publish_requested", "Publish requested"
+    PUBLISHED = "published", "Published"
+    FAILED = "failed", "Failed"
+    #: The unpublished draft was deleted at the provider (failed or cancelled).
+    DISCARDED = "discarded", "Draft discarded"
+
+
 class PostTarget(models.Model):
     """design.md §6.3. Inert until Phase 8/9 wire up scheduling and
     publishing — the model exists now so `rendered_payload` has somewhere to
@@ -513,6 +537,21 @@ class PostTarget(models.Model):
     # Postgres does not treat repeated NULLs as duplicates.
     idempotency_key = models.CharField(max_length=128, null=True, blank=True, unique=True)
 
+    # --- the publish journal (SA-32) --------------------------------------
+    #: Which vendor holds `provider_post_id`, so an id minted by one provider
+    #: is never sent to the other after a switch (`social-provider-plan.md` §1).
+    provider_key = models.CharField(max_length=24, blank=True)
+    provider_state = models.CharField(
+        max_length=24, choices=ProviderState.choices, default=ProviderState.NONE, blank=True
+    )
+    #: When `provider_state` last changed — what the reconciler ages rows by.
+    provider_state_at = models.DateTimeField(null=True, blank=True)
+    #: Media uploaded to the provider for this target, released once the
+    #: publish is terminal (the Free plan holds 100 MB).
+    provider_media_ids = models.JSONField(default=list, blank=True)
+    #: The live post's address, when the provider reports one.
+    permalink = models.URLField(max_length=500, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -531,7 +570,10 @@ class PostTarget(models.Model):
                 name="unique_post_platform_target_unconnected",
             ),
         ]
-        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["state"])]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["state"]),
+            models.Index(fields=["provider_state", "provider_state_at"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.post_id} -> {self.platform} ({self.state})"

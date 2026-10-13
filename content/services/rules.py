@@ -228,6 +228,21 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
         hashtag_placement="inline",
         supports_thread=False,
         options=(
+            # Required, with no default, on purpose: TikTok's Direct Post rules
+            # forbid an app choosing the audience for the creator — whichever
+            # provider publishes, so it is refused when the post is composed.
+            Option(
+                "privacy_level",
+                "choice",
+                "Who can see this",
+                choices=(
+                    "PUBLIC_TO_EVERYONE",
+                    "MUTUAL_FOLLOW_FRIENDS",
+                    "FOLLOWER_OF_CREATOR",
+                    "SELF_ONLY",
+                ),
+                required=True,
+            ),
             Option("allow_comments", "bool", "Allow comments", default=True),
             Option("allow_duet", "bool", "Allow duet", default=True),
         ),

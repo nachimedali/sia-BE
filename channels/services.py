@@ -23,7 +23,7 @@ from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from billing.services.entitlements import entitlements_for
-from channels.adapters import connect_provider_key, get_connect_adapter
+from channels.adapters import get_connect_adapter, provider_key
 from channels.adapters.base import ConnectResolution
 from channels.models import SocialAccount, SocialAccountStatus
 from common.exceptions import OCCSError, StateConflict
@@ -125,6 +125,19 @@ def ensure_publishable(account: SocialAccount) -> None:
         raise AccountNotPublishableError(
             f"This {account.platform} account is {account.get_status_display().lower()}.",
             detail={"social_account": account.pk, "status": account.status},
+        )
+    # An id minted by one vendor is never sent to another (plan §1): an account
+    # connected through the previous provider must be reconnected.
+    provider = provider_key("publish")
+    if account.provider_key and account.provider_key != provider:
+        raise AccountNotPublishableError(
+            "This account was connected through another publishing provider. Reconnect it "
+            "to publish.",
+            detail={
+                "social_account": account.pk,
+                "account_provider": account.provider_key,
+                "provider": provider,
+            },
         )
 
 
@@ -270,7 +283,7 @@ def attach_account(*, workspace: Workspace, platform: str, connected: Any) -> So
             "display_name": connected.display_name,
             "followers_cached": connected.followers,
             "status": SocialAccountStatus.ACTIVE,
-            "provider_key": connect_provider_key(),
+            "provider_key": provider_key("connect"),
             "reconnect_reason": "",
         },
     )

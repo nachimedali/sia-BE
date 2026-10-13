@@ -74,8 +74,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
         credential_setting="SOCIALAPI_API_KEY",
         # Built step by step (SA-21/32, SA-50, SA-60); each lands by filling
         # its path here, and nothing else changes for callers.
-        connect="social_providers.socialapi.connect:SocialAPIConnectAdapter",
-        publish=None,
+        connect="social_providers.socialapi.publish:SocialAPIAdapter",
+        publish="social_providers.socialapi.publish:SocialAPIAdapter",
         metrics=None,
         audience=None,
     ),

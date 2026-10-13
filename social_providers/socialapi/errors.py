@@ -51,6 +51,8 @@ CODE_KINDS: dict[str, str] = {
     "resource.not_supported": CallKind.UNSUPPORTED,
     "system.internal": CallKind.UNAVAILABLE,
     "publishing.delivery.timeout": CallKind.UNAVAILABLE,
+    # Every delivery of the post failed at the platform: final, never retried.
+    "publishing.delivery.all_failed": CallKind.INVALID,
     "auth.insufficient_scope": CallKind.MISCONFIGURED,
 }
 
@@ -60,7 +62,8 @@ PREFIX_KINDS: tuple[tuple[str, str], ...] = (
     ("byok.", CallKind.MISCONFIGURED),
     ("validation.", CallKind.INVALID),
     ("billing.", CallKind.QUOTA_EXHAUSTED),
-    ("publishing.delivery.", CallKind.UNAVAILABLE),
+    # No `publishing.delivery.` row: a delivery code we have not listed may be
+    # a refusal, and retrying a refusal re-posts. It falls to its status.
 )
 
 #: Last resort: the HTTP status, for unknown codes and `platform.<name>.*`

@@ -32,7 +32,6 @@ from channels.adapters.base import (
     ConnectResolution,
     ConnectTarget,
     PlatformError,
-    PublishResult,
     echo_targets,
     find_offered_target,
 )
@@ -69,6 +68,14 @@ UNSUPPORTED: dict[str, str] = {
 BRAND_PREFIX = "cv:"
 
 
+def rows(answer: Any) -> list[dict[str, Any]]:
+    """The rows of a listing answer — bare, or wrapped as `{"data": [...]}`."""
+    listed = answer.get("data") if isinstance(answer, dict) else answer
+    return (
+        [row for row in listed or [] if isinstance(row, dict)] if isinstance(listed, list) else []
+    )
+
+
 def brand_name(workspace_slug: str) -> str:
     """`cv:<workspace slug>` — the slug is unique, so the name is too, and an
     exact match finds a brand a crashed create already made."""
@@ -76,7 +83,8 @@ def brand_name(workspace_slug: str) -> str:
 
 
 class SocialAPIConnectAdapter:
-    """Implements every `PlatformAdapter` method; `publish` lands with SA-32."""
+    """The connect half of the port. `publish.SocialAPIAdapter` adds publishing,
+    and is what the registry serves for both ports."""
 
     selection_platforms = SELECTION_PLATFORMS
     unsupported = UNSUPPORTED
@@ -97,24 +105,19 @@ class SocialAPIConnectAdapter:
             listing = self.client.get("/brands", priority=Priority.PUBLISH).data or {}
         except SocialAPIError as error:
             raise to_platform_error(error) from error
-        brands = listing.get("data") if isinstance(listing, dict) else listing
-        brands = brands if isinstance(brands, list) else []
-        ids = {str(row.get("id")) for row in brands if isinstance(row, dict)}
+        brands = rows(listing)
+        ids = {str(row.get("id")) for row in brands}
         if existing_profile_id and existing_profile_id in ids:
             return existing_profile_id
         wanted = brand_name(name)
         for row in brands:
-            if isinstance(row, dict) and str(row.get("name", "")) == wanted:
+            if str(row.get("name", "")) == wanted:
                 return str(row["id"])
         # Every vendor account starts with an empty "Default" brand that already
         # costs a unit (Free has 2). Adopting it keeps the second unit free for
         # a second workspace instead of spending both on one.
         for row in brands:
-            if (
-                isinstance(row, dict)
-                and str(row.get("name", "")) == "Default"
-                and not row.get("accounts_count")
-            ):
+            if str(row.get("name", "")) == "Default" and not row.get("accounts_count"):
                 try:
                     self.client.patch(
                         f"/brands/{row['id']}", json={"name": wanted}, priority=Priority.PUBLISH
@@ -292,9 +295,8 @@ class SocialAPIConnectAdapter:
             )
         except SocialAPIError as error:
             raise to_platform_error(error) from error
-        rows = listing.get("data") if isinstance(listing, dict) else listing
         row = next(
-            (r for r in rows or [] if isinstance(r, dict) and str(r.get("id")) == account_id),
+            (r for r in rows(listing) if str(r.get("id")) == account_id),
             fallback or {},
         )
         metadata = row.get("metadata") or {}
@@ -328,23 +330,8 @@ class SocialAPIConnectAdapter:
             boards = self.client.get(f"/accounts/{provider_account_id}/boards").data or {}
         except SocialAPIError as error:
             raise to_platform_error(error) from error
-        rows = boards.get("data") if isinstance(boards, dict) else boards
         return [
             {"id": str(row.get("board_id") or row.get("id")), "name": str(row.get("name", ""))}
-            for row in rows or []
-            if isinstance(row, dict) and (row.get("board_id") or row.get("id"))
+            for row in rows(boards)
+            if row.get("board_id") or row.get("id")
         ]
-
-    def publish(
-        self,
-        *,
-        platform: str,
-        provider_account_id: str,
-        payload: dict[str, Any],
-        idempotency_key: str,
-    ) -> PublishResult:
-        from social_providers.registry import ProviderNotReadyError
-
-        raise ProviderNotReadyError(
-            "Publishing through SocialAPI lands with SA-32.", detail={"port": "publish"}
-        )

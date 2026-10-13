@@ -39,8 +39,9 @@ def get_connect_adapter() -> PlatformAdapter:
     return adapter
 
 
-def connect_provider_key() -> str:
-    """Which vendor a newly connected account belongs to."""
+def provider_key(port: str) -> str:
+    """Which vendor serves `port` right now — stamped on accounts (`connect`)
+    and targets (`publish`) so their provider ids only ever go back to it."""
     from social_providers import registry
 
-    return "fake" if registry.use_fakes("connect") else registry.selected().key
+    return "fake" if registry.use_fakes(port) else registry.selected_key()
