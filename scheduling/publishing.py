@@ -34,8 +34,8 @@ from django.utils import timezone
 from billing.services.entitlements import entitlements_for
 from billing.services.subscriptions import current_period_start
 from channels import services as channel_services
+from channels.adapters import get_platform_adapter
 from channels.adapters.base import PlatformError
-from channels.adapters.zernio import get_platform_adapter
 from channels.models import SocialAccount, SocialAccountStatus
 from common.exceptions import OCCSError
 from common.mail import Email, get_mail_sender

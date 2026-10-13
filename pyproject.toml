@@ -102,6 +102,7 @@ testpaths = [
     "content", "collaboration", "products", "ai", "reminders", "scheduling", "channels", "trends",
     "analytics", "tools", "notifications", "planning", "taste", "learn", "benchmarks", "config",
     "integrations", "brand", "checks", "search", "playbook",
+    "social_providers",
 ]
 addopts = [
     "--strict-markers",

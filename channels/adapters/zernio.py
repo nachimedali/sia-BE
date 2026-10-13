@@ -25,7 +25,7 @@ every test that never waited five minutes (design.md §14, V1 finding 1).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urljoin
 
 from django.conf import settings
@@ -41,7 +41,7 @@ from channels.adapters.base import (
     echo_targets,
     find_offered_target,
 )
-from content.models import MediaKind
+from content.models import MediaKind, Platform
 from content.services.rules import options_for
 
 #: Zernio's `type` vocabulary for a media item, keyed by ours.
@@ -108,6 +108,14 @@ def _absolute(url: str) -> str:
 
 
 class ZernioAdapter:
+    #: What the connections page tells a person before they connect.
+    selection_platforms = SELECTION_PLATFORMS
+    unsupported: ClassVar[dict[str, str]] = {}
+    #: Zernio reads comments everywhere except TikTok (no endpoint at any price).
+    comment_platforms = frozenset(Platform.values) - {Platform.TIKTOK}
+    #: Zernio does not echo our `state`; verified only when present.
+    requires_state = False
+
     # --- profiles --------------------------------------------------------
     def ensure_profile(self, *, name: str, existing_profile_id: str = "") -> str:
         if existing_profile_id:
@@ -122,7 +130,9 @@ class ZernioAdapter:
         return profile_id
 
     # --- connect ---------------------------------------------------------
-    def connect_url(self, *, platform: str, profile_id: str, redirect_url: str) -> str:
+    def connect_url(
+        self, *, platform: str, profile_id: str, redirect_url: str, state: str = ""
+    ) -> str:
         with _client() as client:
             payload = _json(
                 client.get(
@@ -357,13 +367,11 @@ def _platform_post_id(post: dict[str, Any], platform: str) -> str:
 
 
 def get_platform_adapter() -> PlatformAdapter:
-    """Resolves the configured adapter. Swapping providers — Zernio for
-    bundle.social, D3's stated fallback — is a settings change (A8)."""
-    if getattr(settings, "USE_FAKE_PLATFORM_ADAPTER", False):
-        from channels.adapters.fake import _fake_adapter
+    """Kept for old import paths. The resolver is `channels.adapters.
+    get_platform_adapter`, which honours `SOCIAL_PROVIDER`."""
+    from channels.adapters import get_platform_adapter as resolve
 
-        return _fake_adapter
-    return ZernioAdapter()
+    return resolve()
 
 
 #: Our option key → Zernio's field name, per platform (P1-11).

@@ -17,14 +17,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from django.core import signing
 from django.db import transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from billing.services.entitlements import entitlements_for
+from channels.adapters import connect_provider_key, get_connect_adapter
 from channels.adapters.base import ConnectResolution
-from channels.adapters.zernio import get_platform_adapter
 from channels.models import SocialAccount, SocialAccountStatus
-from common.exceptions import StateConflict
+from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
@@ -129,9 +131,85 @@ def ensure_publishable(account: SocialAccount) -> None:
 # -----------------------------------------------------------------------------
 # Connect flow (headless — design.md §14, V1)
 # -----------------------------------------------------------------------------
+#: How long a sign-in may take, from the link to the return. Long enough for a
+#: slow 2FA prompt, short enough that a leaked link is useless by tomorrow.
+STATE_MAX_AGE_SECONDS = 30 * 60
+STATE_SALT = "channels.connect.state"
+
+
+class ConnectStateError(OCCSError):
+    default_code = "connect_state_invalid"
+    default_detail = "This sign-in is not for this workspace, or it took too long. Start it again."
+
+
+def sign_state(
+    *, workspace: Workspace, user: Any, platform: str, reconnect: int | None = None
+) -> str:
+    """A signed, expiring token naming who started this connect, where, for
+    what. The provider echoes it back; `complete_connect` refuses a return
+    that does not carry one matching the person and workspace finishing it —
+    otherwise a link started in one workspace could finish in another.
+
+    `reconnect` names the account a reauth is repairing, so the return is not
+    refused at the cap for an account that already holds its slot."""
+    data: dict[str, Any] = {"w": workspace.pk, "u": getattr(user, "pk", None), "p": platform}
+    if reconnect is not None:
+        data["r"] = reconnect
+    return signing.dumps(data, salt=STATE_SALT)
+
+
+def _load_state(token: str) -> Any:
+    return signing.loads(token or "", salt=STATE_SALT, max_age=STATE_MAX_AGE_SECONDS)
+
+
+def read_state(token: str) -> dict[str, Any]:
+    """The state's contents if its signature and age hold, else `{}`. A hint
+    for routing the return (which platform) — never the check itself, which
+    is `verify_state` against workspace and person."""
+    try:
+        data = _load_state(token)
+    except signing.BadSignature:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def verify_state(token: str, *, workspace: Workspace, user: Any, platform: str) -> dict[str, Any]:
+    """The state's contents, once it is shown to belong to this workspace,
+    person and platform; `ConnectStateError` otherwise."""
+    try:
+        data = _load_state(token)
+    except signing.SignatureExpired as error:
+        raise ConnectStateError(
+            "This sign-in took longer than 30 minutes. Start it again.",
+            code="connect_state_expired",
+        ) from error
+    except signing.BadSignature as error:
+        raise ConnectStateError() from error
+    if not isinstance(data, dict) or (data.get("w"), data.get("u"), data.get("p")) != (
+        workspace.pk,
+        getattr(user, "pk", None),
+        platform,
+    ):
+        raise ConnectStateError()
+    return data
+
+
+def _holds_slot(workspace: Workspace, account_id: Any) -> bool:
+    """Whether a reconnect names an account the workspace still holds — a
+    repair, which needs no new slot under the cap."""
+    return (
+        isinstance(account_id, int)
+        and SocialAccount.objects.filter(pk=account_id, workspace=workspace)
+        .exclude(status=SocialAccountStatus.REVOKED)
+        .exists()
+    )
+
+
 def ensure_profile(workspace: Workspace) -> str:
-    """The provider-side tenant for this workspace, minted on first use."""
-    profile_id = get_platform_adapter().ensure_profile(
+    """The provider-side tenant for this workspace (a SocialAPI brand, a
+    Zernio profile), minted on first use and stored at once — neither vendor
+    makes creation idempotent, so the id must outlive any retry."""
+    profile_id = get_connect_adapter().ensure_profile(
         name=workspace.slug, existing_profile_id=workspace.provider_profile_id
     )
     if profile_id != workspace.provider_profile_id:
@@ -140,14 +218,19 @@ def ensure_profile(workspace: Workspace) -> str:
     return profile_id
 
 
-def start_connect(*, workspace: Workspace, platform: str, redirect_url: str) -> str:
+def start_connect(
+    *, workspace: Workspace, platform: str, redirect_url: str, user: Any = None
+) -> str:
     """The URL to send the user to. The cap is checked here as well as at
     save time so a workspace at its limit is told before it authorises
     anything on the platform's side and has to be told afterwards."""
     enforce_account_cap(workspace)
     profile_id = ensure_profile(workspace)
-    return get_platform_adapter().connect_url(
-        platform=platform, profile_id=profile_id, redirect_url=redirect_url
+    return get_connect_adapter().connect_url(
+        platform=platform,
+        profile_id=profile_id,
+        redirect_url=redirect_url,
+        state=sign_state(workspace=workspace, user=user, platform=platform),
     )
 
 
@@ -155,7 +238,7 @@ def resolve_connect(
     *, workspace: Workspace, platform: str, params: dict[str, Any]
 ) -> ConnectResolution:
     profile_id = ensure_profile(workspace)
-    return get_platform_adapter().resolve_callback(
+    return get_connect_adapter().resolve_callback(
         platform=platform, profile_id=profile_id, params=params
     )
 
@@ -165,14 +248,19 @@ def attach_account(*, workspace: Workspace, platform: str, connected: Any) -> So
     """Persists what the adapter connected. `update_or_create` on the model's
     own uniqueness triple, so re-running a connect for an account that is
     already here (a reauth, or an impatient second click) refreshes it instead
-    of colliding.
+    of colliding — and clears any reconnect state it carried.
 
     The cap is re-checked inside the transaction even though `start_connect`
     already checked it: a whole OAuth round trip happened in between, and two
     connects finishing at once must not both be waved through by a count each
-    read before either wrote.
+    read before either wrote. A reconnect of an account already here is not a
+    new slot, so it is not re-counted.
     """
-    enforce_account_cap(workspace)
+    existing = SocialAccount.objects.filter(
+        workspace=workspace, platform=platform, provider_account_id=connected.provider_account_id
+    ).first()
+    if existing is None or existing.status == SocialAccountStatus.REVOKED:
+        enforce_account_cap(workspace)
     account, _created = SocialAccount.objects.update_or_create(
         workspace=workspace,
         platform=platform,
@@ -182,6 +270,8 @@ def attach_account(*, workspace: Workspace, platform: str, connected: Any) -> So
             "display_name": connected.display_name,
             "followers_cached": connected.followers,
             "status": SocialAccountStatus.ACTIVE,
+            "provider_key": connect_provider_key(),
+            "reconnect_reason": "",
         },
     )
     return account
@@ -191,14 +281,19 @@ def select_and_attach(
     *, workspace: Workspace, platform: str, params: dict[str, Any], target_id: str
 ) -> SocialAccount:
     profile_id = ensure_profile(workspace)
-    connected = get_platform_adapter().select_target(
+    connected = get_connect_adapter().select_target(
         platform=platform, profile_id=profile_id, params=params, target_id=target_id
     )
     return attach_account(workspace=workspace, platform=platform, connected=connected)
 
 
 def complete_connect(
-    *, workspace: Workspace, platform: str, params: dict[str, Any], target_id: str = ""
+    *,
+    workspace: Workspace,
+    platform: str,
+    params: dict[str, Any],
+    target_id: str = "",
+    user: Any = None,
 ) -> SocialAccount | ConnectResolution:
     """The whole of "finish a headless connect", in one call.
 
@@ -206,7 +301,19 @@ def complete_connect(
     picked — is a property of the connect protocol, so it is decided here
     rather than by whichever caller happens to be holding the request. Returns
     the attached account, or the resolution still awaiting a choice.
+
+    The `state` we signed is verified first whenever the provider echoes one
+    (and required when the adapter says it always does), so a return can only
+    finish in the workspace, for the person and the platform that started it.
+    Then the cap (I6), ahead of any provider call — unless the state names an
+    account being repaired, which already holds its slot.
     """
+    token = str(params.get("state") or "")
+    state: dict[str, Any] = {}
+    if token or get_connect_adapter().requires_state:
+        state = verify_state(token, workspace=workspace, user=user, platform=platform)
+    if not _holds_slot(workspace, state.get("r")):
+        enforce_account_cap(workspace)
     if target_id:
         return select_and_attach(
             workspace=workspace, platform=platform, params=params, target_id=target_id
@@ -218,21 +325,119 @@ def complete_connect(
     return attach_account(workspace=workspace, platform=platform, connected=resolution.account)
 
 
-def disconnect(account: SocialAccount) -> SocialAccount:
-    """Tells the provider first, then marks. The row stays (I10: a disconnect
-    is not a reason to lose the posts that went through it)."""
-    get_platform_adapter().disconnect(provider_account_id=account.provider_account_id)
+def start_reauth(*, account: SocialAccount, redirect_url: str, user: Any = None) -> str:
+    """Re-running OAuth for an account whose platform grant lapsed (or whose
+    Page went away). The cap is deliberately not re-checked: this connects
+    nothing new, and refusing to repair an account a workspace already has
+    because it is at its limit would be exactly backwards."""
+    profile_id = ensure_profile(account.workspace)
+    return get_connect_adapter().connect_url(
+        platform=account.platform,
+        profile_id=profile_id,
+        redirect_url=redirect_url,
+        state=sign_state(
+            workspace=account.workspace, user=user, platform=account.platform, reconnect=account.pk
+        ),
+    )
+
+
+# -----------------------------------------------------------------------------
+# Disconnect — and what happens to the posts that were going out through it
+# -----------------------------------------------------------------------------
+class ScheduledFate:
+    #: Posts with nowhere else to go keep their time, as a reminder to post by hand.
+    REMIND = "remind"
+    #: Posts with nowhere else to go come off the calendar, approval kept.
+    UNSCHEDULE = "unschedule"
+    CHOICES = (REMIND, UNSCHEDULE)
+
+
+def disconnect_impact(account: SocialAccount) -> dict[str, list[Any]]:
+    """The auto-published posts this account is carrying, split by whether it
+    is their only destination. Read-only — the panel shows it before anyone
+    confirms."""
+    from content.models import PostStatus, PostTarget, PostTargetState
+
+    elsewhere = PostTarget.objects.filter(
+        post_id=OuterRef("post_id"),
+        social_account__isnull=False,
+        state=PostTargetState.PENDING,
+    ).exclude(social_account=account)
+    targets = (
+        PostTarget.objects.filter(
+            social_account=account,
+            state=PostTargetState.PENDING,
+            post__status=PostStatus.SCHEDULED,
+        )
+        .annotate(elsewhere=Exists(elsewhere))
+        .select_related("post")
+        .order_by("post__scheduled_at", "post_id")
+    )
+    only: list[Any] = []
+    shared: list[Any] = []
+    for target in targets:
+        (shared if target.elsewhere else only).append(target.post)
+    return {"only_here": only, "also_elsewhere": shared}
+
+
+@transaction.atomic
+def disconnect(
+    account: SocialAccount, *, actor: Any = None, scheduled: str = ScheduledFate.REMIND
+) -> dict[str, Any]:
+    """Tell the provider, then settle every scheduled post, then mark the
+    account. All-or-nothing locally: a provider refusal changes nothing.
+
+    * Posts whose **only** destination was this account follow `scheduled`:
+      a reminder at the same time (through the schedule service, the one
+      writer of delivery), or off the calendar with their approval kept. A
+      post whose time has already passed is taken off rather than reminded.
+    * Posts that **also** go elsewhere lose this destination and keep
+      publishing to the others.
+    * The account row stays (I10): its published posts and analytics remain.
+    """
+    from content.models import DeliveryMode, PostTarget, PostTargetState
+    from scheduling.services import schedule_post, unschedule_post
+
+    if scheduled not in ScheduledFate.CHOICES:
+        raise OCCSError("Choose what happens to scheduled posts.", code="invalid_scheduled_fate")
+
+    impact = disconnect_impact(account)
+    get_connect_adapter().disconnect(provider_account_id=account.provider_account_id)
+
+    reminded = unscheduled = 0
+    now = timezone.now()
+    for post in impact["only_here"]:
+        when = post.scheduled_at
+        post = unschedule_post(post, actor=actor)
+        if scheduled == ScheduledFate.REMIND and when and when > now:
+            try:
+                # Its own savepoint: a reminder the plan refuses (a horizon, a
+                # trial allowance) leaves the post safely off the calendar
+                # rather than failing the whole disconnect.
+                with transaction.atomic():
+                    schedule_post(
+                        post=post,
+                        delivery_mode=DeliveryMode.REMINDER,
+                        scheduled_at=when,
+                        actor=actor,
+                    )
+                reminded += 1
+                continue
+            except OCCSError:
+                logger.info("reminder refused on disconnect", extra={"post": post.pk})
+        unscheduled += 1
+    PostTarget.objects.filter(
+        social_account=account,
+        state=PostTargetState.PENDING,
+        post__in=[post.pk for post in impact["also_elsewhere"]],
+    ).delete()
+
     account.status = SocialAccountStatus.REVOKED
     account.save(update_fields=["status", "updated_at"])
-    return account
-
-
-def start_reauth(*, account: SocialAccount, redirect_url: str) -> str:
-    """Re-running OAuth for an account whose platform grant lapsed. The cap is
-    deliberately not re-checked: this connects nothing new, and refusing to
-    repair an account a workspace already has because it is at its limit would
-    be exactly backwards."""
-    profile_id = ensure_profile(account.workspace)
-    return get_platform_adapter().connect_url(
-        platform=account.platform, profile_id=profile_id, redirect_url=redirect_url
-    )
+    counts = {
+        "reminded": reminded,
+        "unscheduled": unscheduled,
+        "kept_elsewhere": len(impact["also_elsewhere"]),
+    }
+    logger.info("social account disconnected", extra={"social_account": account.pk, **counts})
+    return {"account": account, **counts}

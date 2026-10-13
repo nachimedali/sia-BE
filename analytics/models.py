@@ -100,6 +100,8 @@ class PostMetric(ImmutableCapture):
     shares = models.PositiveIntegerField(null=True, blank=True)
     clicks = models.PositiveIntegerField(null=True, blank=True)
     saves = models.PositiveIntegerField(null=True, blank=True)
+    reach = models.PositiveIntegerField(null=True, blank=True)
+    views = models.PositiveIntegerField(null=True, blank=True)
     #: Weighted interactions ÷ impressions, or ÷ followers where the platform
     #: does not report impressions (§8.9). Stored rather than derived so a
     #: later change to the weighting cannot silently rewrite history. `None`
@@ -480,6 +482,11 @@ class MetricCapability(models.Model):
     def __str__(self) -> str:
         state = "available" if self.available else "unavailable"
         return f"{self.provider_key}/{self.platform}/{self.metric_key} ({state})"
+
+    @property
+    def delay_hours(self) -> int:
+        """`latency_hint` in whole hours, 0 when the platform reports at once."""
+        return int(self.latency_hint.total_seconds() // 3600) if self.latency_hint else 0
 
 
 class DemographicDimension(models.TextChoices):

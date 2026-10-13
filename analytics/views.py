@@ -25,7 +25,7 @@ from typing import Any
 from django.conf import settings
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -45,6 +45,7 @@ from analytics.models import (
     RepurposeCandidate,
 )
 from analytics.serializers import (
+    AnalyticsSummarySerializer,
     AudienceDemographicSerializer,
     AudienceReplyResultSerializer,
     AudienceReplySerializer,
@@ -64,6 +65,7 @@ from analytics.serializers import (
     TargetPerformanceSerializer,
 )
 from analytics.services import audience, report_share, reporting, repurposing, signals
+from analytics.services import summary as summary_service
 from billing.permissions import HasFeature, HasFlag
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import ANALYTICS_V6
@@ -121,6 +123,30 @@ class AnalyticsOverviewView(_AnalyticsView):
         workspace = self.workspace(request)
         result = signals.overview(workspace.pk, horizon_days=self.horizon(workspace))
         return Response(OverviewSerializer(result).data)
+
+
+class AnalyticsSummaryView(_AnalyticsView):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "window", int, description="Days: 7, 28, 90, 180 or 365. Defaults to 28."
+            )
+        ],
+        responses={200: AnalyticsSummarySerializer},
+        summary="The analytics page in one read: totals, daily, accounts and posts",
+        description=(
+            "Every figure is measured, pending or unavailable with its reason — "
+            "never a zero for a missing number. Only real provider captures count. "
+            "A window longer than the plan keeps is refused with "
+            "`analytics_horizon_exceeded` (402), never clipped."
+        ),
+    )
+    def get(self, request: Request) -> Response:
+        raw = request.query_params.get("window") or ""
+        if raw and not raw.isdigit():
+            raise ValidationError({"window": "A whole number of days."})
+        result = summary_service.summary(self.workspace(request), window=int(raw) if raw else None)
+        return Response(AnalyticsSummarySerializer(result).data)
 
 
 class AnalyticsPostsView(_AnalyticsView):

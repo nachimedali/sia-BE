@@ -31,6 +31,9 @@ from channels.adapters.base import (
 
 
 class FakePlatformAdapter:
+    #: Verified when echoed, never required — the fake's returns may omit it.
+    requires_state = False
+
     def __init__(self) -> None:
         self.profiles: list[str] = []
         self.connect_urls: list[dict[str, str]] = []
@@ -48,15 +51,30 @@ class FakePlatformAdapter:
         self.profiles.append(name)
         return f"fake-profile-{len(self.profiles)}"
 
-    def connect_url(self, *, platform: str, profile_id: str, redirect_url: str) -> str:
+    def connect_url(
+        self, *, platform: str, profile_id: str, redirect_url: str, state: str = ""
+    ) -> str:
         self.connect_urls.append(
-            {"platform": platform, "profile_id": profile_id, "redirect_url": redirect_url}
+            {
+                "platform": platform,
+                "profile_id": profile_id,
+                "redirect_url": redirect_url,
+                "state": state,
+            }
         )
-        return f"https://fake-platform.test/oauth/{platform}?redirect={redirect_url}"
+        return f"https://fake-platform.test/oauth/{platform}?redirect={redirect_url}&state={state}"
 
     def resolve_callback(
         self, *, platform: str, profile_id: str, params: dict[str, Any]
     ) -> ConnectResolution:
+        # A refused sign-in comes back the way real providers send it (OAuth's
+        # `error`, SocialAPI's `status=error`), so the refusal path is testable.
+        if params.get("error") or params.get("status") == "error":
+            raise PlatformError(
+                "The sign-in was cancelled, so nothing was connected.",
+                code="connect_denied",
+                detail={"error": str(params.get("error") or "")},
+            )
         if platform in SELECTION_PLATFORMS:
             targets = [
                 ConnectTarget(id=f"{platform}-target-{i}", name=f"{platform.title()} {i}")

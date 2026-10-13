@@ -26,6 +26,10 @@ class SocialAccountStatus(models.TextChoices):
     ACTIVE = "ACTIVE", "Active"
     REAUTH_REQUIRED = "REAUTH_REQUIRED", "Reauth required"
     OVER_LIMIT = "OVER_LIMIT", "Over plan limit"
+    #: A Facebook Page (or similar) the login can no longer reach — deleted, or
+    #: the user stopped being its admin. Kept with its history; reconnecting
+    #: means choosing another Page (`page.removed`, SA-42).
+    PAGE_REMOVED = "PAGE_REMOVED", "Page removed"
     REVOKED = "REVOKED", "Revoked"
 
 
@@ -48,6 +52,16 @@ class SocialAccount(models.Model):
     status = models.CharField(
         max_length=16, choices=SocialAccountStatus.choices, default=SocialAccountStatus.ACTIVE
     )
+    #: Which vendor this account was connected through (`socialapi`, `zernio`).
+    #: An id from one vendor is never sent to the other; blank on rows from
+    #: before providers could change, which were all Zernio's.
+    provider_key = models.CharField(max_length=24, blank=True)
+    #: What this connection can do, as the provider showed it — currently
+    #: `{"insights": false}` when Instagram was connected without insights
+    #: access, so reach and views read *unavailable* until a reconnect (G13).
+    capabilities = models.JSONField(default=dict, blank=True)
+    #: The platform's own words when it asks for a reconnect.
+    reconnect_reason = models.CharField(max_length=280, blank=True)
     connected_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

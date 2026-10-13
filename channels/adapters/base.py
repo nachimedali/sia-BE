@@ -137,13 +137,23 @@ class PublishResult:
 
 
 class PlatformAdapter(Protocol):
+    #: Whether every return carries the `state` we signed. When true, a return
+    #: without one is refused (`channels.services.complete_connect`).
+    requires_state: bool
+
     def ensure_profile(self, *, name: str, existing_profile_id: str = "") -> str:
         """The provider-side tenant for one workspace, created on first use.
         Idempotent: given a live `existing_profile_id` it returns it unchanged.
         """
         ...
 
-    def connect_url(self, *, platform: str, profile_id: str, redirect_url: str) -> str: ...
+    def connect_url(
+        self, *, platform: str, profile_id: str, redirect_url: str, state: str = ""
+    ) -> str:
+        """`state` is our signed correlation token (`channels.services`). A
+        provider that echoes it back gets it verified on return; one that does
+        not may ignore it."""
+        ...
 
     def resolve_callback(
         self, *, platform: str, profile_id: str, params: dict[str, Any]

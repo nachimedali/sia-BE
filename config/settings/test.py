@@ -39,6 +39,11 @@ USE_FAKE_MAIL = True
 USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True
+# Hermetic: the suite never reads a real social-provider key from `.env`. The
+# live SocialAPI check opts in with `SOCIALAPI_LIVE_TESTS=1` and reads the key
+# from the environment itself (`social_providers/tests/test_live.py`).
+SOCIALAPI_API_KEY = ""
+SOCIALAPI_WEBHOOK_SECRET = ""
 USE_FAKE_TREND_VENDORS = True
 USE_FAKE_PLAYBOOK_COLLECTORS = True
 USE_FAKE_REFERENCE_IMAGES = True

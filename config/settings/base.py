@@ -83,6 +83,10 @@ LOCAL_APPS = [
     "search",
     # The Playbook: trending public posts to compose from (`/app/playbook`).
     "playbook",
+    # Which vendor publishes, measures and reads comments (SocialAPI.ai,
+    # Zernio as the alternative): selection, the SocialAPI client, its rate
+    # budget and the call log (`social-provider-plan.md`, SA-00…SA-12).
+    "social_providers",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -404,6 +408,12 @@ CELERY_BEAT_SCHEDULE = {
     # and repurpose jobs, so a drafting run is grounded in the freshest corpus.
     # Every half hour, though each Playbook source runs only on its own
     # `refresh_minutes` — the cadence (and YouTube's quota) lives on the row.
+    # Daily: the provider call log is operational, kept for the cockpit's
+    # window and no longer (`SOCIALAPI_CALL_RETENTION_DAYS`).
+    "social-providers-prune-calls": {
+        "task": "social_providers.tasks.prune_provider_calls",
+        "schedule": crontab(hour=1, minute=40),
+    },
     "playbook-collect": {
         "task": "playbook.tasks.collect_playbook",
         "schedule": crontab(minute="*/30"),
@@ -571,7 +581,14 @@ ZERNIO_BASE_URL = env("ZERNIO_BASE_URL", default="https://zernio.com/api")
 ZERNIO_API_KEY = env("ZERNIO_API_KEY", default="")
 ZERNIO_TIMEOUT_SECONDS = env.int("ZERNIO_TIMEOUT_SECONDS", default=30)
 
-USE_FAKE_PLATFORM_ADAPTER = env.bool("USE_FAKE_PLATFORM_ADAPTER", default=not ZERNIO_API_KEY)
+#: `True` forces the fakes, `False` forces the selected real provider, and
+#: blank (`None`) is **auto**: the fakes until the provider chosen by
+#: `SOCIAL_PROVIDER` has its key *and* its adapters — resolved at call time by
+#: `social_providers.registry`, because whether an adapter exists is a code
+#: fact a settings module cannot see. `prod.py` pins `False`.
+USE_FAKE_PLATFORM_ADAPTER: bool | None = (
+    env.bool("USE_FAKE_PLATFORM_ADAPTER") if env("USE_FAKE_PLATFORM_ADAPTER", default="") else None
+)
 
 # -----------------------------------------------------------------------------
 # Media editing (P1-12). Image editing runs on Pillow, already a dependency, so
@@ -588,6 +605,28 @@ USE_FAKE_MEDIA_EDITOR = env.bool("USE_FAKE_MEDIA_EDITOR", default=False)
 # webhook that accepted anything would be an open write path into the audience
 # tables.
 ZERNIO_WEBHOOK_SECRET = env("ZERNIO_WEBHOOK_SECRET", default="")
+
+# -----------------------------------------------------------------------------
+# SocialAPI.ai — the primary publishing, measurement and comments provider
+# (`social-provider-plan.md`); Zernio above is the kept alternative. Blank
+# values fall back to the defaults. Nothing reads these until SA-10 lands.
+# -----------------------------------------------------------------------------
+SOCIAL_PROVIDER = env("SOCIAL_PROVIDER", default="") or "socialapi"
+SOCIALAPI_BASE_URL = env("SOCIALAPI_BASE_URL", default="") or "https://api.social-api.ai/v1"
+SOCIALAPI_API_KEY = env("SOCIALAPI_API_KEY", default="")
+SOCIALAPI_WEBHOOK_SECRET = env("SOCIALAPI_WEBHOOK_SECRET", default="")
+SOCIALAPI_TIMEOUT_SECONDS = int(env("SOCIALAPI_TIMEOUT_SECONDS", default="") or 30)
+#: The team-wide request budget assumed before the first response tells us the
+#: real one (`X-RateLimit-Limit`): 60/min is the Free plan with ≤2 accounts.
+#: Vendor capacity, calibrated live — not a commercial number.
+SOCIALAPI_REQUESTS_PER_MINUTE = int(env("SOCIALAPI_REQUESTS_PER_MINUTE", default="") or 60)
+#: Share of each minute background traffic (capture, comments) may never draw
+#: into, so publishing is never blocked by capture (Part 7 rule 11).
+SOCIALAPI_PUBLISH_RESERVE_RATIO = float(env("SOCIALAPI_PUBLISH_RESERVE_RATIO", default="") or 0.4)
+#: Successful reads logged to `ProviderCall`; writes and failures always are.
+SOCIALAPI_READ_SAMPLE_RATE = float(env("SOCIALAPI_READ_SAMPLE_RATE", default="") or 0.1)
+#: How long the call log is kept for the cockpit.
+SOCIALAPI_CALL_RETENTION_DAYS = int(env("SOCIALAPI_CALL_RETENTION_DAYS", default="") or 30)
 
 # The publishing provider fetches media by URL, so a storage-relative path is
 # unusable to it. S3/MinIO already yields absolute URLs; local disk does not.

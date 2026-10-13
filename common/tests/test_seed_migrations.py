@@ -111,3 +111,43 @@ def test_the_guard_keeps_the_suite_off_the_seed(settings) -> None:
     before = _counts()
     _run_all()
     assert _counts() == before
+
+
+def test_socialapi_capability_rows_seed_unavailable_pairs_too() -> None:
+    """SA-51: the rows that say *no* are what turn a vendor's `0` into a null,
+    so they are seeded as deliberately as the ones that say yes — and an
+    operator who flips one in admin keeps the flip."""
+    from analytics.models import MetricCapability
+
+    seed = import_module("analytics.migrations.0011_seed_socialapi_capabilities")
+    seed.forwards(apps, None)
+    rows = MetricCapability.objects.filter(provider_key="socialapi")
+
+    assert rows.count() == len(seed.ROWS)
+    facebook_saves = rows.get(platform="facebook", metric_key="saves")
+    assert facebook_saves.available is False and facebook_saves.note
+    instagram_reach = rows.get(platform="instagram", metric_key="reach")
+    assert instagram_reach.available is True
+    assert instagram_reach.latency_hint is not None
+    assert instagram_reach.latency_hint.total_seconds() == 48 * 3600
+    assert not rows.filter(platform="tiktok", available=True).exists()
+
+    MetricCapability.objects.filter(pk=facebook_saves.pk).update(available=True, note="")
+    seed.forwards(apps, None)
+
+    assert rows.count() == len(seed.ROWS)
+    assert rows.get(pk=facebook_saves.pk).available is True
+
+
+def test_the_frozen_rows_match_the_capability_table_they_were_taken_from() -> None:
+    """Drift between the two is allowed only through a new migration; until
+    one exists, they say the same thing."""
+    from social_providers.socialapi.capabilities import METRICS
+
+    seed = import_module("analytics.migrations.0011_seed_socialapi_capabilities")
+    live = {
+        (platform, metric, row["available"], row["latency_hours"], row["note"])
+        for platform, metrics in METRICS.items()
+        for metric, row in metrics.items()
+    }
+    assert set(seed.ROWS) == live

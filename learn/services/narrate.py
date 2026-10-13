@@ -150,6 +150,16 @@ def reads_as_a_prediction(text: str) -> bool:
     return any(pattern.search(text) for pattern in _PREDICTION_PATTERNS)
 
 
+def check_prose(text: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """The two tests a narration must pass, and how many numbers it states —
+    run on a render before it is kept, and again on the digest as kept."""
+    return {
+        "numbers": len(_NUMERAL.findall(text)),
+        "grounded": numerals_are_grounded(text, payload),
+        "predictive": reads_as_a_prediction(text),
+    }
+
+
 def template_narration(payload: dict[str, Any]) -> str:
     """Deterministic prose, built only from the payload.
 
@@ -222,9 +232,8 @@ def narrate(
 
     if not candidate:
         return fallback, NarrationSource.TEMPLATE
-    if reads_as_a_prediction(candidate):
-        return fallback, NarrationSource.TEMPLATE
-    if not numerals_are_grounded(candidate, payload):
+    check = check_prose(candidate, payload)
+    if check["predictive"] or not check["grounded"]:
         return fallback, NarrationSource.TEMPLATE
 
     return candidate, NarrationSource.MODEL

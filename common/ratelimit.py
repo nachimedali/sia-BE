@@ -167,9 +167,13 @@ class ProviderRateLimiter:
         capacity: int,
         refill_per_second: float,
         provider: str = "zernio",
+        reserve_ratio: float | None = None,
     ) -> None:
         account = social_account_id if social_account_id is not None else "-"
         self.provider = provider
+        #: Overrides `PUBLISH_RESERVE_RATIO` for a provider whose budget is
+        #: shaped differently — SocialAPI's is one pool for the whole team.
+        self.reserve_ratio = self.PUBLISH_RESERVE_RATIO if reserve_ratio is None else reserve_ratio
         self.platform = platform
         self.connection = str(account)
         self._bucket = TokenBucket(
@@ -178,7 +182,7 @@ class ProviderRateLimiter:
 
     @property
     def _reserve(self) -> float:
-        return self._bucket.capacity * self.PUBLISH_RESERVE_RATIO
+        return self._bucket.capacity * self.reserve_ratio
 
     def consume_for_publish(
         self, tokens: float = 1, *, now: float | None = None

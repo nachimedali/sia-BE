@@ -90,6 +90,8 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "shares": ("shares", "reposts", "retweets"),
     "clicks": ("clicks", "linkClicks"),
     "saves": ("saves", "bookmarks"),
+    "reach": ("reach",),
+    "views": ("views", "videoViews"),
 }
 
 

@@ -56,4 +56,9 @@ PLAYBOOK_SHOW_SAMPLE = False
 # lost AWS_S3_ENDPOINT_URL must fail at upload, not serve media publicly.
 USE_FAKE_STORAGE = False
 STORAGES = {**STORAGES, "default": {"BACKEND": "storages.backends.s3.S3Storage"}}  # noqa: F405
-ZERNIO_API_KEY = env("ZERNIO_API_KEY")
+# The selected social provider's key is read without a fallback: a deploy that
+# lost it must fail at boot, not quietly start publishing nowhere.
+if SOCIAL_PROVIDER == "zernio":  # noqa: F405
+    ZERNIO_API_KEY = env("ZERNIO_API_KEY")
+else:
+    SOCIALAPI_API_KEY = env("SOCIALAPI_API_KEY")

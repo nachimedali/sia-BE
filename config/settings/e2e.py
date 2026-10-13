@@ -52,3 +52,7 @@ USE_FAKE_PLAYBOOK_COLLECTORS = True
 USE_FAKE_REFERENCE_IMAGES = True
 PLAYBOOK_SHOW_SAMPLE = True
 PLAYBOOK_SAMPLE_IMAGE_BASE = f"{SITE_URL}/playbook-sample/"
+
+# Playwright never reaches a social provider, whatever keys the local `.env`
+# holds: publishing and capture run on the fakes.
+USE_FAKE_PLATFORM_ADAPTER = True

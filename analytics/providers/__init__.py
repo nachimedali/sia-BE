@@ -9,8 +9,6 @@ makes a later swap a code change rather than an excavation, and
 
 from __future__ import annotations
 
-from django.conf import settings
-
 from analytics.providers.base import (
     MetricsError,
     MetricsProvider,
@@ -38,11 +36,10 @@ def get_metrics_registry() -> MetricsProviderRegistry:
     that mechanism should not have to be invented on the day a second vendor
     arrives.
     """
-    if getattr(settings, "USE_FAKE_PLATFORM_ADAPTER", False):
+    from social_providers import registry
+
+    if registry.use_fakes("metrics"):
         from analytics.providers.fake import fake_provider
 
         return MetricsProviderRegistry([fake_provider()])
-
-    from analytics.providers.zernio import ZernioMetricsProvider
-
-    return MetricsProviderRegistry([ZernioMetricsProvider()])
+    return MetricsProviderRegistry([registry.real("metrics")])

@@ -33,6 +33,12 @@ METRIC_KEYS: tuple[str, ...] = (
     "shares",
     "clicks",
     "saves",
+    #: Unique accounts that saw the post, and times it was shown or played —
+    #: two different questions, kept apart (SocialAPI reports both on
+    #: Instagram; most platforms report one or neither, and the missing one is
+    #: null, never borrowed from the other).
+    "reach",
+    "views",
 )
 
 

@@ -92,6 +92,8 @@ class FakeMetricsProvider:
                 "shares": total // 20,
                 "clicks": total // 5,
                 "saves": total // 8,
+                "reach": total * 12,
+                "views": total * 25,
                 "fake": True,
                 "capture": seen + 1,
             },

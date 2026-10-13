@@ -44,6 +44,7 @@ from analytics.views import (
     AnalyticsOverviewView,
     AnalyticsPostsView,
     AnalyticsSentimentView,
+    AnalyticsSummaryView,
     AudienceCommentReplyView,
     AudienceDemographicsView,
     CompetitorComparisonView,
@@ -278,6 +279,7 @@ urlpatterns = [
     # take a pk resolve it through a workspace-filtered queryset, giving the
     # same 404-not-403 answer the shared mixin gives (A9).
     path("analytics/overview/", AnalyticsOverviewView.as_view(), name="analytics-overview"),
+    path("analytics/summary/", AnalyticsSummaryView.as_view(), name="analytics-summary"),
     path("analytics/posts/", AnalyticsPostsView.as_view(), name="analytics-posts"),
     path("analytics/best-times/", AnalyticsBestTimesView.as_view(), name="analytics-best-times"),
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),

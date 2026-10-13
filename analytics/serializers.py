@@ -257,3 +257,104 @@ class CompetitorComparisonSerializer(serializers.Serializer[dict[str, Any]]):
     window_days = serializers.IntegerField()
     us = serializers.JSONField()
     competitors = serializers.JSONField()
+
+
+# --- the analytics page in one read (`analytics.services.summary`, SA-70) -------
+class SummaryCellSerializer(serializers.Serializer[Any]):
+    """A figure, `pending` or `unavailable` — with the reason when not a number.
+    A measured 0 is `state="measured", value=0`; nothing else is ever 0."""
+
+    state = serializers.ChoiceField(choices=["measured", "pending", "unavailable"])
+    value = serializers.FloatField(allow_null=True)
+    why = serializers.CharField(allow_blank=True)
+
+
+class SummaryChangeSerializer(serializers.Serializer[Any]):
+    previous = serializers.IntegerField()
+    current = serializers.IntegerField()
+    #: Null when the previous period measured nothing to compare with.
+    percent = serializers.IntegerField(allow_null=True)
+    accounts_left_out = serializers.IntegerField()
+
+
+class SummaryExcludedSerializer(serializers.Serializer[Any]):
+    account = serializers.CharField()
+    why = serializers.CharField()
+
+
+class SummaryTotalSerializer(serializers.Serializer[Any]):
+    total = serializers.IntegerField(allow_null=True)
+    accounts_counted = serializers.IntegerField()
+    excluded = SummaryExcludedSerializer(many=True)
+    partial_days = serializers.IntegerField()
+    pending_days = serializers.IntegerField()
+    change = SummaryChangeSerializer(allow_null=True)
+
+
+class SummaryDaySerializer(serializers.Serializer[Any]):
+    date = serializers.DateField()
+    total = serializers.IntegerField(allow_null=True)
+    by_platform = serializers.DictField(child=serializers.IntegerField())
+    #: Accounts whose captures for that day's posts are incomplete or stale.
+    partial_reasons = serializers.ListField(child=serializers.CharField())
+    #: Platforms still inside their reporting delay for that day's posts.
+    pending_platforms = serializers.ListField(child=serializers.CharField())
+    posts = serializers.IntegerField()
+
+
+class SummarySnapshotSerializer(serializers.Serializer[Any]):
+    rung = serializers.CharField()
+    at = serializers.DateTimeField()
+    state = serializers.ChoiceField(choices=["captured", "missed", "due"])
+
+
+class SummaryPostSerializer(serializers.Serializer[Any]):
+    target_id = serializers.IntegerField()
+    post_id = serializers.IntegerField()
+    title = serializers.CharField(allow_blank=True)
+    platform = serializers.CharField()
+    account = serializers.CharField()
+    format = serializers.CharField(allow_blank=True)
+    published_at = serializers.DateTimeField()
+    cells = serializers.DictField(child=SummaryCellSerializer())
+    engagement_rate = SummaryCellSerializer()
+    capture = serializers.ChoiceField(
+        choices=["complete", "capturing", "pending", "partial", "stale"]
+    )
+    capture_why = serializers.CharField()
+    snapshots = SummarySnapshotSerializer(many=True)
+
+
+class SummaryAccountSerializer(serializers.Serializer[Any]):
+    id = serializers.IntegerField()
+    platform = serializers.CharField()
+    handle = serializers.CharField(allow_blank=True)
+    display_name = serializers.CharField(allow_blank=True)
+    #: The connections page's word for it (`channels.overview.STATE_BY_STATUS`).
+    state = serializers.CharField()
+    insights_off = serializers.BooleanField()
+    followers = serializers.IntegerField(allow_null=True)
+    followers_change_7d = serializers.IntegerField(allow_null=True)
+    last_synced_at = serializers.DateTimeField(allow_null=True)
+    history_days_held = serializers.IntegerField()
+
+
+class SummaryWindowSerializer(serializers.Serializer[Any]):
+    days = serializers.IntegerField()
+    locked = serializers.BooleanField()
+
+
+class AnalyticsSummarySerializer(serializers.Serializer[Any]):
+    window = serializers.IntegerField()
+    #: What the page opens on for this plan; a link omits `window` when equal.
+    default_window = serializers.IntegerField()
+    windows = SummaryWindowSerializer(many=True)
+    history_days = serializers.IntegerField()
+    start = serializers.DateField()
+    end = serializers.DateField()
+    comparable = serializers.BooleanField()
+    totals = serializers.DictField(child=SummaryTotalSerializer())
+    daily = serializers.DictField(child=SummaryDaySerializer(many=True))
+    accounts = SummaryAccountSerializer(many=True)
+    posts = SummaryPostSerializer(many=True)
+    posts_truncated = serializers.BooleanField()
