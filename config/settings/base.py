@@ -428,6 +428,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "social_providers.tasks.prune_provider_calls",
         "schedule": crontab(hour=1, minute=40),
     },
+    # Webhook deliveries the queue never ran or a worker abandoned are handed
+    # out again, and old ones pruned (SA-40). Every five minutes: the vendor
+    # was already told yes, so this is the only retry they get.
+    "social-providers-sweep-webhooks": {
+        "task": "social_providers.tasks.sweep_webhook_deliveries",
+        "schedule": crontab(minute="*/5"),
+    },
     "playbook-collect": {
         "task": "playbook.tasks.collect_playbook",
         "schedule": crontab(minute="*/30"),
@@ -629,6 +636,15 @@ SOCIAL_PROVIDER = env("SOCIAL_PROVIDER", default="") or "socialapi"
 SOCIALAPI_BASE_URL = env("SOCIALAPI_BASE_URL", default="") or "https://api.social-api.ai/v1"
 SOCIALAPI_API_KEY = env("SOCIALAPI_API_KEY", default="")
 SOCIALAPI_WEBHOOK_SECRET = env("SOCIALAPI_WEBHOOK_SECRET", default="")
+#: The secret being retired during a rotation (`socialapi_webhooks rotate`):
+#: still accepted until the old endpoint is retired, so no delivery is lost.
+SOCIALAPI_WEBHOOK_SECRET_PREVIOUS = env("SOCIALAPI_WEBHOOK_SECRET_PREVIOUS", default="")
+#: How old a delivery's signed timestamp may be (replay protection, plan G10).
+SOCIALAPI_WEBHOOK_TOLERANCE_SECONDS = int(
+    env("SOCIALAPI_WEBHOOK_TOLERANCE_SECONDS", default="") or 300
+)
+#: How long received deliveries are kept for dedupe and the cockpit.
+SOCIALAPI_WEBHOOK_RETENTION_DAYS = int(env("SOCIALAPI_WEBHOOK_RETENTION_DAYS", default="") or 30)
 SOCIALAPI_TIMEOUT_SECONDS = int(env("SOCIALAPI_TIMEOUT_SECONDS", default="") or 30)
 #: The team-wide request budget assumed before the first response tells us the
 #: real one (`X-RateLimit-Limit`): 60/min is the Free plan with ≤2 accounts.

@@ -91,6 +91,9 @@ class ProductViewSet(
                 "posts", filter=Q(posts__status=PostStatus.PUBLISHED), distinct=True
             ),
         )
+        # Explicit: the counts group the query, and a grouped query drops
+        # `Meta.ordering` — the list came back in whatever order Postgres chose.
+        .order_by("-created_at", "-id")
     )
 
     @extend_schema(

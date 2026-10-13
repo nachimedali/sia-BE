@@ -84,6 +84,11 @@ class RawMetricPayload:
     fetched_at: dt.datetime | None = None
     #: Set on a `PENDING` answer where the provider said how long to wait.
     retry_after: float | None = None
+    #: What this answer proved about the account's insights permission:
+    #: `False` when the platform withheld every insight figure it should have
+    #: reported (the account needs reconnecting, SA-53), `True` when one came
+    #: back, `None` when it proves nothing either way.
+    insights_permission: bool | None = None
 
     @property
     def is_measured(self) -> bool:
@@ -109,11 +114,21 @@ class CommentSnapshot:
     author: str = ""
     posted_at: dt.datetime | None = None
     reactions: dict[str, int] | None = None
+    #: What the platform allows on this comment, where the provider says.
+    capabilities: dict[str, bool] | None = None
 
 
 @runtime_checkable
 class MetricsProvider(Protocol):
-    """What a measurement vendor must do. Four methods, no publishing."""
+    """What a measurement vendor must do. No publishing.
+
+    A vendor with a change feed adds `changed_since(cursor) -> (payloads,
+    next_cursor)` — every snapshot that moved since `cursor`, a rolling log
+    rather than an archive (Zernio's is seven days), so a consumer that falls
+    behind re-bootstraps rather than rewinds. It is optional because not every
+    vendor has one (SocialAPI does not, plan G2); `ingest.follow_delta` uses it
+    where it exists.
+    """
 
     #: Stable, short, stored on every row this provider produced. Changing it
     #: orphans the provenance of every historical snapshot, so it does not
@@ -132,21 +147,18 @@ class MetricsProvider(Protocol):
         """
         ...
 
+    def read_metric(self, body: Any, metric: str) -> int | None:
+        """One of `METRIC_KEYS` out of a payload body this provider produced,
+        or `None` when it is not there. The vendor's vocabulary stops here, so
+        normalisation never learns a provider's field names."""
+        ...
+
     def fetch(self, *, platform: str, provider_post_id: str) -> RawMetricPayload:
         """Totals-to-date for one published post.
 
         The bootstrap path and the single-post repair path. Routine capture
         follows `changed_since` instead: per-post polling is what P0-31 exists
         to remove.
-        """
-        ...
-
-    def changed_since(self, cursor: str) -> tuple[list[RawMetricPayload], str]:
-        """Every snapshot that moved since `cursor`, plus the next cursor.
-
-        A rolling log, not an archive — Zernio's is seven days — so a consumer
-        that falls behind must re-bootstrap rather than rewind. An empty
-        `cursor` means "from the beginning of what the feed still holds".
         """
         ...
 
@@ -165,8 +177,17 @@ class AudienceProvider(Protocol):
     def supports_comments(self, platform: str) -> bool: ...
 
     def fetch_comments(
-        self, *, platform: str, provider_post_id: str, since: dt.datetime | None = None
-    ) -> list[Any]: ...
+        self,
+        *,
+        platform: str,
+        provider_post_id: str,
+        since: dt.datetime | None = None,
+        platform_post_id: str = "",
+        provider_account_id: str = "",
+    ) -> list[Any]:
+        """Comments newer than `since`. Providers that address a post by the
+        platform's id and its account (SocialAPI) read the last two."""
+        ...
 
     def fetch_reactions(self, *, platform: str, provider_post_id: str) -> dict[str, int] | None:
         """Per-type reaction counts, or `None` where the platform does not
@@ -174,10 +195,49 @@ class AudienceProvider(Protocol):
         means "answered, and it was empty"."""
         ...
 
-    def reply(self, *, platform: str, comment_external_id: str, body: str) -> str:
+    def reply(
+        self,
+        *,
+        platform: str,
+        comment_external_id: str,
+        body: str,
+        platform_post_id: str = "",
+        provider_account_id: str = "",
+    ) -> str:
         """Post a reply, returning its external id. Advanced only, metered
         against a pooled org allowance (P0-36)."""
         ...
+
+
+def proportions(raw: Any) -> dict[str, float] | None:
+    """A `{bucket: share}` map summing to 1, from either counts or shares.
+
+    Vendors return absolute follower counts on some dimensions and percentages
+    on others, so normalising here is what stops every reader downstream from
+    having to guess which it is holding. Shares rather than counts because a
+    demographic breakdown is only ever read as a proportion, and a count would
+    additionally leak the follower total into a chart that never uses it.
+
+    `None` for a payload that is missing, malformed or entirely zero — an
+    all-zero breakdown is the vendor saying it has nothing, and dividing by it
+    would be the fabricated row Part 7 rule 12 forbids.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    values: dict[str, float] = {}
+    for bucket, value in raw.items():
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number >= 0:
+            values[str(bucket)] = number
+
+    total = sum(values.values())
+    if not values or total <= 0:
+        return None
+    return {bucket: round(number / total, 4) for bucket, number in values.items()}
 
 
 class MetricsUnsupportedError(MetricsError):
@@ -204,8 +264,22 @@ class MetricsProviderRegistry:
     unavailable; it never reports zero (A-19).
     """
 
-    def __init__(self, providers: list[MetricsProvider] | None = None) -> None:
+    def __init__(
+        self,
+        providers: list[MetricsProvider] | None = None,
+        *,
+        audience: AudienceProvider | None = None,
+        audience_ready: bool = True,
+    ) -> None:
         self._providers: list[MetricsProvider] = list(providers or [])
+        #: The audience port, when it is served by its own provider. Absent,
+        #: comments are looked for among the metrics providers (Zernio and
+        #: the fake implement both).
+        self._audience = audience
+        #: `False` while the selected provider's audience port is not built:
+        #: comment capture then waits rather than recording "this platform
+        #: has no comments", which would be a statement about the platform.
+        self.audience_ready = audience_ready
 
     def register(self, provider: MetricsProvider) -> None:
         self._providers = [p for p in self._providers if p.key != provider.key]
@@ -227,6 +301,8 @@ class MetricsProviderRegistry:
         differs: Zernio measures TikTok but cannot read a TikTok comment at any
         price (L-3), and a single resolver would have to pretend otherwise.
         """
+        if self._audience is not None:
+            return self._audience if self._audience.supports_comments(platform) else None
         for provider in self._providers:
             audience = provider if isinstance(provider, AudienceProvider) else None
             if audience is not None and audience.supports_comments(platform):

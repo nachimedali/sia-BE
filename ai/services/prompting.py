@@ -240,7 +240,9 @@ def assemble_image_prompt(
 
     `rules` are a Playbook composition's reference rules
     (`ai.services.references.rule_lines`): which attached picture is which, and
-    what may never be taken from a reference. Verbatim for the same reason."""
+    what may never be taken from a reference — followed by the brand-asset
+    lines (`ai.services.brand_assets.rule_lines`) saying which attached picture
+    is the logo or the packaging. Verbatim for the same reason."""
     signal = _category_signal(workspace)
     grounding: dict[str, object] = {
         "restrictions": bool(product and product.restrictions),

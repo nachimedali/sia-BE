@@ -79,7 +79,33 @@ class SentimentSummarySerializer(serializers.Serializer[Any]):
     score = serializers.FloatField()
 
 
+class CommentStateSerializer(serializers.Serializer[Any]):
+    """Where a comment stands after what was done to it from the app."""
+
+    hidden = serializers.BooleanField()
+    liked = serializers.BooleanField()
+    deleted = serializers.BooleanField()
+    replies = serializers.IntegerField()
+
+
+class CommentCapabilitiesSerializer(serializers.Serializer[Any]):
+    """The platform's own flags for one comment (SA-62)."""
+
+    can_reply = serializers.BooleanField()
+    can_hide = serializers.BooleanField()
+    can_like = serializers.BooleanField()
+    can_delete = serializers.BooleanField()
+    can_private_reply = serializers.BooleanField()
+
+
 class CommentSerializer(serializers.ModelSerializer[AudienceComment]):
+    #: `null` where the provider gives no flags: offer no action on its behalf.
+    capabilities = CommentCapabilitiesSerializer(allow_null=True, read_only=True)
+    #: `false` where the platform gives no reaction breakdown (SA-61) — shown
+    #: as "not shared", never as zero.
+    reactions_shared = serializers.SerializerMethodField()
+    state = serializers.SerializerMethodField()
+
     class Meta:
         model = AudienceComment
         fields = (
@@ -90,8 +116,24 @@ class CommentSerializer(serializers.ModelSerializer[AudienceComment]):
             "sentiment",
             "sentiment_score",
             "posted_at",
+            "capabilities",
+            "reactions_shared",
+            "state",
         )
         read_only_fields = fields
+
+    def get_reactions_shared(self, comment: AudienceComment) -> bool:
+        return comment.reactions is not None
+
+    @extend_schema_field(CommentStateSerializer)
+    def get_state(self, comment: AudienceComment) -> dict[str, Any]:
+        from analytics.services.audience import state_of
+
+        return dict(CommentStateSerializer(state_of(comment)).data)
+
+
+class CommentActionSerializer(serializers.Serializer[dict[str, str]]):
+    action = serializers.ChoiceField(choices=["hide", "unhide", "like", "unlike", "delete"])
 
 
 class RepurposeCandidateSerializer(serializers.ModelSerializer[RepurposeCandidate]):

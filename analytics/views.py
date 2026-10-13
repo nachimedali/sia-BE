@@ -50,7 +50,9 @@ from analytics.serializers import (
     AudienceReplyResultSerializer,
     AudienceReplySerializer,
     BestTimeSerializer,
+    CommentActionSerializer,
     CommentSerializer,
+    CommentStateSerializer,
     CompetitorComparisonSerializer,
     CompetitorSerializer,
     OverviewSerializer,
@@ -187,9 +189,11 @@ class AnalyticsCommentsView(_AnalyticsView):
         summary="The most recent comments, newest first",
     )
     def get(self, request: Request) -> Response:
-        comments = AudienceComment.objects.measured().filter(
-            post_target__post__workspace=self.workspace(request)
-        )[:COMMENT_FEED_LIMIT]
+        comments = (
+            AudienceComment.objects.measured()
+            .filter(post_target__post__workspace=self.workspace(request))
+            .prefetch_related("actions")[:COMMENT_FEED_LIMIT]
+        )
         return Response(CommentSerializer(comments, many=True).data)
 
 
@@ -230,6 +234,38 @@ class AudienceCommentReplyView(APIView):
             comment, body=payload.validated_data["body"], actor=request.user
         )
         return Response({"external_id": external_id}, status=status.HTTP_201_CREATED)
+
+
+class AudienceCommentActionView(APIView):
+    """`POST /analytics/comments/{id}/actions/` — hide, show, like, unlike or
+    delete one audience comment on the platform (SA-62).
+
+    Advanced only, like replying (402 with the upgrade path below it); 422
+    `comment_action_unsupported` where the comment's own platform flags say
+    no; another tenant's comment is a 404. Every action is recorded with its
+    actor (`AudienceCommentAction`).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=CommentActionSerializer,
+        responses={200: CommentStateSerializer},
+        summary="Moderate an audience comment",
+    )
+    def post(self, request: Request, pk: int) -> Response:
+        comment = get_object_or_404(
+            AudienceComment.objects.measured()
+            .filter(post_target__post__workspace=request_workspace(request))
+            .select_related("post_target__social_account", "post_target__post__workspace"),
+            pk=pk,
+        )
+        payload = CommentActionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        state = audience.moderate(
+            comment, action=payload.validated_data["action"], actor=request.user
+        )
+        return Response(CommentStateSerializer(state).data)
 
 
 class ZernioCommentWebhookView(APIView):

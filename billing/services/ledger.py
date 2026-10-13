@@ -409,9 +409,11 @@ def replies_used_this_month(organization: Any, *, now: dt.datetime | None = None
     moment = now or timezone.now()
     start = moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     total = ReplyLedger.objects.filter(
-        organization=organization, reason=ReplyReason.OUTBOUND, created_at__gte=start
+        organization=organization,
+        reason__in=(ReplyReason.OUTBOUND, ReplyReason.REFUNDED),
+        created_at__gte=start,
     ).aggregate(total=Sum("delta"))["total"]
-    return abs(int(total or 0))
+    return max(-int(total or 0), 0)
 
 
 @transaction.atomic
@@ -462,4 +464,27 @@ def debit_reply(
         reason=ReplyReason.OUTBOUND,
         actor=actor,
         note=note,
+    )
+
+
+@transaction.atomic
+def refund_reply(debit: Any, *, note: str = "") -> Any:
+    """Returns one reply to the pool after the provider refused it — a
+    compensating row against `debit`, never an edit or a delete of it."""
+    from billing.models import ReplyLedger
+
+    organization = debit.organization
+    type(organization).objects.select_for_update().filter(pk=organization.pk).exists()
+    balance = (
+        ReplyLedger.objects.filter(organization=organization).aggregate(total=Sum("delta"))["total"]
+        or 0
+    )
+    return ReplyLedger.objects.create(
+        organization=organization,
+        workspace=debit.workspace,
+        delta=1,
+        balance_after=int(balance) + 1,
+        reason=ReplyReason.REFUNDED,
+        actor=debit.actor,
+        note=(note or f"refund of #{debit.pk}")[:200],
     )

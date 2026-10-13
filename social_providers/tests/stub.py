@@ -61,6 +61,96 @@ def error(status: int, code: str, message: str = "refused") -> httpx.Response:
     return httpx.Response(status, json={"error": {"code": code, "message": message}})
 
 
+def make_client(handler: Any) -> SocialAPIClient:
+    """A real client whose wire is `handler`: every path through the client
+    (budget, retries, error taxonomy, call log) runs, only the vendor is ours."""
+    return SocialAPIClient(
+        api_key=KEY,
+        base_url="https://api.social-api.ai/v1",
+        transport=httpx.MockTransport(handler),
+        budget=TeamBudget(),
+        sleep=lambda _s: None,
+        sample=lambda: 1.0,
+    )
+
+
+def seed_capabilities() -> None:
+    """The SocialAPI truth table as the data migration seeds it (the test
+    settings turn seeding off, so a test that needs it asks)."""
+    import datetime as _dt
+
+    from analytics.models import MetricCapability
+    from social_providers.socialapi.capabilities import METRICS
+
+    for platform, metrics in METRICS.items():
+        for metric, row in metrics.items():
+            MetricCapability.objects.get_or_create(
+                provider_key="socialapi",
+                platform=platform,
+                metric_key=metric,
+                defaults={
+                    "available": row["available"],
+                    "latency_hint": _dt.timedelta(hours=row["latency_hours"]) or None,
+                    "note": row["note"],
+                },
+            )
+
+
+def metrics_answer(
+    *,
+    platform: str = "instagram",
+    published_at: str | None = None,
+    synced: bool = True,
+    error: dict[str, str] | None = None,
+    **metrics: Any,
+) -> dict[str, Any]:
+    """A `GET /posts/{pid}/metrics` answer with one target, as documented."""
+    published_at = published_at or (dt.datetime.now(dt.UTC) - dt.timedelta(days=5)).isoformat()
+    target: dict[str, Any] = {
+        "platform": platform,
+        "platform_post_id": "native-1",
+        "status": "published",
+        "published_at": published_at,
+        "metrics": dict(metrics),
+        "metrics_synced_at": "2026-10-13T10:00:00Z" if synced else None,
+    }
+    if error:
+        target["error"] = error
+    return {"data": {"post_id": "p-1", "targets": [target]}}
+
+
+class ReadVendor:
+    """The vendor's read routes, answered from a table a test fills in:
+    `routes["GET /posts/p-1/metrics"] = {...}` (JSON) or an `httpx.Response`.
+    Query strings are kept on `calls`, not matched on."""
+
+    def __init__(self) -> None:
+        self.routes: dict[str, Any] = {}
+        self.calls: list[tuple[str, str, dict[str, str]]] = []
+        #: JSON bodies of the writes, in order.
+        self.bodies: list[Any] = []
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/v1")
+        self.calls.append((request.method, path, dict(request.url.params)))
+        if request.content:
+            self.bodies.append(json.loads(request.content))
+        answer = self.routes.get(f"{request.method} {path}")
+        if answer is None:
+            return error(404, "resource.not_found", "No such route in the stub.")
+        if callable(answer):
+            answer = answer(request)
+        if isinstance(answer, httpx.Response):
+            return answer
+        return httpx.Response(200, json=answer)
+
+    def client(self) -> SocialAPIClient:
+        return make_client(self.handle)
+
+    def paths(self) -> list[str]:
+        return [path for _method, path, _params in self.calls]
+
+
 class StubVendor:
     def __init__(self) -> None:
         self.posts: dict[str, dict[str, Any]] = {}
@@ -109,15 +199,7 @@ class StubVendor:
             )
 
     def adapter(self) -> SocialAPIAdapter:
-        client = SocialAPIClient(
-            api_key=KEY,
-            base_url="https://api.social-api.ai/v1",
-            transport=httpx.MockTransport(self.handle),
-            budget=TeamBudget(),
-            sleep=lambda _s: None,
-            sample=lambda: 1.0,
-        )
-        return SocialAPIAdapter(client)
+        return SocialAPIAdapter(make_client(self.handle))
 
     # --- the vendor -----------------------------------------------------------------
     def _id(self, prefix: str) -> str:

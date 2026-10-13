@@ -67,9 +67,9 @@ from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
+from ai.services import brand_assets, prompting, quality, references, rephrase
 from ai.services import creative as creative_service
 from ai.services import hashtags as hashtag_service
-from ai.services import prompting, quality, references, rephrase
 from ai.services.costing import resolve_pricing
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
@@ -151,6 +151,10 @@ def create_generation(
 
     if mode == GenerationMode.CAPTION:
         _ensure_captionable(workspace, source_media)
+
+    # Here rather than in the serializer: a regeneration re-enters through this
+    # function with the parent's snapshot, and must be held to the same rule.
+    brand_assets.ensure_owned(workspace, kind, list((creative or {}).get("assets") or []))
 
     if kind == GenerationKind.VIDEO:
         # Entitlement first, availability second, and the order matters: a Free
@@ -396,13 +400,18 @@ def _attempt_image(
     config: QualityGateConfig,
     reference_images: list[bytes],
     inspiration: list[references.ReferenceImage] | None = None,
+    assets: list[tuple[dict[str, Any], bytes]] | None = None,
 ) -> tuple[list[tuple[ImageVariant, quality.QualityResult]], dict[str, Any]]:
     """`inspiration` is a RECIPE run's reference pictures. They are attached
     after the product's photographs — the prompt numbers them — and scored
-    by the gate as a ceiling, never as the product's identity."""
+    by the gate as a ceiling, never as the product's identity.
+
+    `assets` are the person's brand pictures (`ai.services.brand_assets`),
+    attached last and never given to the gate."""
     provider = get_image_provider()
     text_provider = get_text_provider()
     inspiration = inspiration or []
+    assets = assets or []
     snapshot = list(generation.creative.get("references") or [])
     direction = creative_service.image_lines(generation.creative)
     if snapshot and not generation.rephrased_prompt:
@@ -417,20 +426,33 @@ def _attempt_image(
         rephrased=generation.rephrased_prompt,
         keep_out=creative_service.keep_out_lines(generation.creative),
         rules=(
-            references.rule_lines(
-                snapshot,
-                product_images=len(reference_images),
-                seen=[image.label for image in inspiration],
-            )
-            if snapshot
-            else None
+            [
+                *(
+                    references.rule_lines(
+                        snapshot,
+                        product_images=len(reference_images),
+                        seen=[image.label for image in inspiration],
+                    )
+                    if snapshot
+                    else []
+                ),
+                *brand_assets.rule_lines(
+                    [item for item, _content in assets],
+                    first=len(reference_images) + len(inspiration) + 1,
+                ),
+            ]
+            or None
         ),
     )
     restrictions = generation.product.restrictions if generation.product else []
 
     result = provider.generate(
         prompt=grounded.user,
-        reference_images=[*reference_images, *(image.content for image in inspiration)],
+        reference_images=[
+            *reference_images,
+            *(image.content for image in inspiration),
+            *(content for _item, content in assets),
+        ],
         aspect=generation.aspect,
         n=n,
         batch=generation.is_batch,
@@ -636,6 +658,13 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         else []
     )
 
+    # The person's brand pictures, read once like the references above.
+    assets = (
+        brand_assets.load(list(generation.creative.get("assets") or []))
+        if generation.kind == GenerationKind.IMAGE
+        else []
+    )
+
     started = time.monotonic()
     # Once per generation, before the attempts: a rejected attempt retries the
     # same brief, so there is nothing to rewrite again.
@@ -656,6 +685,7 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
                 config=config,
                 reference_images=reference_images,
                 inspiration=inspiration,
+                assets=assets,
             )
 
         QualityCheck.objects.bulk_create(

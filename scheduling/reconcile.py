@@ -108,6 +108,26 @@ def reconcile_pending(*, now: dt.datetime | None = None) -> int:
     return settled
 
 
+def settle_target(target: PostTarget) -> bool:
+    """Reads one accepted publish's outcome now — what a `post.published`,
+    `post.partial` or `post.failed` webhook asks for (SA-42). The webhook says
+    *something changed*; the provider's own record says what, so a forged or
+    reordered event cannot mark a post published. Returns whether it settled;
+    a target already settled, or from another provider, is left alone."""
+    if (
+        target.state != PostTargetState.PUBLISHING
+        or target.provider_state != ProviderState.PUBLISH_REQUESTED
+        or target.provider_key != provider_key("publish")
+    ):
+        return False
+    result = get_platform_adapter().fetch_publish_status(provider_post_id=target.provider_post_id)
+    if result.pending:
+        return False
+    publishing.record_outcome(target, result)
+    _settle_posts([target.post])
+    return True
+
+
 def _settle_posts(posts: Iterable[Post]) -> None:
     """Each post once, from one read of all their targets."""
     in_flight = [post for post in posts if post.status == PostStatus.PUBLISHING]

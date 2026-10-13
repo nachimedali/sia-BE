@@ -64,3 +64,61 @@ class ProviderCall(models.Model):
 
     def __str__(self) -> str:
         return f"{self.provider} {self.method} {self.path} → {self.status_code} {self.kind}"
+
+
+class DeliveryStatus(models.TextChoices):
+    RECEIVED = "RECEIVED", "Received, waiting to be processed"
+    PROCESSING = "PROCESSING", "Being processed"
+    PROCESSED = "PROCESSED", "Processed"
+    IGNORED = "IGNORED", "Nothing to do"
+    #: Names an account or post that is not ours: dropped, payload not kept.
+    FOREIGN = "FOREIGN", "Not ours"
+    #: Ours, but not matched to a row yet (polling picks it up).
+    UNMATCHED = "UNMATCHED", "Not matched"
+    #: Kept for a later consumer (mentions, for the S2 inbox).
+    KEPT = "KEPT", "Kept for later"
+    FAILED = "FAILED", "Processing failed"
+
+
+class WebhookDelivery(models.Model):
+    """One verified webhook delivery (SA-40, plan §7).
+
+    Recorded **before** it is processed, keyed on the vendor's delivery id
+    (stable across its retries), so a retry or a replay is recognised and
+    processed once. The receiver answers as soon as this row exists; a task
+    does the work.
+
+    The payload is kept for the retention window so processing can be
+    repeated and the cockpit can show what arrived — except for a delivery
+    about an account or post that is not ours, whose payload is blanked
+    (plan §0.5: other tenants' events are dropped, never stored).
+    """
+
+    provider = models.CharField(max_length=24)
+    delivery_id = models.CharField(max_length=120)
+    event = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=12, choices=DeliveryStatus.choices, default=DeliveryStatus.RECEIVED
+    )
+    #: Why it was ignored, unmatched or failed, in a sentence.
+    note = models.CharField(max_length=280, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    received_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-received_at"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["provider", "delivery_id"], name="unique_webhook_delivery"
+            )
+        ]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["provider", "event", "-received_at"]),
+            models.Index(fields=["provider", "status", "-received_at"]),
+        ]
+        verbose_name_plural = "webhook deliveries"
+
+    def __str__(self) -> str:
+        return f"{self.provider} {self.event} {self.delivery_id} ({self.status})"

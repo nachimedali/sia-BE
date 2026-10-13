@@ -78,3 +78,21 @@ def check_provider_ready_for_deploy(app_configs: Any, **kwargs: Any) -> list[Err
             id="social_providers.E002",
         )
     ]
+
+
+@register(Tags.compatibility, deploy=True)
+def check_webhook_secret(app_configs: Any, **kwargs: Any) -> list[Warning]:
+    """SocialAPI deployed without its webhook secret still works — the
+    reconciler and the comment poll cover every event — but outcomes arrive
+    minutes later and the top plan's real-time comments do not arrive at all."""
+    secret = str(getattr(settings, "SOCIALAPI_WEBHOOK_SECRET", "") or "")
+    if selected_key() != "socialapi" or secret:
+        return []
+    return [
+        Warning(
+            "SOCIALAPI_WEBHOOK_SECRET is not set: webhooks are refused and every event "
+            "arrives by polling.",
+            hint="manage.py socialapi_webhooks register --url https://<host>/api/v1/webhooks/socialapi/",
+            id="social_providers.W002",
+        )
+    ]

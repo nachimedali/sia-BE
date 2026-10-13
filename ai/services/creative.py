@@ -27,6 +27,7 @@ from typing import Any
 from rest_framework.exceptions import ValidationError
 
 from ai.models import CreativeKind, CreativeOption
+from ai.services import brand_assets
 from content.models import Platform
 
 #: Controls that hold exactly one choice.
@@ -110,7 +111,9 @@ def normalize(raw: Any) -> dict[str, Any]:
 
     errors: dict[str, str] = {}
     out: dict[str, Any] = {}
-    known = {kind.value for kind in SINGLE} | set(MULTI) | {"toggles", "avoid", "platforms"}
+    known = (
+        {kind.value for kind in SINGLE} | set(MULTI) | {"toggles", "avoid", "platforms", "assets"}
+    )
     for key in raw:
         if key not in known:
             errors[key] = "Unknown creative control."
@@ -161,6 +164,17 @@ def normalize(raw: Any) -> dict[str, Any]:
             errors["platforms"] = "Expected a list of known platforms."
         else:
             out["platforms"] = list(dict.fromkeys(platforms))
+
+    if "assets" in raw:
+        # Structural only; ownership is `brand_assets.ensure_owned`'s, at the
+        # service boundary where the workspace is known.
+        try:
+            assets = brand_assets.clean(raw["assets"])
+        except ValidationError as exc:
+            errors["assets"] = str(exc.detail["assets"][0])  # type: ignore[index,call-overload]
+        else:
+            if assets:
+                out["assets"] = assets
 
     if errors:
         raise ValidationError({"creative": errors})

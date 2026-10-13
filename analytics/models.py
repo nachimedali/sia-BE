@@ -209,9 +209,15 @@ class AudienceComment(ImmutableCapture):
     posted_at = models.DateTimeField()
 
     #: Per-type breakdown where the platform reports one, e.g.
-    #: `{"like": 12, "celebrate": 3}`. Empty means "asked, none"; the
-    #: unavailable case is carried by `availability`, not by an empty dict.
-    reactions = models.JSONField(default=dict, blank=True)
+    #: `{"like": 12, "celebrate": 3}`. `{}` means "asked, none"; `None` means
+    #: the provider gives no breakdown at all (SocialAPI, plan G5 / SA-61) —
+    #: shown as "not shared", never as zero reactions.
+    reactions = models.JSONField(null=True, blank=True, default=None)
+    #: What the platform lets us do with this comment, as the provider says
+    #: per comment (`can_reply`, `can_hide`, `can_like`, `can_delete`…).
+    #: `None` where the provider does not say: no action is then offered on
+    #: the provider's behalf (SA-62).
+    capabilities = models.JSONField(null=True, blank=True, default=None)
     availability = models.CharField(
         max_length=12, choices=Availability.choices, default=Availability.MEASURED
     )
@@ -234,6 +240,45 @@ class AudienceComment(ImmutableCapture):
 
     def __str__(self) -> str:
         return f"{self.author}: {self.body[:40]}"
+
+
+class CommentAction(models.TextChoices):
+    REPLY = "reply", "Replied"
+    HIDE = "hide", "Hidden"
+    UNHIDE = "unhide", "Shown again"
+    LIKE = "like", "Liked"
+    UNLIKE = "unlike", "Like removed"
+    DELETE = "delete", "Deleted"
+
+
+class AudienceCommentAction(AppendOnly):
+    """Something done to an audience comment from inside the app (SA-62).
+
+    Append-only, and the comment itself never changes: a comment's current
+    state (hidden, liked, deleted) is its latest action. That keeps the
+    comment what the audience wrote, and every moderation step audited — who
+    did what, when, and the provider's id for a reply.
+    """
+
+    append_only_hint = "record the opposite action instead of editing this one."
+
+    comment = models.ForeignKey(AudienceComment, on_delete=models.CASCADE, related_name="actions")
+    action = models.CharField(max_length=8, choices=CommentAction.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    #: The reply's own id at the provider, for a reply.
+    external_id = models.CharField(max_length=200, blank=True)
+    body = models.TextField(blank=True)
+    provider_key = models.CharField(max_length=32, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["comment", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.action} on {self.comment_id}"
 
 
 class AccountSnapshot(ImmutableCapture):
@@ -261,6 +306,69 @@ class AccountSnapshot(ImmutableCapture):
 
     def __str__(self) -> str:
         return f"{self.social_account_id} @ {self.captured_at:%Y-%m-%d}"
+
+
+class AccountMetricKind(models.TextChoices):
+    """How a daily figure may be combined (the provider says, per series)."""
+
+    GAUGE = "gauge", "Level (diff it)"
+    FLOW = "flow", "Per-day count (sum it)"
+
+
+class AccountMetricDay(models.Model):
+    """One day of an account's history, as the provider reported it (SA-52).
+
+    **A mirror, not a capture.** The provider re-cuts recent days as late data
+    arrives (Google: "a recent day may still be filling in"), so the latest
+    reading of a day replaces the earlier one; `captured_at` says when. That is
+    why this is not `ImmutableCapture`: an append-only copy of a figure the
+    vendor itself revises would keep the wrong one forever.
+
+    The vendor's markers are kept, not smoothed (plan §5.3 rule 4): a gauge's
+    `change` covers `days_spanned` days and is divided by it, never
+    interpolated; a day on which fewer subjects reported than usual is
+    `partial`, so a lower sum reads as a gap, not a decline.
+    """
+
+    social_account = models.ForeignKey(
+        "channels.SocialAccount", on_delete=models.CASCADE, related_name="metric_days"
+    )
+    #: The platform's own name for the metric (`follower_count`, `reach`,
+    #: `BUSINESS_IMPRESSIONS_MOBILE_MAPS`…): history is shown as reported, so
+    #: no vocabulary is imposed on it.
+    metric = models.CharField(max_length=64)
+    day = models.DateField()
+    kind = models.CharField(max_length=8, choices=AccountMetricKind.choices)
+    #: Null, never zero, when the provider sent no figure for the day.
+    value = models.BigIntegerField(null=True, blank=True)
+    #: Gauges only: the difference from the previous point, over `days_spanned`.
+    change = models.BigIntegerField(null=True, blank=True)
+    days_spanned = models.PositiveSmallIntegerField(default=1)
+    subjects_counted = models.PositiveSmallIntegerField(default=1)
+    partial = models.BooleanField(default=False)
+    day_tz = models.CharField(max_length=32, blank=True)
+    source = models.CharField(max_length=16, blank=True)
+    provider_key = models.CharField(max_length=32)
+    captured_at = models.DateTimeField()
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["social_account", "metric", "day"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["social_account", "metric", "day"], name="unique_account_metric_day"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.social_account_id} {self.metric} {self.day}"
+
+    @property
+    def per_day(self) -> float | None:
+        """What one day contributed: a flow's value, a gauge's change spread
+        over the days it spans (a gap is never drawn as a one-day spike)."""
+        if self.kind == AccountMetricKind.FLOW:
+            return None if self.value is None else float(self.value)
+        return None if self.change is None else self.change / max(self.days_spanned, 1)
 
 
 class RepurposeReason(models.TextChoices):

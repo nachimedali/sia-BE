@@ -11,6 +11,7 @@ from __future__ import annotations
 from django.contrib import admin
 
 from analytics.models import (
+    AccountMetricDay,
     AccountSnapshot,
     AudienceComment,
     MetricCapability,
@@ -43,6 +44,14 @@ class CommentAdmin(ReadOnlyAdmin):
     list_filter = ("sentiment", "availability", "post_target__platform")
     search_fields = ("author", "body")
     readonly_fields = all_fields_except_id(AudienceComment)
+
+
+@admin.register(AccountMetricDay)
+class AccountMetricDayAdmin(ReadOnlyAdmin):
+    list_display = ("social_account", "metric", "day", "kind", "value", "change", "partial")
+    list_filter = ("kind", "partial", "provider_key", "social_account__platform")
+    search_fields = ("metric",)
+    readonly_fields = all_fields_except_id(AccountMetricDay)
 
 
 @admin.register(AccountSnapshot)

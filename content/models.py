@@ -467,6 +467,10 @@ class ProviderState(models.TextChoices):
     FAILED = "failed", "Failed"
     #: The unpublished draft was deleted at the provider (failed or cancelled).
     DISCARDED = "discarded", "Draft discarded"
+    #: It went live, then was taken down on the platform or deleted at the
+    #: provider (`post.unpublished` / `post.deleted`, SA-42). The target stays
+    #: `PUBLISHED` — it was — but capture stops: there is nothing left to read.
+    REMOVED = "removed", "Removed from the platform"
 
 
 class PostTarget(models.Model):

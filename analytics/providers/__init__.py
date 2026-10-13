@@ -42,4 +42,13 @@ def get_metrics_registry() -> MetricsProviderRegistry:
         from analytics.providers.fake import fake_provider
 
         return MetricsProviderRegistry([fake_provider()])
-    return MetricsProviderRegistry([registry.real("metrics")])
+    metrics = registry.real("metrics")
+    if registry.use_fakes("audience"):
+        # Auto mode while the audience port is still being built: say so,
+        # rather than calling every platform comment-less.
+        return MetricsProviderRegistry([metrics], audience_ready=False)
+    try:
+        audience = registry.real("audience")
+    except registry.ProviderNotReadyError:
+        return MetricsProviderRegistry([metrics], audience_ready=False)
+    return MetricsProviderRegistry([metrics], audience=audience)

@@ -49,14 +49,19 @@ def test_an_unknown_provider_is_refused_and_flagged(settings: Any) -> None:
     USE_FAKE_PLATFORM_ADAPTER=None, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY="k"
 )
 def test_auto_mode_serves_each_port_from_socialapi_once_it_is_built() -> None:
-    # Key present: the built ports (connect, publish) are real; measurement is
-    # not built yet, so the fake answers it, and says so.
+    # Key present: every port is built, so every port is real — publishing,
+    # measurement, and the audience on its own provider.
+    from social_providers.socialapi.audience import SocialAPIAudienceProvider
     from social_providers.socialapi.publish import SocialAPIAdapter
 
     assert registry.use_fakes("publish") is False
     assert isinstance(get_platform_adapter(), SocialAPIAdapter)
-    assert registry.use_fakes("metrics") is True
-    assert get_metrics_registry().all()[0].key != "socialapi"
+    assert registry.use_fakes("metrics") is False
+    metrics = get_metrics_registry()
+    assert metrics.all()[0].key == "socialapi"
+    assert metrics.audience_ready is True
+    assert isinstance(metrics.for_comments("instagram"), SocialAPIAudienceProvider)
+    assert metrics.for_comments("tiktok") is None, "TikTok shares no comments"
 
 
 @override_settings(USE_FAKE_PLATFORM_ADAPTER=None, SOCIAL_PROVIDER="zernio", ZERNIO_API_KEY="k")
@@ -74,12 +79,28 @@ def test_auto_mode_without_a_key_uses_the_fakes() -> None:
 @override_settings(
     USE_FAKE_PLATFORM_ADAPTER=False, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY="k"
 )
-def test_forcing_the_real_provider_before_a_port_is_built_fails_loudly() -> None:
+def test_forcing_the_real_provider_serves_every_port() -> None:
     from social_providers.socialapi.publish import SocialAPIAdapter
 
     assert isinstance(get_platform_adapter(), SocialAPIAdapter)
+    assert get_metrics_registry().audience_ready is True
+    for port in registry.PORTS:
+        assert registry.real(port) is not None
+
+
+def test_a_port_with_no_adapter_fails_loudly_when_forced(monkeypatch: Any, settings: Any) -> None:
+    import dataclasses
+
+    settings.USE_FAKE_PLATFORM_ADAPTER = False
+    settings.SOCIAL_PROVIDER = "socialapi"
+    settings.SOCIALAPI_API_KEY = "k"
+    unbuilt = dataclasses.replace(registry.PROVIDERS["socialapi"], audience=None)
+    monkeypatch.setitem(registry.PROVIDERS, "socialapi", unbuilt)
+
     with pytest.raises(ProviderNotReadyError, match="SOCIAL_PROVIDER=zernio"):
-        get_metrics_registry()
+        registry.real("audience")
+    # Measurement still runs; comments wait for their port, never a fake.
+    assert get_metrics_registry().audience_ready is False
 
 
 @override_settings(USE_FAKE_PLATFORM_ADAPTER=False, SOCIAL_PROVIDER="zernio", ZERNIO_API_KEY="")
@@ -94,7 +115,7 @@ def test_forcing_the_fakes_wins() -> None:
 
 
 @override_settings(
-    USE_FAKE_PLATFORM_ADAPTER=None, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY="k"
+    USE_FAKE_PLATFORM_ADAPTER=None, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY=""
 )
 def test_development_warns_but_runs() -> None:
     ids = check_ids()
@@ -108,7 +129,7 @@ def test_a_deployment_refuses_fake_mode_auto() -> None:
 
 
 @override_settings(
-    USE_FAKE_PLATFORM_ADAPTER=False, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY="k"
+    USE_FAKE_PLATFORM_ADAPTER=False, SOCIAL_PROVIDER="socialapi", SOCIALAPI_API_KEY=""
 )
 def test_a_deployment_refuses_a_provider_that_cannot_serve() -> None:
     assert "social_providers.E002" in check_ids(include_deployment_checks=True)
@@ -136,4 +157,5 @@ def test_status_reports_each_port(settings: Any) -> None:
     assert state["provider"] == "socialapi"
     assert state["fake_mode"] == "auto"
     assert state["ports"]["publish"] == {"built": True, "serving": "socialapi"}
-    assert state["ports"]["metrics"] == {"built": False, "serving": "fake"}
+    assert state["ports"]["metrics"] == {"built": True, "serving": "socialapi"}
+    assert state["ports"]["audience"] == {"built": True, "serving": "socialapi"}

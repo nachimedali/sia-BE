@@ -15,7 +15,7 @@ import pytest
 from channels.adapters.base import PlatformError
 from channels.adapters.fake import FakePlatformAdapter
 from content.models import ProviderState
-from social_providers.tests.stub import MemoryJournal, StubVendor
+from social_providers.tests.stub import MemoryJournal, StubVendor, error
 
 pytestmark = pytest.mark.django_db
 
@@ -45,6 +45,12 @@ class Side:
             self._fake.settle(pid, published=published)
         else:
             self._vendor.settle(pid, published=published)
+
+    def refuse_next_publish(self, code: str) -> None:
+        if self.name == "fake":
+            self._fake.queue_vendor_error(429, code)
+        else:
+            self._vendor.publish_failure = error(429, code)
 
     def lose_the_publish_call(self) -> None:
         if self.name == "fake":
@@ -132,3 +138,17 @@ def test_a_live_post_is_never_discarded(side: Side) -> None:
 
     with pytest.raises(PlatformError):
         side.adapter.discard_draft(provider_post_id=journal.provider_post_id)
+
+
+@pytest.mark.parametrize(
+    ("code", "retryable"),
+    [("ratelimit.exceeded", True), ("validation.post_limit_exhausted", False)],
+)
+def test_the_two_429s_mean_the_same_on_both_sides(side: Side, code: str, retryable: bool) -> None:
+    """A per-minute limit waits and retries; a used-up month never does."""
+    side.refuse_next_publish(code)
+
+    with pytest.raises(PlatformError) as caught:
+        _publish(side, MemoryJournal())
+
+    assert caught.value.retryable is retryable

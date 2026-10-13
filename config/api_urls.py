@@ -45,6 +45,7 @@ from analytics.views import (
     AnalyticsPostsView,
     AnalyticsSentimentView,
     AnalyticsSummaryView,
+    AudienceCommentActionView,
     AudienceCommentReplyView,
     AudienceDemographicsView,
     CompetitorComparisonView,
@@ -138,6 +139,7 @@ from reminders.views import (
     ReminderViewSet,
 )
 from search.views import SearchView
+from social_providers.views import CockpitView, SocialAPIWebhookView
 from taste.views import (
     ContentCandidateViewSet,
     RuleSetViewSet,
@@ -322,12 +324,23 @@ urlpatterns = [
     # a workspace-filtered queryset inside the view — another tenant's comment
     # id is a 404, not a 403 (Part 7 rule 3).
     path(
+        "analytics/comments/<int:pk>/actions/",
+        AudienceCommentActionView.as_view(),
+        name="analytics-comment-actions",
+    ),
+    path(
         "analytics/comments/<int:pk>/reply/",
         AudienceCommentReplyView.as_view(),
         name="analytics-comment-reply",
     ),
     # Unauthenticated by necessity, authenticated by signature — the same
     # shape as the Stripe handler, and next to it in spirit if not in the file.
+    path("ops/cockpit/", CockpitView.as_view(), name="ops-cockpit"),
+    path(
+        "webhooks/socialapi/",
+        SocialAPIWebhookView.as_view(),
+        name="webhook-socialapi",
+    ),
     path(
         "webhooks/zernio/comment/",
         ZernioCommentWebhookView.as_view(),

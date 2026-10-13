@@ -39,6 +39,7 @@ from analytics.providers.base import (
     MetricsError,
     MetricsUnsupportedError,
     RawMetricPayload,
+    proportions,
 )
 from common.timestamps import parse_or_none
 
@@ -156,6 +157,9 @@ class ZernioMetricsProvider:
     def supports_comments(self, platform: str) -> bool:
         return platform not in NO_COMMENT_PLATFORMS
 
+    def read_metric(self, body: Any, metric: str) -> int | None:
+        return read_metric(body, metric)
+
     # --- acquisition -----------------------------------------------------
     def fetch(self, *, platform: str, provider_post_id: str) -> RawMetricPayload:
         if not self.supports(platform, "impressions"):
@@ -202,7 +206,13 @@ class ZernioMetricsProvider:
 
     # --- audience --------------------------------------------------------
     def fetch_comments(
-        self, *, platform: str, provider_post_id: str, since: dt.datetime | None = None
+        self,
+        *,
+        platform: str,
+        provider_post_id: str,
+        since: dt.datetime | None = None,
+        platform_post_id: str = "",
+        provider_account_id: str = "",
     ) -> list[CommentSnapshot]:
         """Comments on one post. Raises `MetricsUnsupported` where the platform
         has no comment endpoint, so the caller records `UNAVAILABLE` rather
@@ -263,7 +273,15 @@ class ZernioMetricsProvider:
                 continue
         return counts
 
-    def reply(self, *, platform: str, comment_external_id: str, body: str) -> str:
+    def reply(
+        self,
+        *,
+        platform: str,
+        comment_external_id: str,
+        body: str,
+        platform_post_id: str = "",
+        provider_account_id: str = "",
+    ) -> str:
         with _client() as client:
             payload = self._json(
                 client.post(
@@ -274,7 +292,9 @@ class ZernioMetricsProvider:
             )
         return str(payload.get("id", "") or payload.get("replyId", ""))
 
-    def fetch_account_stats(self, *, provider_account_id: str) -> dict[str, int | None]:
+    def fetch_account_stats(
+        self, *, provider_account_id: str, platform: str = ""
+    ) -> dict[str, int | None]:
         """Follower counts. `None` per field where the account record does not
         carry it — `engagement_rate`'s fallback denominator is better off
         knowing it has no denominator than dividing by a fabricated zero."""
@@ -318,7 +338,7 @@ class ZernioMetricsProvider:
 
         breakdowns: dict[str, Any] = {}
         for dimension, key in DEMOGRAPHIC_KEYS.items():
-            shares = _shares(body.get(key))
+            shares = proportions(body.get(key))
             if shares:
                 breakdowns[dimension] = shares
         return breakdowns or None
@@ -422,34 +442,3 @@ def _reaction_counts(value: Any) -> dict[str, int] | None:
         except (TypeError, ValueError):
             continue
     return counts
-
-
-def _shares(raw: Any) -> dict[str, float] | None:
-    """A `{bucket: share}` map summing to 1, from either counts or shares.
-
-    Zernio returns absolute follower counts on some dimensions and percentages
-    on others, so normalising here is what stops every reader downstream from
-    having to guess which it is holding. Shares rather than counts because a
-    demographic breakdown is only ever read as a proportion, and a count would
-    additionally leak the follower total into a chart that never uses it.
-
-    `None` for a payload that is missing, malformed or entirely zero — an
-    all-zero breakdown is the vendor saying it has nothing, and dividing by it
-    would be the fabricated row Part 7 rule 12 forbids.
-    """
-    if not isinstance(raw, dict):
-        return None
-
-    values: dict[str, float] = {}
-    for bucket, value in raw.items():
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if number >= 0:
-            values[str(bucket)] = number
-
-    total = sum(values.values())
-    if not values or total <= 0:
-        return None
-    return {bucket: round(number / total, 4) for bucket, number in values.items()}

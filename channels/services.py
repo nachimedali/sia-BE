@@ -274,6 +274,13 @@ def attach_account(*, workspace: Workspace, platform: str, connected: Any) -> So
     ).first()
     if existing is None or existing.status == SocialAccountStatus.REVOKED:
         enforce_account_cap(workspace)
+    # A fresh sign-in asks for every permission again, so what the last one
+    # lacked (G13's insights) is unknown until the next capture shows it.
+    capabilities = {
+        key: value
+        for key, value in (existing.capabilities if existing else {}).items()
+        if key != "insights"
+    }
     account, _created = SocialAccount.objects.update_or_create(
         workspace=workspace,
         platform=platform,
@@ -285,6 +292,7 @@ def attach_account(*, workspace: Workspace, platform: str, connected: Any) -> So
             "status": SocialAccountStatus.ACTIVE,
             "provider_key": provider_key("connect"),
             "reconnect_reason": "",
+            "capabilities": capabilities,
         },
     )
     return account

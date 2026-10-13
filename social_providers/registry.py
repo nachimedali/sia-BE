@@ -76,8 +76,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
         # its path here, and nothing else changes for callers.
         connect="social_providers.socialapi.publish:SocialAPIAdapter",
         publish="social_providers.socialapi.publish:SocialAPIAdapter",
-        metrics=None,
-        audience=None,
+        metrics="social_providers.socialapi.metrics:SocialAPIMetricsProvider",
+        audience="social_providers.socialapi.audience:SocialAPIAudienceProvider",
     ),
     "zernio": ProviderSpec(
         key="zernio",

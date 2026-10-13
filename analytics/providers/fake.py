@@ -25,7 +25,7 @@ from analytics.providers.base import (
     MetricsUnsupportedError,
     RawMetricPayload,
 )
-from analytics.providers.zernio import NO_COMMENT_PLATFORMS
+from analytics.providers.zernio import NO_COMMENT_PLATFORMS, read_metric
 
 PROVIDER_KEY = "fake"
 SCHEMA_VERSION = 1
@@ -56,22 +56,45 @@ class FakeMetricsProvider:
         #: threshold, so a test can exercise the unavailable path without a
         #: real underpopulated account (L-5, P6-01).
         self.tiny_accounts: set[str] = set()
+        #: A provider key whose coverage the fake reproduces (SA-33): its
+        #: `MetricCapability` rows decide what is supported, and the fake then
+        #: answers `0` for every pair that vendor cannot read — exactly the
+        #: placeholder zeros SocialAPI sends — so the suite proves they never
+        #: reach a column. Blank: every metric is covered (the default curve).
+        self.mirrors = ""
+        self._mirrored: set[tuple[str, str]] | None = None
 
     # --- capability ------------------------------------------------------
     def supports(self, platform: str, metric: str) -> bool:
         if platform in self.unsupported:
             return False
+        if self.mirrors:
+            return (platform, metric) in self._mirrored_pairs()
         return metric in METRIC_KEYS
+
+    def _mirrored_pairs(self) -> set[tuple[str, str]]:
+        if self._mirrored is None:
+            from analytics.models import MetricCapability
+
+            self._mirrored = set(
+                MetricCapability.objects.filter(
+                    provider_key=self.mirrors, available=True
+                ).values_list("platform", "metric_key")
+            )
+        return self._mirrored
 
     def supports_comments(self, platform: str) -> bool:
         return platform not in NO_COMMENT_PLATFORMS and platform not in self.unsupported
+
+    def read_metric(self, body: Any, metric: str) -> int | None:
+        return read_metric(body, metric)
 
     # --- acquisition -----------------------------------------------------
     def fetch(self, *, platform: str, provider_post_id: str) -> RawMetricPayload:
         queued = self.payloads_for.get(provider_post_id)
         if queued:
             return queued.pop(0)
-        if not self.supports(platform, "impressions"):
+        if not any(self.supports(platform, metric) for metric in METRIC_KEYS):
             return self._bare(platform, provider_post_id, "UNAVAILABLE")
         if provider_post_id in self.pending:
             return self._bare(platform, provider_post_id, "PENDING")
@@ -80,23 +103,28 @@ class FakeMetricsProvider:
         self.calls.append(provider_post_id)
         # Diminishing returns: 100, 150, 175, 187…
         total = int(200 * (1 - 0.5 ** (seen + 1)))
+        body: dict[str, Any] = {
+            "impressions": total * 20,
+            "likes": total,
+            "comments": total // 10,
+            "shares": total // 20,
+            "clicks": total // 5,
+            "saves": total // 8,
+            "reach": total * 12,
+            "views": total * 25,
+        }
+        if self.mirrors:
+            # The vendor's placeholder: a `0` for what it cannot read.
+            body = {
+                metric: value if self.supports(platform, metric) else 0
+                for metric, value in body.items()
+            }
         return RawMetricPayload(
             provider_key=self.key,
             platform=platform,
             provider_post_id=provider_post_id,
             schema_version=self.schema_version,
-            body={
-                "impressions": total * 20,
-                "likes": total,
-                "comments": total // 10,
-                "shares": total // 20,
-                "clicks": total // 5,
-                "saves": total // 8,
-                "reach": total * 12,
-                "views": total * 25,
-                "fake": True,
-                "capture": seen + 1,
-            },
+            body={**body, "fake": True, "capture": seen + 1},
             availability="MEASURED",
             fetched_at=timezone.now(),
         )
@@ -110,7 +138,13 @@ class FakeMetricsProvider:
 
     # --- audience --------------------------------------------------------
     def fetch_comments(
-        self, *, platform: str, provider_post_id: str, since: dt.datetime | None = None
+        self,
+        *,
+        platform: str,
+        provider_post_id: str,
+        since: dt.datetime | None = None,
+        platform_post_id: str = "",
+        provider_account_id: str = "",
     ) -> list[CommentSnapshot]:
         if not self.supports_comments(platform):
             raise MetricsUnsupportedError(
@@ -123,11 +157,21 @@ class FakeMetricsProvider:
     def fetch_reactions(self, *, platform: str, provider_post_id: str) -> dict[str, int] | None:
         return self.reactions_for.get(provider_post_id)
 
-    def reply(self, *, platform: str, comment_external_id: str, body: str) -> str:
+    def reply(
+        self,
+        *,
+        platform: str,
+        comment_external_id: str,
+        body: str,
+        platform_post_id: str = "",
+        provider_account_id: str = "",
+    ) -> str:
         self.replies.append((comment_external_id, body))
         return f"fake-reply-{len(self.replies)}"
 
-    def fetch_account_stats(self, *, provider_account_id: str) -> dict[str, int | None]:
+    def fetch_account_stats(
+        self, *, provider_account_id: str, platform: str = ""
+    ) -> dict[str, int | None]:
         seen = self.calls.count(provider_account_id)
         self.calls.append(provider_account_id)
         return {"followers": 1000 + seen * 25, "following": 180, "total_posts": 42 + seen}

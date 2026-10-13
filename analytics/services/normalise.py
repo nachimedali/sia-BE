@@ -23,7 +23,6 @@ from typing import Any
 
 from analytics.models import Availability, MetricCapability, MetricSource
 from analytics.providers.base import METRIC_KEYS, MetricsProvider, RawMetricPayload
-from analytics.providers.zernio import read_metric
 from common.compression import pack
 from common.ranking import INTERACTION_WEIGHTS
 
@@ -128,7 +127,7 @@ def normalise(
         metric: (
             None
             if metric in blocked or not provider.supports(payload.platform, metric)
-            else read_metric(payload.body, metric)
+            else provider.read_metric(payload.body, metric)
         )
         for metric in METRIC_KEYS
     }

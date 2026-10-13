@@ -302,6 +302,31 @@ class FakePlatformAdapter:
                 )
             )
 
+    def queue_vendor_error(
+        self, status: int, code: str, *, retry_after: float | None = None
+    ) -> None:
+        """Queues a failure exactly as the selected vendor's error would arrive
+        (SA-33): classified by the real taxonomy, so the fake's two 429s behave
+        like production's — `ratelimit.exceeded` waits and retries, a used-up
+        monthly post allowance does not."""
+        from social_providers.socialapi.errors import (
+            SocialAPIError,
+            classify,
+            to_platform_error,
+        )
+
+        self.fail_next.append(
+            to_platform_error(
+                SocialAPIError(
+                    f"The provider refused this ({code}).",
+                    kind=classify(status, code),
+                    status=status,
+                    vendor_code=code,
+                    retry_after=retry_after,
+                )
+            )
+        )
+
 
 # Module-level so a test can inspect calls after a service or task has run
 # (mirrors `ai.providers.fake._fake_text_provider`).

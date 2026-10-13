@@ -84,7 +84,10 @@ class GenerateView(APIView):
             aspect=data["aspect"],
             render_style=data["render_style"],
             scene=data["scene"],
-            creative=data.get("creative") or {},
+            creative={
+                **(data.get("creative") or {}),
+                **({"assets": data["brand_assets"]} if data["brand_assets"] else {}),
+            },
             is_batch=data["is_batch"],
             source_media=data.get("source_media"),
             paid_slots=data.get("paid_slots"),
