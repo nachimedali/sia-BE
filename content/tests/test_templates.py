@@ -231,3 +231,93 @@ def test_with_the_flag_off_templates_are_404(
         organization=workspace.organization, key=CONTENT_MODEL_V2, enabled=False
     )
     assert auth_client.get(TEMPLATES_URL).status_code == 404
+
+
+# -----------------------------------------------------------------------------
+# Versions and uses (`/app/templates`)
+# -----------------------------------------------------------------------------
+def test_a_new_template_is_version_one(auth_client: Any, workspace: Any) -> None:
+    response = auth_client.post(
+        TEMPLATES_URL, {"name": "Friday tasting", "payload": {"master_body": "Hi"}}, format="json"
+    )
+    assert response.status_code == 201
+    assert response.json()["version"] == 1
+    assert response.json()["use_count"] == 0
+    assert response.json()["uses"] == []
+
+
+def test_editing_a_template_makes_the_next_version(auth_client: Any, template: Any) -> None:
+    response = auth_client.patch(
+        f"{TEMPLATES_URL}{template.pk}/",
+        {"payload": {**template.payload, "master_body": "New text"}},
+        format="json",
+    )
+    assert response.status_code == 200
+    assert response.json()["version"] == 2
+
+    renamed = auth_client.patch(
+        f"{TEMPLATES_URL}{template.pk}/", {"name": "Spotlight"}, format="json"
+    )
+    assert renamed.json()["version"] == 3
+
+
+def test_saving_without_a_change_is_not_a_new_version(auth_client: Any, template: Any) -> None:
+    response = auth_client.patch(
+        f"{TEMPLATES_URL}{template.pk}/",
+        {"name": template.name, "payload": template.payload},
+        format="json",
+    )
+    assert response.json()["version"] == 1
+
+
+def test_the_version_is_not_client_writable(auth_client: Any, template: Any) -> None:
+    response = auth_client.patch(f"{TEMPLATES_URL}{template.pk}/", {"version": 9}, format="json")
+    assert response.status_code == 200
+    assert response.json()["version"] == 1
+
+
+def test_a_post_records_the_template_version_it_was_copied_from(
+    auth_client: Any, user: Any, template: Any
+) -> None:
+    first = apply_template(template, author=user)
+    auth_client.patch(
+        f"{TEMPLATES_URL}{template.pk}/",
+        {"payload": {**template.payload, "master_body": "Second wording"}},
+        format="json",
+    )
+    template.refresh_from_db()
+    second = apply_template(template, author=user)
+
+    first.refresh_from_db()
+    assert (first.template_id, first.template_version) == (template.pk, 1)
+    assert (second.template_id, second.template_version) == (template.pk, 2)
+    # The copy, not the link: the old post kept its own text.
+    assert first.master_body == "This week we are looking at #ceramics"
+
+
+def test_uses_list_the_newest_posts_with_their_version_and_status(
+    auth_client: Any, user: Any, template: Any
+) -> None:
+    posts = [apply_template(template, author=user) for _ in range(7)]
+
+    body = auth_client.get(f"{TEMPLATES_URL}{template.pk}/").json()
+    assert body["use_count"] == 7
+    # Capped: a template used every week for a year is not a 52-row card.
+    assert [use["post"] for use in body["uses"]] == [p.pk for p in reversed(posts)][:5]
+    assert body["uses"][0] == {"post": posts[-1].pk, "version": 1, "status": "DRAFT"}
+
+
+def test_listing_templates_with_uses_does_not_n_plus_one(
+    auth_client: Any,
+    workspace: Any,
+    user: Any,
+    django_assert_max_num_queries: Any,
+) -> None:
+    for i in range(4):
+        made = PostTemplate.objects.create(workspace=workspace, name=f"T{i}", payload={})
+        apply_template(made, author=user)
+        apply_template(made, author=user)
+
+    with django_assert_max_num_queries(7):
+        response = auth_client.get(TEMPLATES_URL)
+    assert all(row["use_count"] == 2 for row in response.json()["results"])

@@ -107,6 +107,9 @@ def apply_template(template: PostTemplate, *, author: User) -> Post:
         master_body=str(payload.get("master_body") or ""),
         media_assets=assets,
     )
+    post.template = template
+    post.template_version = template.version
+    post.save(update_fields=["template", "template_version"])
 
     for platform, values in (payload.get("platform_options") or {}).items():
         if platform not in Platform.values:

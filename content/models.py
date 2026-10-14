@@ -233,6 +233,17 @@ class Post(models.Model):
     origin_post = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="repurposed_posts"
     )
+    #: The template this post was copied from, and which version of it. A
+    #: record of where the text came from, never a link back: editing the
+    #: template does not touch this post (P1-09).
+    template = models.ForeignKey(
+        "content.PostTemplate",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="made_posts",
+    )
+    template_version = models.PositiveIntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -700,6 +711,9 @@ class PostTemplate(models.Model):
     )
     #: `{master_body, media_asset_ids: [...], platform_options: {platform: {...}}}`.
     payload = models.JSONField(default=dict, blank=True)
+    #: Goes up by one on every save that changes the name or the payload, so a
+    #: post can say which wording it was copied from.
+    version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

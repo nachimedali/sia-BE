@@ -289,3 +289,29 @@ def test_with_the_flag_off_nothing_is_materialised(rule: Any, workspace: Any) ->
         organization=workspace.organization, key=CONTENT_MODEL_V2, enabled=False
     )
     assert recurrence.materialise_due() == 0
+
+
+# -----------------------------------------------------------------------------
+# Run history (`/app/templates#rules`)
+# -----------------------------------------------------------------------------
+def test_a_rule_lists_its_newest_runs_as_drafts(auth_client: Any, rule: Any) -> None:
+    rule.horizon_days = 35  # five Mondays, so the cap of three is visible
+    rule.save(update_fields=["horizon_days"])
+    with time_machine.travel(dt.datetime(2026, 9, 1, 8, 0, tzinfo=PARIS), tick=False):
+        recurrence.materialise_due()
+
+    made = list(RecurrenceOccurrence.objects.filter(rule=rule).order_by("-slot_at"))
+    assert len(made) > 3
+
+    body = auth_client.get(f"{RULES_URL}{rule.pk}/").json()
+    assert len(body["recent_runs"]) == 3
+    newest = made[0]
+    assert body["recent_runs"][0] == {
+        "slot_at": newest.slot_at.isoformat().replace("+00:00", "Z"),
+        "post": newest.post_id,
+        "status": "DRAFT",
+    }
+
+
+def test_a_rule_that_never_ran_has_no_runs(auth_client: Any, rule: Any) -> None:
+    assert auth_client.get(f"{RULES_URL}{rule.pk}/").json()["recent_runs"] == []
