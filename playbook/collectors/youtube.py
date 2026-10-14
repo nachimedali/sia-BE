@@ -7,6 +7,9 @@ category's question. The day's default quota is 10,000 units, so `plan` spends
 the budget declared on the source row and stops — a long `search_terms` list is
 truncated rather than silently burning the day.
 
+Everything it returns is filtered to ads (`common/youtube_ads.py`) unless the
+source row sets `ads_only: false`.
+
 `search.list` returns no statistics, so its ids are hydrated with one
 `videos.list` call (1 more unit) — the same two-step trendgen uses.
 """
@@ -18,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 
+from common.youtube_ads import ad_filter, search_query
 from playbook.collectors.base import CollectedPost, CollectRequest
 from playbook.collectors.http import (
     as_int,
@@ -46,6 +50,9 @@ DEFAULT_PAGE_SIZE = 25
 SHORT_MAX_SECONDS = 60
 #: Optional search parameters a source row may set, passed through verbatim.
 SEARCH_PASSTHROUGH = ("relevanceLanguage", "videoDuration", "publishedAfter")
+#: Ads run under four minutes; this is YouTube's own "short" bucket, and a row
+#: may override it through `videoDuration`.
+AD_DURATION = "short"
 
 
 class YouTubeCollector:
@@ -57,6 +64,7 @@ class YouTubeCollector:
         config = source.config or {}
         budget = int(config.get("run_quota_units", DEFAULT_RUN_UNITS))
         size = int(config.get("page_size", DEFAULT_PAGE_SIZE))
+        ads_only = config.get("ads_only", True)
         requests: list[CollectRequest] = []
         spent = 0
 
@@ -79,9 +87,10 @@ class YouTubeCollector:
                 break
             params = {
                 "endpoint": "search",
-                "q": str(term),
+                "q": search_query(str(term), config) if ads_only else str(term),
                 "regionCode": source.region,
                 "maxResults": size,
+                **({"videoDuration": AD_DURATION} if ads_only else {}),
                 **{key: config[key] for key in SEARCH_PASSTHROUGH if config.get(key)},
             }
             requests.append(CollectRequest(self.provider, params=params, config=config))
@@ -131,7 +140,22 @@ class YouTubeCollector:
                     "/videos",
                     params={**params, "part": "snippet,statistics,contentDetails", "key": key},
                 )
-        return [self.item(entry) for entry in payload.get("items", []) if entry.get("id")]
+        # Ads only, unless the row opts out. Applied to the chart too: it is
+        # what surfaces trailers, and a query cannot filter a chart.
+        config = request.config or {}
+        keep = ad_filter(config) if config.get("ads_only", True) else None
+        return [
+            self.item(entry)
+            for entry in payload.get("items", [])
+            if entry.get("id")
+            and (
+                keep is None
+                or keep(
+                    str(entry.get("snippet", {}).get("title") or ""),
+                    str(entry.get("snippet", {}).get("description") or ""),
+                )
+            )
+        ]
 
     @staticmethod
     def item(entry: dict[str, Any]) -> CollectedPost:

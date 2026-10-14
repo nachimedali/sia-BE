@@ -23,6 +23,7 @@ from xml.etree.ElementTree import ParseError
 
 from django.conf import settings
 
+from common.youtube_ads import ad_filter, search_query
 from trends.models import TrendModality, TrendSourceKind
 from trends.providers.base import RawTrendItem, TrendVendor, TrendVendorError
 from trends.providers.http import client, get_json, newer_than, parse_timestamp
@@ -73,12 +74,20 @@ class YouTubeVendor:
     def fetch(
         self, *, query: dict[str, Any], since: dt.datetime | None, limit: int
     ) -> list[RawTrendItem]:
+        query = dict(query)
+        config: dict[str, Any] = {
+            name: query.pop(name) for name in ("ad_terms", "exclude_terms") if name in query
+        }
+        is_ad = ad_filter(config)
+        search = search_query(str(query.pop("q", "")), config)
         params: dict[str, Any] = {
             "part": "snippet",
             "type": "video",
             "order": "viewCount",
+            "videoDuration": "short",
             "maxResults": min(limit, 50),
             "key": settings.YOUTUBE_API_KEY,
+            "q": search,
             **query,
         }
         if since:
@@ -102,6 +111,10 @@ class YouTubeVendor:
             )
             for entry in payload.get("items", [])
             if entry.get("id", {}).get("videoId")
+            and is_ad(
+                str(entry.get("snippet", {}).get("title", "")),
+                str(entry.get("snippet", {}).get("description", "")),
+            )
         ]
 
 

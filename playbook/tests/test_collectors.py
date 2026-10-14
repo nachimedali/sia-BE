@@ -101,8 +101,64 @@ def test_plan_spends_the_rows_budget_and_stops(food: Any) -> None:
 
     # 1 for the chart + 101 for the first search; the second would need 203.
     assert [r.params["endpoint"] for r in planned] == ["videos", "search"]
-    assert planned[1].params["q"] == "recipe"
+    assert planned[1].params["q"].startswith("recipe (")
+    assert "-trailer" in planned[1].params["q"]
+    assert planned[1].params["videoDuration"] == "short"
     assert all(r.params["regionCode"] == "TN" for r in planned)
+
+
+def _video(video_id: str, title: str, description: str = "") -> dict[str, Any]:
+    return {
+        **VIDEO,
+        "id": video_id,
+        "snippet": {**VIDEO["snippet"], "title": title, "description": description},
+    }
+
+
+@respx.mock
+@pytest.mark.parametrize("endpoint", ["search", "videos"])
+def test_only_ads_reach_the_wall(settings: Any, endpoint: str) -> None:
+    """Both the chart and a search: a trailer out-views every ad, so the filter
+    cannot live in the query alone."""
+    settings.YOUTUBE_API_KEY = "key"
+    respx.get("https://www.googleapis.com/youtube/v3/search").mock(
+        return_value=httpx.Response(200, json={"items": [{"id": {"videoId": "a"}}]})
+    )
+    respx.get("https://www.googleapis.com/youtube/v3/videos").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [
+                    _video("a", "Olive oil TV commercial"),
+                    _video("b", "Official Trailer", "an ad for the film"),
+                    _video("c", "Harvest vlog", "Sponsored by Acme"),
+                    _video("d", "Harvest vlog", "just a day out"),
+                    _video("e", "TORTILLA KEBAB IN FRIGGITRICE AD ARIA"),  # Italian "ad"
+                    _video("f", "Girish AD vs Rahul #shorts"),
+                ]
+            },
+        )
+    )
+
+    posts = list(YouTubeCollector().fetch(CollectRequest("youtube", params={"endpoint": endpoint})))
+
+    assert [p.external_id for p in posts] == ["a", "c"]
+
+
+@respx.mock
+def test_a_row_can_opt_out_of_the_ad_filter(settings: Any) -> None:
+    settings.YOUTUBE_API_KEY = "key"
+    respx.get("https://www.googleapis.com/youtube/v3/videos").mock(
+        return_value=httpx.Response(200, json={"items": [_video("d", "Harvest vlog")]})
+    )
+
+    posts = list(
+        YouTubeCollector().fetch(
+            CollectRequest("youtube", params={"endpoint": "videos"}, config={"ads_only": False})
+        )
+    )
+
+    assert [p.external_id for p in posts] == ["d"]
 
 
 @respx.mock
@@ -112,7 +168,7 @@ def test_a_search_is_hydrated_with_statistics(settings: Any) -> None:
         return_value=httpx.Response(200, json={"items": [{"id": {"videoId": "abc123"}}]})
     )
     videos = respx.get("https://www.googleapis.com/youtube/v3/videos").mock(
-        return_value=httpx.Response(200, json={"items": [VIDEO]})
+        return_value=httpx.Response(200, json={"items": [_video("abc123", "Olive oil commercial")]})
     )
 
     posts = list(

@@ -82,7 +82,7 @@ def test_youtube_asks_only_for_what_is_new(monkeypatch: Any) -> None:
                         "id": {"videoId": "abc"},
                         "snippet": {
                             "publishedAt": "2026-08-04T09:00:00Z",
-                            "title": "Throwing a mug",
+                            "title": "Mug TV commercial",
                             "channelTitle": "Pottery",
                         },
                     }
@@ -95,10 +95,74 @@ def test_youtube_asks_only_for_what_is_new(monkeypatch: Any) -> None:
 
     params = captured[-1].url.params
     assert params["publishedAfter"] == "2026-08-01T00:00:00Z"
-    assert params["q"] == "ceramics"
     assert params["key"] == "yt-key"
     assert items[0].external_id == "abc"
     assert items[0].media_url.endswith("abc")
+
+
+def _youtube(
+    monkeypatch: Any, videos: list[tuple[str, str]], query: dict[str, Any]
+) -> tuple[Any, Any]:
+    captured: list[httpx.Request] = []
+    entries = [
+        {
+            "id": {"videoId": f"v{i}"},
+            "snippet": {
+                "publishedAt": "2026-08-04T09:00:00Z",
+                "title": title,
+                "description": description,
+            },
+        }
+        for i, (title, description) in enumerate(videos)
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"items": entries})
+
+    patch_httpx_transport(monkeypatch, handler)
+    return YouTubeVendor().fetch(query=query, since=None, limit=10), captured[-1].url.params
+
+
+@override_settings(YOUTUBE_API_KEY="yt-key")
+def test_youtube_searches_for_ads_not_for_everything_in_the_category(monkeypatch: Any) -> None:
+    _items, params = _youtube(monkeypatch, [], {"q": "ceramics"})
+
+    assert params["q"].startswith("ceramics (")
+    assert '"tv spot"' in params["q"] and "commercial" in params["q"]
+    assert "-trailer" in params["q"]
+    assert params["videoDuration"] == "short"
+    assert "ad_terms" not in params and "exclude_terms" not in params
+
+
+@override_settings(YOUTUBE_API_KEY="yt-key")
+def test_youtube_keeps_only_videos_that_say_they_are_ads(monkeypatch: Any) -> None:
+    items, _params = _youtube(
+        monkeypatch,
+        [
+            ("Mug TV commercial 2026", ""),  # signal in title
+            ("Glaze for spring", "Sponsored by Acme. #ad"),  # signal in description
+            ("Official Trailer: The Potter commercial", ""),  # excluded format wins
+            ("Glaze explained", "an ad-free guide"),  # no real signal, excluded
+            ("Throwing a mug", "Relaxing studio vlog"),  # nothing says ad
+            ("Road trip vlog", ""),  # "ad" inside "Road" is not a signal
+        ],
+        {"q": "ceramics"},
+    )
+
+    assert [item.body for item in items] == ["Mug TV commercial 2026", "Glaze for spring"]
+
+
+@override_settings(YOUTUBE_API_KEY="yt-key")
+def test_youtube_terms_are_editable_on_the_source_row(monkeypatch: Any) -> None:
+    items, params = _youtube(
+        monkeypatch,
+        [("Spot one", ""), ("Spot two teaser", ""), ("Other", "")],
+        {"q": "ceramics", "ad_terms": ["spot"], "exclude_terms": ["teaser"]},
+    )
+
+    assert params["q"] == "ceramics (spot) -teaser"
+    assert [item.body for item in items] == ["Spot one"]
 
 
 @override_settings(TREND_VENDOR_BASE_URL="https://vendor.test", TREND_VENDOR_API_KEY="rk")
