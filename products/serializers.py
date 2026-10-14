@@ -205,6 +205,10 @@ class AutopilotConfigSerializer(serializers.ModelSerializer[AutopilotConfig]):
         child=serializers.IntegerField(min_value=0), required=False
     )
     format_mix = serializers.DictField(child=serializers.IntegerField(min_value=0), required=False)
+    # 0 = Monday. Stored sorted and once each, so two equal schedules compare equal.
+    weekdays = serializers.ListField(
+        child=serializers.IntegerField(min_value=0, max_value=6), required=False
+    )
 
     class Meta:
         model = AutopilotConfig
@@ -213,6 +217,8 @@ class AutopilotConfigSerializer(serializers.ModelSerializer[AutopilotConfig]):
             "enabled",
             "cadence_days",
             "lookahead_days",
+            "weekdays",
+            "time_window",
             "strategy",
             "strategy_weights",
             "latitude",
@@ -224,6 +230,9 @@ class AutopilotConfigSerializer(serializers.ModelSerializer[AutopilotConfig]):
             "updated_at",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = ("product", "created_at", "updated_at")
+
+    def validate_weekdays(self, value: list[int]) -> list[int]:
+        return sorted(set(value))
 
 
 class AutopilotDraftSerializer(serializers.ModelSerializer[AutopilotDraft]):

@@ -145,7 +145,7 @@ from taste.views import (
     RuleSetViewSet,
     TasteProfileViewSet,
 )
-from tools.views import ToolListView, ToolReadinessView, ToolRunView
+from tools.views import ToolListView, ToolPriceView, ToolReadinessView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
 from workspaces.views import (
     ApiKeyView,
@@ -225,6 +225,7 @@ urlpatterns = [
     # **Before the slug route, not after it**: `<str:slug>` would happily match
     # "readiness" and answer with a 404 from the runner instead.
     path("tools/readiness/", ToolReadinessView.as_view(), name="tools-readiness"),
+    path("tools/<str:slug>/price/", ToolPriceView.as_view(), name="tool-price"),
     path("tools/<str:slug>/", ToolRunView.as_view(), name="tool-run"),
     # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
     path("api-keys/", ApiKeyView.as_view(), name="api-keys"),

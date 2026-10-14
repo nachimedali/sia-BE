@@ -96,13 +96,20 @@ def _autopilot_row(workspace: Workspace) -> Requirement:
         .first()
     )
     if config is not None:
+        rhythm = (
+            f"{len(config.weekdays)} slot{'' if len(config.weekdays) == 1 else 's'} a week, "
+            f"{config.get_time_window_display().lower()}"
+            if config.weekdays
+            else f"every {config.cadence_days} days"
+        )
         return done(
             "autopilot",
-            f"{config.product.name}: every {config.cadence_days} days, "
-            f"{config.lookahead_days} days ahead",
+            f"{config.product.name}: {rhythm}, {config.lookahead_days} days ahead",
             target_id=config.product_id,
             facts={
                 "cadence_days": config.cadence_days,
+                "weekdays": config.weekdays,
+                "time_window": config.time_window,
                 "lookahead_days": config.lookahead_days,
                 "enabled_products": AutopilotConfig.objects.filter(
                     product__workspace=workspace, enabled=True
