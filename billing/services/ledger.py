@@ -165,18 +165,21 @@ def grant_credits(
     Credits do not roll over unless the plan says they do (§4.1), so the grant
     writes a zeroing row first. Two rows rather than one net figure, because
     "you were given 150 and 20 expired" is the answer a billing question needs.
+
+    Only the allowance expires: what was bought is not taken back, the same
+    rule `grant_video_units` applies to video.
     """
     _lock_workspace(workspace)
     rows: list[CreditLedger] = []
 
     if not rollover:
-        balance = _balance(CreditLedger, workspace)
-        if balance > 0:
+        expiring = included_credit_balance(workspace)
+        if expiring > 0:
             rows.append(
                 _append(
                     CreditLedger,
                     workspace,
-                    delta=-balance,
+                    delta=-expiring,
                     reason=reason,
                     note="expired: credits do not roll over",
                 )
@@ -334,6 +337,28 @@ def purchase_video_units(
         unit_cost_cents=unit_cost_cents,
         note=note,
     )
+
+
+def included_credit_balance(workspace: Workspace) -> int:
+    """The credits that did not come from a pack — what a monthly reset may
+    expire. Everything except `PURCHASE`, floored at zero: spending draws on
+    the allowance first, exactly as `included_video_balance` counts video."""
+    total = (
+        CreditLedger.objects.filter(workspace=workspace)
+        .exclude(reason=CreditReason.PURCHASE)
+        .aggregate(total=Sum("delta"))["total"]
+    )
+    return max(0, int(total or 0))
+
+
+def pack_credit_balance(workspace: Workspace) -> int:
+    """What is left of the credits bought as packs."""
+    return credit_balance(workspace) - included_credit_balance(workspace)
+
+
+def pack_video_balance(workspace: Workspace) -> int:
+    """What is left of the video units bought as packs."""
+    return video_balance(workspace) - included_video_balance(workspace)
 
 
 def included_video_balance(workspace: Workspace) -> int:

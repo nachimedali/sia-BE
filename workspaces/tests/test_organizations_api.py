@@ -505,3 +505,115 @@ def test_a_revoked_key_allows_nothing(organization: Any) -> None:
     key.revoked_at = timezone.now()
 
     assert key.allows("view") is False
+
+
+# -----------------------------------------------------------------------------
+# /app/workspaces — what each card shows, and the price before Create
+# -----------------------------------------------------------------------------
+def test_the_list_carries_each_workspaces_status_and_size(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """A workspace waiting for billing is shown as waiting, never as a normal
+    one: the card is the only place the customer learns it is read-only."""
+    _include(organization, plans["pro"], workspaces=1)
+    _subscribe(workspace, organization, plan=plans["pro"])
+    _fake_gateway.fail_quantity_update = True
+    auth_client.post(reverse("workspaces"), {"name": "Parked Brand"}, format="json")
+
+    teammate = get_user_model().objects.create_user(email="mate@example.com", password="x")
+    Membership.objects.create(user=teammate, workspace=workspace, role=Role.EDITOR)
+
+    rows = {row["name"]: row for row in auth_client.get(reverse("workspaces")).json()}
+
+    assert rows["Parked Brand"]["status"] == WorkspaceStatus.PENDING_BILLING
+    assert rows["Parked Brand"]["member_count"] == 1
+    assert rows["Parked Brand"]["product_count"] == 0
+    assert rows[workspace.name]["status"] == WorkspaceStatus.ACTIVE
+    # Everyone in the workspace, not only the caller.
+    assert rows[workspace.name]["member_count"] == 2
+
+
+def test_status_cannot_be_written_through_the_api(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """Billing decides the status. A client that sends one is ignored."""
+    _include(organization, plans["pro"], workspaces=1)
+    _subscribe(workspace, organization, plan=plans["pro"])
+    _fake_gateway.fail_quantity_update = True
+
+    auth_client.post(reverse("workspaces"), {"name": "Sneaky", "status": "ACTIVE"}, format="json")
+
+    assert Workspace.objects.get(name="Sneaky").status == WorkspaceStatus.PENDING_BILLING
+
+
+def test_quote_inside_the_allowance_is_included(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    _include(organization, plans["pro"], workspaces=3)
+    _subscribe(workspace, organization, plan=plans["pro"])
+
+    quote = auth_client.get(reverse("workspace-quote")).json()
+
+    assert quote["included"] == 3
+    assert quote["used"] == 1
+    assert quote["next_billed"] is False
+    assert quote["prorated"] is None
+
+
+def test_quote_beyond_the_allowance_is_billed_and_prorated(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """The price is stated before Create, prorated over what is left of the
+    subscription's own period — computed here, not in the browser."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    _include(organization, plans["pro"], workspaces=1)
+    plan = plans["pro"]
+    plan.price_per_workspace_cents = 3000
+    plan.save(update_fields=["price_per_workspace_cents"])
+    plan.prices.all().delete()  # price from the plan's own column
+    subscription = _subscribe(workspace, organization, plan=plan)
+    now = timezone.now()
+    subscription.period_start = now - dt.timedelta(days=20)
+    subscription.period_end = now + dt.timedelta(days=10)
+    subscription.save(update_fields=["period_start", "period_end"])
+
+    quote = auth_client.get(reverse("workspace-quote")).json()
+
+    assert quote["next_billed"] is True
+    assert quote["per_workspace"]["amount_minor"] == 3000
+    assert quote["cycle_days"] == 30
+    assert quote["days_left"] == 10
+    assert quote["prorated"]["amount_minor"] == 1000
+
+
+def test_quote_beyond_the_allowance_without_a_subscription_is_not_billed(
+    auth_client: Any, workspace: Any, organization: Any, plans: Any
+) -> None:
+    """A trial organization has nothing to bill against yet, so the page must
+    not promise a charge that will not happen."""
+    _include(organization, plans["pro"], workspaces=1)
+
+    quote = auth_client.get(reverse("workspace-quote")).json()
+
+    assert quote["beyond_allowance"] is True
+    assert quote["next_billed"] is False
+
+
+def test_quote_requires_a_session(workspace: Any) -> None:
+    from rest_framework.test import APIClient
+
+    assert APIClient().get(reverse("workspace-quote")).status_code == 401
+
+
+def test_a_new_workspace_keeps_what_the_brand_does(auth_client: Any, workspace: Any) -> None:
+    response = auth_client.post(
+        reverse("workspaces"),
+        {"name": "Dar Nabeul", "description": "Ceramics from Nabeul"},
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["description"] == "Ceramics from Nabeul"

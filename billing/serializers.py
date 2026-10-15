@@ -119,6 +119,10 @@ class EntitlementsSerializer(serializers.Serializer[Any]):
     quotas = serializers.JSONField(read_only=True)
     credits_remaining = serializers.IntegerField(read_only=True)
     video_units_remaining = serializers.IntegerField(read_only=True)
+    #: The bought share of each balance. Packs survive the monthly reset, the
+    #: allowance does not, so the two are shown apart.
+    pack_credits_remaining = serializers.IntegerField(read_only=True)
+    pack_video_units_remaining = serializers.IntegerField(read_only=True)
     trial_ends_at = serializers.DateTimeField(read_only=True, allow_null=True)
     is_trialing = serializers.BooleanField(read_only=True)
     trial_days_remaining = serializers.IntegerField(read_only=True)

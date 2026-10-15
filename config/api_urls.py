@@ -158,6 +158,7 @@ from workspaces.views import (
     WorkspaceInviteView,
     WorkspaceListCreateView,
     WorkspaceProfileView,
+    WorkspaceQuoteView,
     WorkspaceSettingsView,
 )
 
@@ -212,6 +213,7 @@ urlpatterns = [
     # --- organization & workspace (BUILD-PLAN Phase 0, P0-46..P0-50) ---
     path("organizations/", OrganizationListView.as_view(), name="organizations"),
     path("workspaces/", WorkspaceListCreateView.as_view(), name="workspaces"),
+    path("workspaces/quote/", WorkspaceQuoteView.as_view(), name="workspace-quote"),
     path("workspaces/<int:pk>/invite/", WorkspaceInviteView.as_view(), name="workspace-invite"),
     # Unauthenticated by necessity: the invitee may have no account yet, and
     # the token is the credential. Hash-only, single-use, 14 days.

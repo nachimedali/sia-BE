@@ -84,6 +84,21 @@ def test_entitlements_report_the_live_credit_balance(auth_client, workspace) -> 
     assert auth_client.get(ENTITLEMENTS_URL).json()["credits_remaining"] == 26
 
 
+def test_entitlements_split_out_what_was_bought_as_packs(auth_client, workspace) -> None:
+    """The billing page shows packs beside the monthly allowance; both numbers
+    come from the ledger, never from arithmetic in the browser."""
+    ledger.grant_credits(workspace, 30)
+    ledger.purchase_credits(workspace, 500, note="credits_500")
+    ledger.debit_credits(workspace, 4, quota=30)
+    ledger.purchase_video_units(workspace, 10, note="videos_10")
+
+    body = auth_client.get(ENTITLEMENTS_URL).json()
+
+    assert body["credits_remaining"] == 526
+    assert body["pack_credits_remaining"] == 500
+    assert body["pack_video_units_remaining"] == 10
+
+
 # -----------------------------------------------------------------------------
 # Ledgers
 # -----------------------------------------------------------------------------

@@ -294,3 +294,12 @@ class AutopilotReadinessSerializer(serializers.Serializer[object]):
     ready = serializers.BooleanField()
     requirements = RequirementSerializer(many=True)
     next_slots = serializers.ListField(child=serializers.DateTimeField())
+
+
+class ProductSummarySerializer(serializers.Serializer[Any]):
+    """`GET /products/summary/` — one count per status tile."""
+
+    all = serializers.IntegerField(read_only=True)
+    ready = serializers.IntegerField(read_only=True)
+    needs_reference = serializers.IntegerField(read_only=True)
+    autopilot_on = serializers.IntegerField(read_only=True)

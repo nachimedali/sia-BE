@@ -201,3 +201,33 @@ def test_list_is_newest_first(auth_client: Any, workspace: Any) -> None:
 
     assert response.status_code == 200, response.content
     assert [p["name"] for p in response.json()["results"]] == ["Newest", "Middle", "Oldest"]
+
+
+# --- summary: the counts on the status tiles ------------------------------------
+SUMMARY_URL = "/api/v1/products/summary/"
+
+
+def test_summary_counts_the_whole_catalogue_per_status(
+    auth_client: Any, workspace: Any, catalogue: Any
+) -> None:
+    """The tiles count every product, not the loaded page and not the current
+    filter — each tile *is* a filter, so its number must not move with it."""
+    AutopilotConfig.objects.create(product=catalogue["serum"], enabled=True)
+
+    body = auth_client.get(SUMMARY_URL, {"status": "ready"}).json()
+
+    assert body == {"all": 3, "ready": 2, "needs_reference": 1, "autopilot_on": 1}
+
+
+def test_summary_never_counts_a_sibling_workspace(
+    auth_client: Any, user: Any, workspace: Any, catalogue: Any, plans: Any
+) -> None:
+    workspace.organization.plan = plans["advanced"]
+    workspace.organization.save(update_fields=["plan"])
+    _make(provision_extra_workspace(user=user, name="Sister Brand"), "Sister product")
+    stranger = get_user_model().objects.create_user(email="stranger@example.com", password="x")
+    _make(provision_workspace(stranger, name="Elsewhere"), "Rival")
+
+    body = auth_client.get(SUMMARY_URL, HTTP_X_WORKSPACE_ID=str(workspace.id)).json()
+
+    assert body["all"] == 3

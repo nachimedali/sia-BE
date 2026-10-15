@@ -446,6 +446,10 @@ class Entitlements:
             "credits_remaining": self.credits_remaining(),
             "trial_posts_remaining": trial_posts_remaining(self.workspace),
             "video_units_remaining": self.video_units_remaining(),
+            # The part of each balance that was bought. Packs outlive the
+            # monthly reset, so the page shows them apart from the allowance.
+            "pack_credits_remaining": ledger.pack_credit_balance(self.workspace),
+            "pack_video_units_remaining": ledger.pack_video_balance(self.workspace),
             "trial_ends_at": ends_at,
             "is_trialing": is_trialing,
             # Counted here rather than in the browser: the server knows the

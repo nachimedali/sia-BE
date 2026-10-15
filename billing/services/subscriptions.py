@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 from typing import Any
 
 from django.db import transaction
@@ -413,6 +414,68 @@ def billable_overage(organization: Any) -> int:
     return max(0, live_workspace_count(organization) - included_workspaces(organization))
 
 
+def live_subscription(organization: Any) -> Subscription | None:
+    """The organization's live subscription, newest first — what the
+    extra-workspace quantity is billed against."""
+    return (
+        Subscription.objects.filter(
+            workspace__organization=organization, status__in=SubscriptionStatus.live()
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def workspace_quote(organization: Any, *, now: dt.datetime | None = None) -> dict[str, Any]:
+    """What creating one more workspace costs, before anyone clicks (P0-17).
+
+    The proration is the overage line's: the monthly per-workspace price times
+    the share of the subscription's current period still to run. Stripe does
+    the real proration on the invoice; this is the same arithmetic, stated in
+    advance so the button can say it. No period known, no proration claimed.
+    """
+    plan = organization.plan
+    unlimited = plan is not None and plan.max_workspaces == UNLIMITED_CAP
+    included = UNLIMITED_CAP if unlimited else included_workspaces(organization)
+    used = live_workspace_count(organization)
+    beyond = not unlimited and used >= included
+    subscription = live_subscription(organization)
+    billed = beyond and subscription is not None and bool(subscription.stripe_subscription_item_id)
+
+    price = pricing.plan_per_workspace_price(plan, organization=organization)
+    per_workspace = {
+        "amount_minor": price.amount_minor,
+        "currency": price.currency.code,
+        "display": price.display,
+    }
+
+    prorated = days_left = cycle_days = None
+    if billed and subscription and subscription.period_start and subscription.period_end:
+        now = now or timezone.now()
+        cycle = subscription.period_end - subscription.period_start
+        remaining = max(dt.timedelta(0), subscription.period_end - now)
+        cycle_days = max(1, round(cycle.total_seconds() / 86_400))
+        days_left = min(cycle_days, math.ceil(remaining.total_seconds() / 86_400))
+        amount = round(price.amount_minor * remaining.total_seconds() / cycle.total_seconds())
+        prorated = {
+            "amount_minor": amount,
+            "currency": price.currency.code,
+            "display": price.currency.format(amount),
+        }
+
+    return {
+        "included": included,
+        "used": used,
+        "extra": 0 if unlimited else max(0, used - included),
+        "beyond_allowance": beyond,
+        "next_billed": billed,
+        "per_workspace": per_workspace,
+        "prorated": prorated,
+        "days_left": days_left,
+        "cycle_days": cycle_days,
+    }
+
+
 def sync_workspace_quantity(organization: Any) -> bool:
     """Tells the gateway how many *extra* workspaces to bill for. Returns success.
 
@@ -424,13 +487,7 @@ def sync_workspace_quantity(organization: Any) -> bool:
     """
     from workspaces.models import Workspace, WorkspaceStatus
 
-    subscription = (
-        Subscription.objects.filter(
-            workspace__organization=organization, status__in=SubscriptionStatus.live()
-        )
-        .order_by("-created_at")
-        .first()
-    )
+    subscription = live_subscription(organization)
     if subscription is None or not subscription.stripe_subscription_item_id:
         # Nothing to bill against yet — a trial organization. The workspaces
         # are real and usable; there is simply no quantity to move.
