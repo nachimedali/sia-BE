@@ -181,6 +181,30 @@ def normalize(raw: Any) -> dict[str, Any]:
     return out
 
 
+#: The controls a video is told about: how it looks, not what the post says.
+VIDEO_LOOK_KEYS = frozenset(
+    {
+        CreativeKind.SCENE,
+        CreativeKind.LIGHT,
+        CreativeKind.CAMERA,
+        CreativeKind.CAST,
+        CreativeKind.VIBE,
+        CreativeKind.PALETTE,
+        "moods",
+        "avoid",
+    }
+)
+
+
+def video_look(raw: Any) -> dict[str, Any]:
+    """`normalize`, narrowed to the look. Anything else is a 400 rather than
+    silently dropped (rule 18), so a client cannot believe a control applied."""
+    out = normalize(raw)
+    if extra := sorted(set(out) - VIDEO_LOOK_KEYS):
+        raise ValidationError({"creative": dict.fromkeys(extra, "Not a video control.")})
+    return out
+
+
 def _chosen(creative: dict[str, Any], kind: str) -> CreativeOption | None:
     key = creative.get(kind)
     if not key:

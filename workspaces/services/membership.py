@@ -1,6 +1,6 @@
 """Team membership (design.md §6.1; implementation.md Phase 13).
 
-**Adding a member requires an existing OCCS account.** design.md §6.1
+**Adding a member requires an existing ComposeVision account.** design.md §6.1
 declares `Membership.invited_by` and an `EmailToken` purpose for `INVITE`, and
 `/accept-invite` exists as a landing page — the natural reading is a mint-a-
 token, email-a-link flow that also on-boards someone with no account yet. This
@@ -46,7 +46,7 @@ class RoleNotAssignableError(OCCSError):
 
 class NoAccountForEmailError(OCCSError):
     default_code = "no_account_for_email"
-    default_detail = "No OCCS account exists with this email yet."
+    default_detail = "No ComposeVision account exists with this email yet."
 
 
 class MemberAlreadyExistsError(StateConflict):

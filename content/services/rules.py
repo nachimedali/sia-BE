@@ -8,7 +8,7 @@ edit to this file rather than a new `if` somewhere in the pipeline.
 These are practical public limits, not billing quotas — I8 (design.md §3)
 governs commercial numbers that must be admin-editable `Plan`/`GenerationCost`
 rows; a platform's caption limit is an external fact about that platform, not a
-price OCCS charges, so a constants module is the right home for it.
+price ComposeVision charges, so a constants module is the right home for it.
 """
 
 from __future__ import annotations

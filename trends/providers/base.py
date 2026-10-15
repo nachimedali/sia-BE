@@ -33,7 +33,7 @@ class TrendVendorError(ProviderError):
 
 @dataclass(frozen=True)
 class RawTrendItem:
-    """One item as a vendor described it, before OCCS has an opinion about it."""
+    """One item as a vendor described it, before ComposeVision has an opinion about it."""
 
     external_id: str
     posted_at: dt.datetime

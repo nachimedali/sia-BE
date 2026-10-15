@@ -115,12 +115,10 @@ def test_the_seed_covers_every_control_and_is_idempotent(seeded: None) -> None:
     assert CreativeOption.objects.count() == before
 
 
-def test_the_catalog_offers_studio_home_outdoor_and_tunisian_scenes(seeded: None) -> None:
+def test_the_catalog_offers_studio_home_and_outdoor_scenes(seeded: None) -> None:
     scenes = CreativeOption.objects.filter(kind=CreativeKind.SCENE)
-    assert {row.metadata["group"] for row in scenes} == {"studio", "home", "outdoor", "tunisia"}
-    assert {"seamless-studio", "beach-shoreline", "sidi-bou-said", "medina-souk"} <= {
-        row.key for row in scenes
-    }
+    assert {row.metadata["group"] for row in scenes} == {"studio", "home", "outdoor"}
+    assert {"seamless-studio", "beach-shoreline", "desert-dunes"} <= {row.key for row in scenes}
     cameras = CreativeOption.objects.filter(kind=CreativeKind.CAMERA).values_list("key", flat=True)
     assert list(cameras)[:3] == ["eye-level", "three-quarter", "flat-lay"]
     cast = CreativeOption.objects.filter(kind=CreativeKind.CAST).values_list("key", flat=True)
@@ -163,14 +161,14 @@ def test_the_catalog_endpoint_groups_orders_and_hides_inactive(
     auth_client: Any, workspace: Any, seeded: None, generation_costs: None
 ) -> None:
     CreativeOption.objects.filter(kind="scene", key="desert-dunes").update(is_active=False)
-    CreativeOption.objects.filter(kind="scene", key="medina-souk").update(sort_order=-5)
+    CreativeOption.objects.filter(kind="scene", key="garden-terrace").update(sort_order=-5)
 
     body = auth_client.get(URL).json()
 
     assert set(body["options"]) == ALL_KINDS
     scenes = [row["key"] for row in body["options"]["scene"]]
     assert "desert-dunes" not in scenes
-    assert scenes[0] == "medina-souk"
+    assert scenes[0] == "garden-terrace"
     first = body["options"]["camera"][0]
     assert set(first) >= {"key", "label", "description", "icon_paths", "colors", "metadata"}
     assert first["label"] == "Eye-level hero"
@@ -242,7 +240,7 @@ def test_an_empty_selection_is_allowed_and_stays_empty(seeded: None) -> None:
         {"platforms": ["myspace"]},
         {"avoid": "x" * 201},
         {"warp_speed": 9},
-        {"scene": ["sidi-bou-said"]},
+        {"scene": ["atlantis", "studio"]},
     ],
 )
 def test_a_choice_the_catalog_does_not_hold_is_refused(seeded: None, bad: dict[str, Any]) -> None:

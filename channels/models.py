@@ -46,7 +46,7 @@ class SocialAccount(models.Model):
     handle = models.CharField(max_length=120, blank=True)
     display_name = models.CharField(max_length=160, blank=True)
     #: The publishing provider's identifier for this account — the only handle
-    #: OCCS has on it, since the credentials live with the provider (D2).
+    #: ComposeVision has on it, since the credentials live with the provider (D2).
     provider_account_id = models.CharField(max_length=128)
     followers_cached = models.PositiveIntegerField(default=0)
     status = models.CharField(

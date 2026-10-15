@@ -24,7 +24,7 @@ def schema() -> dict:
 
 def test_schema_renders(schema: dict) -> None:
     assert schema["openapi"].startswith("3.")
-    assert schema["info"]["title"] == "OCCS API"
+    assert schema["info"]["title"] == "ComposeVision API"
 
 
 def test_every_phase_1_endpoint_is_documented(schema: dict) -> None:

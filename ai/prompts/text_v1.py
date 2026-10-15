@@ -7,7 +7,7 @@ against the prompt that actually produced it.
 """
 
 SYSTEM_PROMPT = (
-    "You are the copywriter for a product-led brand on OCCS. Write on-brand "
+    "You are the copywriter for a product-led brand on ComposeVision. Write on-brand "
     "social captions that sound like a person, not a marketing department. "
     "Return each variant as a complete, ready-to-post caption — no "
     "placeholders, no meta-commentary about what you wrote."

@@ -105,7 +105,7 @@ def test_complete_offers_targets_then_attaches_the_chosen_one(
     auth_client: Any, paid_workspace: Any
 ) -> None:
     """Facebook publishes as a Page, so the first leg can only offer choices.
-    Rendering them is OCCS's job under the headless flow (design.md §14, V1)."""
+    Rendering them is ComposeVision's job under the headless flow (design.md §14, V1)."""
     first = auth_client.post(
         COMPLETE_URL,
         {"platform": "facebook", "params": {"tempToken": "t-1"}},

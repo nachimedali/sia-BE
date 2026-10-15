@@ -11,6 +11,7 @@ from rest_framework import serializers
 
 from ai.models import VideoMode, VideoRender, VideoReview
 from ai.serializers import CreativeOptionSerializer
+from ai.services import creative as creative_service
 from ai.services.video import OVERLAY_MAX, TEXT_MAX
 from content.models import MediaAsset
 from content.serializers import MediaAssetSerializer
@@ -57,6 +58,12 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
     overlays = serializers.BooleanField(required=False, default=False)
     end_card = serializers.BooleanField(required=False, default=False)
     cta = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    #: The Studio's look controls (scene, light, camera, cast, vibe, palette,
+    #: moods, keep-out), by key, for a clip or a reel alike.
+    creative = serializers.JSONField(required=False, default=dict)
+
+    def validate_creative(self, value: Any) -> dict[str, Any]:
+        return creative_service.video_look(value)
 
 
 class VideoRenderCreateSerializer(VideoRequestSerializer):

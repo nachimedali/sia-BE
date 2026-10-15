@@ -101,12 +101,12 @@ V1_KEYS: dict[str, tuple[str, ...]] = {
 #: its name in v2 (or has no equivalent and is dropped from products).
 RENAMED: dict[str, dict[str, str]] = {
     "scene": {
-        "sidibou": "sidi-bou-said",
-        "souk": "medina-souk",
+        "sidibou": "garden-terrace",
+        "souk": "garden-terrace",
         "studio": "seamless-studio",
         "djerba": "beach-shoreline",
         "dunes": "desert-dunes",
-        "rooftop": "tunis-rooftop",
+        "rooftop": "garden-terrace",
     },
     "light": {
         "dawn": "soft-daylight",

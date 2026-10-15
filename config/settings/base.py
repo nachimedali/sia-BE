@@ -229,7 +229,7 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "OCCS API",
+    "TITLE": "ComposeVision API",
     "DESCRIPTION": (
         "Marketing content system for product-led businesses. "
         "Every non-2xx response uses the single error envelope described in design.md §7.1; "
@@ -594,7 +594,7 @@ USE_FAKE_REFERENCE_IMAGES = env.bool("USE_FAKE_REFERENCE_IMAGES", default=False)
 
 # -----------------------------------------------------------------------------
 # Publishing provider — design.md §9, D2/D3, verified by V1 (§14). All platform
-# credentials live with the provider; OCCS stores none (§6.2). Same USE_FAKE_*
+# credentials live with the provider; ComposeVision stores none (§6.2). Same USE_FAKE_*
 # shape as billing/storage/AI: no key configured means no provider to fake
 # around.
 # -----------------------------------------------------------------------------

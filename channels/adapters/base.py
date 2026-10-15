@@ -1,7 +1,7 @@
 """The `PlatformAdapter` port (design.md §9, D2/D3).
 
 Every external dependency sits behind a port with a real adapter and a
-deterministic fake (A8). This one is the whole of D2: OCCS never talks to
+deterministic fake (A8). This one is the whole of D2: ComposeVision never talks to
 Meta, TikTok or YouTube, so swapping Zernio for bundle.social is a change of
 one settings value and one module in this package.
 
@@ -16,7 +16,7 @@ asserts the split rather than trusting a comment to preserve it.
 than one, because V1 (design.md §14) resolved to a *headless* flow:
 `connect_url` starts OAuth, `resolve_callback` handles the return, and
 `select_target` finishes the platforms that make the user pick a page or
-organisation. Rendering that picker is OCCS's job, not the provider's — that is
+organisation. Rendering that picker is ComposeVision's job, not the provider's — that is
 what "the user never sees the provider" costs, and it is a method on the port
 rather than provider-specific glue in a view.
 

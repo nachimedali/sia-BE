@@ -786,3 +786,75 @@ def test_flag_off_animates_with_the_motion_row_unchanged(
     assert scripted.calls == []
     assert render.rephrased_prompt == "" and render.rephrased_by == ""
     assert _fake_video_provider.calls == [push]
+
+
+# --- the scene controls carry into a video --------------------------------------------
+@pytest.fixture
+def looks(catalogue: None) -> None:
+    for kind in ("scene", "light", "camera", "cast", "vibe", "palette", "mood"):
+        for spec in CATALOG[kind]:
+            CreativeOption.objects.get_or_create(
+                kind=kind, key=spec["key"], defaults={k: v for k, v in spec.items() if k != "key"}
+            )
+
+
+def test_a_clip_tells_the_model_the_chosen_scene_light_and_cast(
+    auth_client: Any, pro: Any, still: Any, looks: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai.services import rephrase
+
+    monkeypatch.setattr(rephrase, "get_text_provider", lambda: None)
+    creative = {
+        "scene": "garden-terrace",
+        "light": "golden-hour",
+        "cast": "hands",
+        "moods": ["warm"],
+    }
+    body = auth_client.post(
+        RENDERS, confirmed(auth_client, clip(still, creative=creative)), format="json"
+    ).json()
+
+    render = VideoRender.objects.get(pk=body["id"])
+    sent = _fake_video_provider.calls[-1]
+    assert render.spec["creative"] == creative
+    for kind, key in (("scene", "garden-terrace"), ("light", "golden-hour"), ("cast", "hands")):
+        assert CreativeOption.objects.get(kind=kind, key=key).prompt_fragment in sent
+    assert CreativeOption.objects.get(kind="motion", key="push").prompt_fragment in sent
+
+
+def test_a_reel_keeps_the_chosen_look_on_its_spec(
+    auth_client: Any, pro: Any, stills: list[Any], looks: None
+) -> None:
+    creative = {"scene": "seamless-studio", "palette": "mediterranean"}
+    body = auth_client.post(
+        RENDERS, confirmed(auth_client, reel(stills, creative=creative)), format="json"
+    ).json()
+
+    assert VideoRender.objects.get(pk=body["id"]).spec["creative"] == creative
+
+
+def test_a_look_is_part_of_the_price_identity(auth_client: Any, still: Any, looks: None) -> None:
+    plain = auth_client.post(ESTIMATE, clip(still), format="json").json()
+    styled = auth_client.post(
+        ESTIMATE, clip(still, creative={"scene": "garden-terrace"}), format="json"
+    ).json()
+
+    assert plain["credits"] == styled["credits"]  # a look is free; the lengths price a video
+
+
+@pytest.mark.parametrize(
+    "creative",
+    [
+        {"scene": "atlantis"},
+        {"moods": ["nope"]},
+        {"format": "feed-square"},
+        {"toggles": {"hashtags": True}},
+    ],
+)
+def test_an_unknown_or_non_visual_choice_is_a_400(
+    auth_client: Any, still: Any, looks: None, creative: dict[str, Any]
+) -> None:
+    response = auth_client.post(ESTIMATE, clip(still, creative=creative), format="json")
+
+    assert response.status_code == 400
+    assert "creative" in str(response.json()["error"])

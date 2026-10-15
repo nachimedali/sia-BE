@@ -58,6 +58,7 @@ from ai.models import (
 )
 from ai.providers.base import CaptionCue, EndCard, ReelShot, VideoResult
 from ai.providers.video import get_video_composer, get_video_provider
+from ai.services import creative as creative_service
 from ai.services import quality, rephrase
 from ai.services.creative import VIDEO_KINDS
 from billing.services import ledger
@@ -171,6 +172,7 @@ class Spec:
     end_card: bool = False
     cta: CreativeOption | None = None
     extras: dict[str, CreativeOption] = field(default_factory=dict)
+    creative: dict[str, Any] = field(default_factory=dict)
 
     @property
     def seconds(self) -> int:
@@ -202,6 +204,8 @@ class Spec:
                 "end_card": self.end_card,
                 "cta": self.cta.key if self.cta else "",
             }
+        if self.creative:
+            out["creative"] = self.creative
         return out
 
 
@@ -251,7 +255,13 @@ def parse(workspace: Workspace, data: dict[str, Any]) -> Spec:
         _pick(CreativeKind.LANGUAGE, language, "language")
 
     text = str(data.get("text") or "").strip()
-    common: dict[str, Any] = {"mode": mode, "length": length, "text": text, "product": product}
+    common: dict[str, Any] = {
+        "mode": mode,
+        "length": length,
+        "text": text,
+        "product": product,
+        "creative": data.get("creative") or {},
+    }
 
     if mode == VideoMode.CLIP:
         aspect = _pick(CreativeKind.VIDEO_ASPECT, data.get("aspect"), "aspect")
@@ -539,6 +549,12 @@ def _render_clip(render: VideoRender) -> VideoResult:
     ).first()
     image = _bytes(render.source)
     prompt = motion.prompt_fragment if motion else ""
+    if prompt:
+        # The scene, light, camera, cast and mood the person chose, in the same
+        # words the still was made with (`creative.look_lines`).
+        prompt = " ".join(
+            [prompt, *creative_service.image_lines(render.spec.get("creative") or {})]
+        )
     if prompt and flag_enabled(render.workspace.organization, STUDIO_REPHRASE):
         # The motion row, rewritten into one brief (`ai.services.rephrase`);
         # the row's own words when the rewrite fails its checks.
