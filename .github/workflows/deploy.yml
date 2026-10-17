@@ -61,7 +61,8 @@ jobs:
           .venv/bin/pip install --quiet --upgrade pip
           .venv/bin/pip install --quiet -r requirements.txt
           export DJANGO_SETTINGS_MODULE=config.settings.prod
-          set -a; . ./.env; set +a
+          # No `source .env`: Django reads the file itself (django-environ), and a shell
+          # would choke on special characters in SECRET_KEY.
           .venv/bin/python manage.py migrate --noinput
           .venv/bin/python manage.py collectstatic --noinput
           sudo /usr/bin/supervisorctl reread
