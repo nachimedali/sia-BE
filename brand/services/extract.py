@@ -34,6 +34,9 @@ MAX_PRODUCTS = 12
 MAX_PALETTE = 5
 
 _SKIP_TEXT = {"script", "style", "noscript", "svg", "template", "head"}
+#: `<img>` attributes naming a product photo's full-size version: Odoo and most
+#: zoom plugins, WooCommerce, PrestaShop.
+_GALLERY_ATTRS = ("data-zoom-image", "data-zoom", "data-large_image", "data-image-large-src")
 _BLOCK = {
     "p",
     "h1",
@@ -65,6 +68,7 @@ class Page:
     jsonld: list[Any] = field(default_factory=list)
     css: list[str] = field(default_factory=list)  # <style> blocks and style="" attributes
     images: list[tuple[str, str]] = field(default_factory=list)  # (absolute src, hint text)
+    gallery: list[str] = field(default_factory=list)  # absolute full-size photo URLs, in order
     blocks: list[str] = field(default_factory=list)  # visible text, one entry per block
     headings: list[str] = field(default_factory=list)
     list_items: list[str] = field(default_factory=list)  # visible `<li>` text, in order
@@ -134,6 +138,12 @@ class _Parser(HTMLParser):
                 [a.get("alt", ""), a.get("class", ""), a.get("id", ""), a.get("src", "")]
             )
             self.page.images.append((self._abs(a["src"]), hint.lower()))
+        if tag == "img":
+            # A shop marks its product photos by giving each a full-size twin
+            # for the zoom viewer; nothing else on a page carries one.
+            large = next((a[k] for k in _GALLERY_ATTRS if a.get(k)), "")
+            if large:
+                self.page.gallery.append(self._abs(large))
         if a.get("style"):
             self.page.css.append(a["style"])
         if tag in _SKIP_TEXT and tag != "head":

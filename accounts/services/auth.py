@@ -13,6 +13,10 @@ from django.db import transaction
 
 from accounts.models import EmailToken, EmailTokenPurpose, User
 from accounts.tasks import send_templated_email
+from billing.models import UNLIMITED
+from billing.services.flags import TRANSACTIONAL_EMAIL, flag_enabled
+from common.mail import first_name_of
+from workspaces.models import Membership
 from workspaces.services.provisioning import provision_workspace
 
 logger = logging.getLogger(__name__)
@@ -23,7 +27,7 @@ def _app_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def _queue(to: str, subject: str, template: str, context: dict[str, str]) -> None:
+def _queue(to: str, subject: str, template: str, context: dict[str, Any]) -> None:
     """Always queued, never inline (implementation.md §4.3, Phase 2.3).
 
     An SMTP timeout must not become a failed registration.
@@ -31,14 +35,108 @@ def _queue(to: str, subject: str, template: str, context: dict[str, str]) -> Non
     send_templated_email.delay(to=to, subject=subject, template=template, context=context)
 
 
+def _first_membership(user: User) -> Membership | None:
+    """The workspace the account signed up into — the one account-level mail
+    (the rollout flag, the welcome's plan figures) is read against, so both
+    always describe the same workspace."""
+    return (
+        Membership.objects.filter(user=user)
+        .select_related("workspace__organization")
+        .order_by("created_at")
+        .first()
+    )
+
+
+def transactional_email_enabled(user: User) -> bool:
+    membership = _first_membership(user)
+    return flag_enabled(
+        membership.workspace.organization if membership else None, TRANSACTIONAL_EMAIL
+    )
+
+
 def send_verification_email(user: User) -> None:
+    """The link always; the six-digit code beside it while the flag is on.
+
+    Flag off sends the link-only email exactly as before the code existed.
+    """
     _, raw = EmailToken.issue(user, EmailTokenPurpose.VERIFY)
+    verify_url = _app_url(f"/verify-email?token={raw}")
+    if not transactional_email_enabled(user):
+        _queue(
+            to=user.email,
+            subject="Confirm your email",
+            template="verify_email_link",
+            context={"verify_url": verify_url, "email": user.email},
+        )
+        return
+
+    token, code = EmailToken.issue_code(user)
     _queue(
         to=user.email,
-        subject="Confirm your email",
+        subject=f"Your ComposeVision code: {code}",
         template="verify_email",
-        context={"verify_url": _app_url(f"/verify-email?token={raw}"), "email": user.email},
+        context={
+            "code": code,
+            "verify_url": verify_url,
+            "email": user.email,
+            "first_name": first_name_of(user),
+            "expires_minutes": int(
+                EmailToken.DEFAULT_TTL[EmailTokenPurpose.VERIFY_CODE].total_seconds() // 60
+            ),
+            "requested_at": token.created_at.strftime("%d %b %Y, %H:%M UTC"),
+        },
     )
+
+
+def send_welcome_email(user: User) -> None:
+    """Once, when the address is first proven — never at registration, so
+    nobody is welcomed to an account at an address they do not own."""
+    membership = _first_membership(user)
+    if membership is None:
+        return
+    from billing.models import Subscription, SubscriptionStatus
+    from billing.services.entitlements import entitlements_for
+
+    workspace = membership.workspace
+    organization = workspace.organization
+    entitlements = entitlements_for(workspace)
+    credits = entitlements.credits_remaining()
+    trial_ends = getattr(organization, "trial_ends_at", None)
+    # The same rule billing uses: the organization's newest live subscription.
+    subscription = (
+        Subscription.objects.filter(
+            workspace__organization=organization, status__in=SubscriptionStatus.live()
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    renews_on = subscription.period_end if subscription else None
+    first_name = first_name_of(user)
+    _queue(
+        to=user.email,
+        subject=f"Welcome to ComposeVision, {first_name}",
+        template="welcome",
+        context={
+            "first_name": first_name,
+            "email": user.email,
+            "workspace_name": workspace.name,
+            "plan_name": entitlements.plan.display_name,
+            "credits": "Unlimited" if credits == UNLIMITED else credits,
+            "trial_ends": trial_ends.strftime("%d %b %Y") if trial_ends else "",
+            "renews_on": renews_on.strftime("%d %b %Y") if renews_on else "",
+        },
+    )
+
+
+def _mark_verified(user: User) -> None:
+    """The one place an address becomes verified by proof of the inbox, so the
+    welcome cannot be sent twice or by a path that forgot it."""
+    if user.is_email_verified:
+        return
+    user.is_email_verified = True
+    user.save(update_fields=["is_email_verified", "updated_at"])
+    if transactional_email_enabled(user):
+        transaction.on_commit(lambda: send_welcome_email(user))
 
 
 @transaction.atomic
@@ -61,10 +159,18 @@ def verify_email(raw_token: str) -> bool:
     if token is None:
         return False
 
-    user = token.user
-    if not user.is_email_verified:
-        user.is_email_verified = True
-        user.save(update_fields=["is_email_verified", "updated_at"])
+    _mark_verified(token.user)
+    return True
+
+
+def verify_code(user: User, code: str) -> bool:
+    """Onboarding step 1's path. An account already verified answers `True`
+    without spending anything: the question is answered either way."""
+    if user.is_email_verified:
+        return True
+    if not EmailToken.consume_code(user, code):
+        return False
+    _mark_verified(user)
     return True
 
 

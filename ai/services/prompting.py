@@ -229,21 +229,44 @@ def assemble_image_prompt(
     render_style: str = "",
     scene: str = "",
     direction: list[str] | None = None,
+    rephrased: str = "",
+    keep_out: list[str] | None = None,
+    rules: list[str] | None = None,
 ) -> GroundedPrompt:
+    """`rephrased` is the Studio brief as the text model rewrote it
+    (`ai.services.rephrase`); given, it stands in for the idea, the style, the
+    scene and the look, while `keep_out`, the restrictions and the prefix are
+    still added here verbatim — the rewrite never touches a rule.
+
+    `rules` are a Playbook composition's reference rules
+    (`ai.services.references.rule_lines`): which attached picture is which, and
+    what may never be taken from a reference — followed by the brand-asset
+    lines (`ai.services.brand_assets.rule_lines`) saying which attached picture
+    is the logo or the packaging. Verbatim for the same reason."""
     signal = _category_signal(workspace)
     grounding: dict[str, object] = {
         "restrictions": bool(product and product.restrictions),
         "category_signal": signal is not None,
     }
 
-    user_lines = [IMAGE_PROMPT_PREFIX, idea.strip()]
-    if render_style:
-        user_lines.append(f"Render style: {render_style}.")
-    if scene:
-        user_lines.append(f"Scene: {scene}.")
-    if direction:
-        user_lines.append("\n".join(direction))
+    user_lines = [IMAGE_PROMPT_PREFIX]
+    if rephrased:
+        user_lines.append(rephrased.strip())
+        user_lines += keep_out or []
         grounding["creative_direction"] = True
+        grounding["rephrased"] = True
+    else:
+        user_lines.append(idea.strip())
+        if render_style:
+            user_lines.append(f"Render style: {render_style}.")
+        if scene:
+            user_lines.append(f"Scene: {scene}.")
+        if direction:
+            user_lines.append("\n".join(direction))
+            grounding["creative_direction"] = True
+    if rules:
+        user_lines.append("\n".join(rules))
+        grounding["references"] = True
     user_lines += _restriction_lines(product)
 
     if signal:

@@ -22,6 +22,7 @@ from ai.models import (
     GenerationVariant,
     VoiceProfile,
 )
+from ai.services import brand_assets
 from ai.services import creative as creative_service
 from ai.services.costing import resolve_pricing, unlock_price
 from common.workspaces import scope_related_field_to_workspace
@@ -61,6 +62,8 @@ class GenerationVariantSerializer(serializers.ModelSerializer[GenerationVariant]
             "headline",
             "hashtags",
             "identity_score",
+            "reference_similarity",
+            "reference_closest",
             "media_asset",
             "platform",
             "rank",
@@ -104,6 +107,8 @@ class GenerationSerializer(serializers.ModelSerializer[Generation]):
             "render_style",
             "scene",
             "creative",
+            "rephrased_prompt",
+            "rephrased_by",
             "motion",
             "duration",
             "is_batch",
@@ -161,6 +166,14 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
         queryset=MediaAsset.objects.none(), required=False, allow_null=True
     )
 
+    #: The person's own pictures for an IMAGE run — a logo, the packaging —
+    #: each `{media, role: logo|packaging|other, note?}`, at most three. Not
+    #: product references: they are included in the render, never scored as
+    #: its identity (`ai.services.brand_assets`).
+    brand_assets = serializers.ListField(
+        child=serializers.DictField(), required=False, default=list
+    )
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
@@ -170,6 +183,12 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
 
     def validate_creative(self, value: Any) -> dict[str, Any]:
         return creative_service.normalize(value)
+
+    def validate_brand_assets(self, value: Any) -> list[dict[str, Any]]:
+        try:
+            return brand_assets.clean(value)
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError(exc.detail["assets"]) from exc  # type: ignore[call-overload]
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         """The first of I5's four gates (design.md §8.1) — credits are

@@ -683,6 +683,10 @@ class VideoLedger(LedgerEntry):
 
 class ReplyReason(models.TextChoices):
     OUTBOUND = "OUTBOUND", "Reply sent to an audience comment"
+    #: The compensating row for a reply the provider refused: the debit came
+    #: first (so an exhausted org never reaches the vendor), and an append-only
+    #: ledger corrects by adding, never by deleting (Part 7 rule 4).
+    REFUNDED = "REFUNDED", "Reply refused by the provider; allowance returned"
     MONTHLY_RESET = "MONTHLY_RESET", "Monthly allowance reset"
     MANUAL_ADJUST = "MANUAL_ADJUST", "Manual adjustment"
 

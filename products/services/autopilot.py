@@ -38,6 +38,7 @@ import datetime as dt
 import logging
 import math
 from collections.abc import Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from django.db import transaction
 from django.db.models import Max
@@ -60,6 +61,7 @@ from products.models import (
     AutopilotJob,
     AutopilotJobStatus,
     AutopilotStrategy,
+    AutopilotTimeWindow,
 )
 from products.services.guards import ensure_generation_ready
 from scheduling.services import default_delivery_mode, schedule_post
@@ -74,6 +76,13 @@ logger = logging.getLogger(__name__)
 #: the grounding (voice, product, restrictions, category signal, the
 #: workspace's own top performer) is `ai.services.prompting`'s job, and
 #: duplicating any of it here would give it two places to drift.
+#: The local wall-clock time each weekday window posts at (X-38).
+WINDOW_TIMES: Mapping[str, dt.time] = {
+    AutopilotTimeWindow.MORNING: dt.time(9, 0),
+    AutopilotTimeWindow.MIDDAY: dt.time(13, 0),
+    AutopilotTimeWindow.EVENING: dt.time(19, 30),
+}
+
 STRATEGY_BRIEFS: Mapping[str, str] = {
     AutopilotStrategy.TREND_LED: (
         "Take the approach currently working in this category and apply it to this product."
@@ -150,7 +159,14 @@ def planned_slots(
     hour late must not shift the whole calendar an hour later, and two runs
     over the same window must agree on the slot times exactly or the uniqueness
     constraint stops being able to recognise a duplicate.
+
+    With `weekdays` set, the grid is those weekdays at the window's local time
+    in the workspace's timezone — resolved per date, so a DST change moves the
+    slot in UTC and keeps it on the wall clock.
     """
+    if config.weekdays:
+        return _weekday_slots(config, now=now, horizon_days=horizon_days)
+
     step = dt.timedelta(days=config.cadence_days)
     anchor = config.created_at
     end = now + dt.timedelta(days=horizon_days)
@@ -162,6 +178,25 @@ def planned_slots(
         moments.append(moment)
         moment += step
     return moments
+
+
+def _weekday_slots(
+    config: AutopilotConfig, *, now: dt.datetime, horizon_days: int
+) -> list[dt.datetime]:
+    zone = ZoneInfo(config.product.workspace.timezone or "UTC")
+    at = WINDOW_TIMES[config.time_window]
+    end = now + dt.timedelta(days=horizon_days)
+    days = set(config.weekdays)
+
+    moments: list[dt.datetime] = []
+    day = now.astimezone(zone).date()
+    while True:
+        moment = dt.datetime.combine(day, at, tzinfo=zone).astimezone(dt.UTC)
+        if moment > end:
+            return moments
+        if day.weekday() in days and moment > now:
+            moments.append(moment)
+        day += dt.timedelta(days=1)
 
 
 def _horizon_days(config: AutopilotConfig, entitlements: Entitlements) -> int:
@@ -191,7 +226,9 @@ def due_configs(*, now: dt.datetime) -> list[AutopilotConfig]:
     due: list[AutopilotConfig] = []
     for config in candidates:
         last_run: dt.datetime | None = config.last_run
-        if last_run is None or last_run <= now - dt.timedelta(days=config.cadence_days):
+        # A weekday grid fills its lookahead day by day, whatever the cadence.
+        every = 1 if config.weekdays else config.cadence_days
+        if last_run is None or last_run <= now - dt.timedelta(days=every):
             due.append(config)
     return due
 

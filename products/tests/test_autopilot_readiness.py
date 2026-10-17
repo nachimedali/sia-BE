@@ -107,6 +107,22 @@ def test_the_cadence_is_reported_on_the_row_that_owns_it(
     assert row["facts"]["lookahead_days"] == 20
 
 
+def test_a_weekday_schedule_is_reported_as_days_not_a_cadence(
+    auth_client: Any, autopilot_config: Any
+) -> None:
+    """X-38: "every 3 days" would be false for a Tuesday-and-Saturday schedule."""
+    autopilot_config.weekdays = [1, 5]
+    autopilot_config.time_window = "MORNING"
+    autopilot_config.save(update_fields=["weekdays", "time_window"])
+
+    row = rows(auth_client.get(reverse("autopilot-readiness")))["autopilot"]
+
+    assert row["facts"]["weekdays"] == [1, 5]
+    assert row["facts"]["time_window"] == "MORNING"
+    assert "every" not in row["summary"]
+    assert "2 slots a week" in row["summary"]
+
+
 def test_a_product_with_no_reference_image_is_not_a_ready_product(
     auth_client: Any, autopilot_workspace: Any
 ) -> None:

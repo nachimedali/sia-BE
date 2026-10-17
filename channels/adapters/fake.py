@@ -11,10 +11,19 @@ meaningless:
 * **Retryable vs terminal failure.** `fail_next` queues outcomes a test wants
   the next publish calls to hit, so back-off and the third-failure alert are
   exercised against the same code path a real 429 would take.
+* **SocialAPI's shape, when asked** (SA-33). With `async_publish = True` it
+  behaves like SocialAPI: a draft is journalled before it is published, the
+  publish answers *pending*, the outcome is read later through
+  `fetch_publish_status`, and a retry resumes from the journal instead of
+  posting again. `crash_after_draft` stops an attempt between the draft and
+  the publish — the window exactly-once has to survive.
+  `social_providers/tests/test_publish_parity.py` runs the same scenarios
+  against this and the real adapter, so the two cannot drift.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from channels.adapters.base import (
@@ -24,6 +33,8 @@ from channels.adapters.base import (
     ConnectResolution,
     ConnectTarget,
     PlatformError,
+    PublishJournal,
+    PublishMedia,
     PublishResult,
     echo_targets,
     find_offered_target,
@@ -31,6 +42,9 @@ from channels.adapters.base import (
 
 
 class FakePlatformAdapter:
+    #: Verified when echoed, never required — the fake's returns may omit it.
+    requires_state = False
+
     def __init__(self) -> None:
         self.profiles: list[str] = []
         self.connect_urls: list[dict[str, str]] = []
@@ -40,6 +54,16 @@ class FakePlatformAdapter:
         #: either an exception to raise or None for "behave normally".
         self.fail_next: list[Exception | None] = []
         self._by_key: dict[str, PublishResult] = {}
+        #: SocialAPI mode (SA-33): drafts, a journal, pending publishes.
+        self.async_publish = False
+        self.crash_after_draft = False
+        #: provider post id → "draft" | "publishing" | "published" | "failed".
+        self.posts: dict[str, str] = {}
+        self.drafts_created = 0
+        self.publish_requests: list[str] = []
+        self.discarded: list[str] = []
+        self.released_media: list[str] = []
+        self.media_in_use: set[str] = set()
 
     # --- connect ---------------------------------------------------------
     def ensure_profile(self, *, name: str, existing_profile_id: str = "") -> str:
@@ -48,15 +72,30 @@ class FakePlatformAdapter:
         self.profiles.append(name)
         return f"fake-profile-{len(self.profiles)}"
 
-    def connect_url(self, *, platform: str, profile_id: str, redirect_url: str) -> str:
+    def connect_url(
+        self, *, platform: str, profile_id: str, redirect_url: str, state: str = ""
+    ) -> str:
         self.connect_urls.append(
-            {"platform": platform, "profile_id": profile_id, "redirect_url": redirect_url}
+            {
+                "platform": platform,
+                "profile_id": profile_id,
+                "redirect_url": redirect_url,
+                "state": state,
+            }
         )
-        return f"https://fake-platform.test/oauth/{platform}?redirect={redirect_url}"
+        return f"https://fake-platform.test/oauth/{platform}?redirect={redirect_url}&state={state}"
 
     def resolve_callback(
         self, *, platform: str, profile_id: str, params: dict[str, Any]
     ) -> ConnectResolution:
+        # A refused sign-in comes back the way real providers send it (OAuth's
+        # `error`, SocialAPI's `status=error`), so the refusal path is testable.
+        if params.get("error") or params.get("status") == "error":
+            raise PlatformError(
+                "The sign-in was cancelled, so nothing was connected.",
+                code="connect_denied",
+                detail={"error": str(params.get("error") or "")},
+            )
         if platform in SELECTION_PLATFORMS:
             targets = [
                 ConnectTarget(id=f"{platform}-target-{i}", name=f"{platform.title()} {i}")
@@ -88,7 +127,12 @@ class FakePlatformAdapter:
         provider_account_id: str,
         payload: dict[str, Any],
         idempotency_key: str,
+        journal: PublishJournal | None = None,
+        media: Sequence[PublishMedia] = (),
     ) -> PublishResult:
+        if self.async_publish and journal is not None:
+            return self._publish_async(platform, provider_account_id, payload, journal)
+
         replay = self._by_key.get(idempotency_key)
         if replay is not None:
             return PublishResult(
@@ -116,6 +160,82 @@ class FakePlatformAdapter:
         )
         self._by_key[idempotency_key] = result
         return result
+
+    def _publish_async(
+        self,
+        platform: str,
+        provider_account_id: str,
+        payload: dict[str, Any],
+        journal: PublishJournal,
+    ) -> PublishResult:
+        from content.models import ProviderState
+
+        pid = journal.provider_post_id
+        state = self.posts.get(pid) if pid else None
+        if state is not None and state != "draft":
+            journal.record(provider_state=ProviderState.PUBLISH_REQUESTED)
+            return self.fetch_publish_status(provider_post_id=pid)
+
+        if self.fail_next:
+            outcome = self.fail_next.pop(0)
+            if outcome is not None:
+                raise outcome
+
+        if state is None:
+            self.drafts_created += 1
+            pid = f"fake-draft-{self.drafts_created}"
+            self.posts[pid] = "draft"
+            self.published.append(
+                {
+                    "platform": platform,
+                    "provider_account_id": provider_account_id,
+                    "payload": payload,
+                    "provider_post_id": pid,
+                }
+            )
+            journal.record(provider_post_id=pid, provider_state=ProviderState.DRAFT_CREATED)
+            if self.crash_after_draft:
+                self.crash_after_draft = False
+                raise PlatformError("Worker lost between draft and publish.", retryable=True)
+
+        self.posts[pid] = "publishing"
+        self.publish_requests.append(pid)
+        journal.record(provider_state=ProviderState.PUBLISH_REQUESTED)
+        return PublishResult(provider_post_id=pid, pending=True)
+
+    def settle(self, provider_post_id: str, *, published: bool = True) -> None:
+        """What the platform eventually reports — the test's stand-in for time."""
+        self.posts[provider_post_id] = "published" if published else "failed"
+
+    def fetch_publish_status(self, *, provider_post_id: str) -> PublishResult:
+        state = self.posts.get(provider_post_id)
+        if state == "published":
+            return PublishResult(
+                provider_post_id=provider_post_id,
+                platform_post_id=f"native-{provider_post_id}",
+                permalink=f"https://fake-platform.test/p/{provider_post_id}",
+            )
+        if state in ("failed", None):
+            return PublishResult(
+                provider_post_id=provider_post_id,
+                failed=True,
+                error={"code": "platform.rejected", "message": "The platform refused the post."},
+            )
+        return PublishResult(provider_post_id=provider_post_id, pending=True)
+
+    def discard_draft(self, *, provider_post_id: str) -> None:
+        state = self.posts.get(provider_post_id)
+        if state in ("publishing", "published"):
+            raise PlatformError(
+                f"Refusing to delete a provider post that is '{state}'.", code="discard_refused"
+            )
+        self.posts.pop(provider_post_id, None)
+        self.discarded.append(provider_post_id)
+
+    def release_media(self, *, media_ids: Sequence[str]) -> list[str]:
+        kept = [media_id for media_id in media_ids if media_id in self.media_in_use]
+        self.released_media.extend(m for m in media_ids if m not in self.media_in_use)
+        return kept
 
     def list_remote_options(
         self, *, platform: str, provider_account_id: str, source: str
@@ -146,6 +266,14 @@ class FakePlatformAdapter:
         self.disconnected.clear()
         self.fail_next.clear()
         self._by_key.clear()
+        self.async_publish = False
+        self.crash_after_draft = False
+        self.posts.clear()
+        self.drafts_created = 0
+        self.publish_requests.clear()
+        self.discarded.clear()
+        self.released_media.clear()
+        self.media_in_use.clear()
 
     def queue_failure(
         self,
@@ -173,6 +301,31 @@ class FakePlatformAdapter:
                     needs_reauth=needs_reauth,
                 )
             )
+
+    def queue_vendor_error(
+        self, status: int, code: str, *, retry_after: float | None = None
+    ) -> None:
+        """Queues a failure exactly as the selected vendor's error would arrive
+        (SA-33): classified by the real taxonomy, so the fake's two 429s behave
+        like production's — `ratelimit.exceeded` waits and retries, a used-up
+        monthly post allowance does not."""
+        from social_providers.socialapi.errors import (
+            SocialAPIError,
+            classify,
+            to_platform_error,
+        )
+
+        self.fail_next.append(
+            to_platform_error(
+                SocialAPIError(
+                    f"The provider refused this ({code}).",
+                    kind=classify(status, code),
+                    status=status,
+                    vendor_code=code,
+                    retry_after=retry_after,
+                )
+            )
+        )
 
 
 # Module-level so a test can inspect calls after a service or task has run

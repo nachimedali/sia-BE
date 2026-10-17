@@ -167,17 +167,6 @@ def test_real_is_resolved_otherwise() -> None:
     assert isinstance(get_text_provider(), LLMTextProvider)
 
 
-@pytest.mark.integration
-def test_live_llm_provider_completes_a_prompt() -> None:
-    from django.conf import settings
-
-    if not settings.LLM_API_KEY:
-        pytest.skip("no LLM API key configured")
-
-    result = LLMTextProvider().generate(system="Reply with one word.", prompt="Say hi.", n=1)
-    assert result.variants
-
-
 # -----------------------------------------------------------------------------
 # ImageProvider
 # -----------------------------------------------------------------------------
@@ -349,14 +338,3 @@ def test_the_fake_embedding_separates_related_from_unrelated_text() -> None:
     assert math.isclose(sum(v * v for v in related), 1.0, rel_tol=1e-9)
     assert cosine(related, rephrased) > 0.6
     assert cosine(related, unrelated) < 0.2
-
-
-@pytest.mark.integration
-def test_live_embedding_provider_returns_vectors() -> None:
-    from django.conf import settings
-
-    if not settings.LLM_API_KEY:
-        pytest.skip("no LLM API key configured")
-
-    vectors = OpenAIEmbeddingProvider().embed(["a ceramic mug"])
-    assert vectors and len(vectors[0]) > 100

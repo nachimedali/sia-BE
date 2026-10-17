@@ -194,7 +194,9 @@ class TestTheTrendLoopCloses:
         topics = digest.findings.filter(segment__dimension="topic")
 
         assert topics.exists(), "the trend cluster never reached the segmenter"
-        assert topics.first().segment["value"] == "cold brew"
+        first = topics.first()
+        assert first is not None
+        assert first.segment["value"] == "cold brew"
 
     def test_tone_comes_from_the_profile_version_the_candidate_ran_under(
         self, workspace: Any, user: Any, profile: TasteProfile
@@ -213,7 +215,9 @@ class TestTheTrendLoopCloses:
         tones = digest.findings.filter(segment__dimension="tone")
 
         assert tones.exists()
-        assert tones.first().segment["value"] == "warm"
+        first = tones.first()
+        assert first is not None
+        assert first.segment["value"] == "warm"
 
 
 class TestProposals:

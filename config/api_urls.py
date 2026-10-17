@@ -21,6 +21,7 @@ from accounts.views import (
     RegisterView,
     ResendVerificationView,
     ThrottledTokenObtainPairView,
+    VerifyCodeView,
     VerifyEmailView,
 )
 from ai.video_views import (
@@ -43,6 +44,8 @@ from analytics.views import (
     AnalyticsOverviewView,
     AnalyticsPostsView,
     AnalyticsSentimentView,
+    AnalyticsSummaryView,
+    AudienceCommentActionView,
     AudienceCommentReplyView,
     AudienceDemographicsView,
     CompetitorComparisonView,
@@ -115,6 +118,12 @@ from planning.views import (
     SavedViewViewSet,
     TimetableViewSet,
 )
+from playbook.views import (
+    PlaybookComposeView,
+    PlaybookPostView,
+    PlaybookVocabularyView,
+    PlaybookWallView,
+)
 from products.views import (
     AutopilotApproveView,
     AutopilotQueueView,
@@ -129,12 +138,14 @@ from reminders.views import (
     ReminderSnoozeView,
     ReminderViewSet,
 )
+from search.views import SearchView
+from social_providers.views import CockpitView, SocialAPIWebhookView
 from taste.views import (
     ContentCandidateViewSet,
     RuleSetViewSet,
     TasteProfileViewSet,
 )
-from tools.views import ToolListView, ToolReadinessView, ToolRunView
+from tools.views import ToolListView, ToolPriceView, ToolReadinessView, ToolRunView
 from trends.views import TrendListView, TrendRefreshView
 from workspaces.views import (
     ApiKeyView,
@@ -147,6 +158,7 @@ from workspaces.views import (
     WorkspaceInviteView,
     WorkspaceListCreateView,
     WorkspaceProfileView,
+    WorkspaceQuoteView,
     WorkspaceSettingsView,
 )
 
@@ -189,6 +201,7 @@ urlpatterns = [
     path("auth/logout/", TokenBlacklistView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
     path("auth/verify-email/", VerifyEmailView.as_view(), name="auth-verify-email"),
+    path("auth/verify-code/", VerifyCodeView.as_view(), name="auth-verify-code"),
     path("auth/resend-verify/", ResendVerificationView.as_view(), name="auth-resend-verify"),
     path("auth/password/reset/", PasswordResetRequestView.as_view(), name="auth-password-reset"),
     path(
@@ -200,6 +213,7 @@ urlpatterns = [
     # --- organization & workspace (BUILD-PLAN Phase 0, P0-46..P0-50) ---
     path("organizations/", OrganizationListView.as_view(), name="organizations"),
     path("workspaces/", WorkspaceListCreateView.as_view(), name="workspaces"),
+    path("workspaces/quote/", WorkspaceQuoteView.as_view(), name="workspace-quote"),
     path("workspaces/<int:pk>/invite/", WorkspaceInviteView.as_view(), name="workspace-invite"),
     # Unauthenticated by necessity: the invitee may have no account yet, and
     # the token is the credential. Hash-only, single-use, 14 days.
@@ -213,6 +227,7 @@ urlpatterns = [
     # **Before the slug route, not after it**: `<str:slug>` would happily match
     # "readiness" and answer with a 404 from the runner instead.
     path("tools/readiness/", ToolReadinessView.as_view(), name="tools-readiness"),
+    path("tools/<str:slug>/price/", ToolPriceView.as_view(), name="tool-price"),
     path("tools/<str:slug>/", ToolRunView.as_view(), name="tool-run"),
     # Scopes ship now; keys are issued to customers in Phase 10 (P0-50).
     path("api-keys/", ApiKeyView.as_view(), name="api-keys"),
@@ -269,6 +284,7 @@ urlpatterns = [
     # take a pk resolve it through a workspace-filtered queryset, giving the
     # same 404-not-403 answer the shared mixin gives (A9).
     path("analytics/overview/", AnalyticsOverviewView.as_view(), name="analytics-overview"),
+    path("analytics/summary/", AnalyticsSummaryView.as_view(), name="analytics-summary"),
     path("analytics/posts/", AnalyticsPostsView.as_view(), name="analytics-posts"),
     path("analytics/best-times/", AnalyticsBestTimesView.as_view(), name="analytics-best-times"),
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
@@ -311,12 +327,23 @@ urlpatterns = [
     # a workspace-filtered queryset inside the view — another tenant's comment
     # id is a 404, not a 403 (Part 7 rule 3).
     path(
+        "analytics/comments/<int:pk>/actions/",
+        AudienceCommentActionView.as_view(),
+        name="analytics-comment-actions",
+    ),
+    path(
         "analytics/comments/<int:pk>/reply/",
         AudienceCommentReplyView.as_view(),
         name="analytics-comment-reply",
     ),
     # Unauthenticated by necessity, authenticated by signature — the same
     # shape as the Stripe handler, and next to it in spirit if not in the file.
+    path("ops/cockpit/", CockpitView.as_view(), name="ops-cockpit"),
+    path(
+        "webhooks/socialapi/",
+        SocialAPIWebhookView.as_view(),
+        name="webhook-socialapi",
+    ),
     path(
         "webhooks/zernio/comment/",
         ZernioCommentWebhookView.as_view(),
@@ -425,6 +452,14 @@ urlpatterns = [
     # S4: the post's pre-publish checks. `{pk}` resolves through a workspace-
     # and visibility-filtered queryset in the view (Part 7 rule 3).
     path("posts/<int:pk>/checks/", PostChecksView.as_view(), name="post-checks"),
+    # The top bar's search (A-14). Each source is scoped to the request's
+    # workspace — and posts to its audience — exactly as its list endpoint is.
+    path("search/", SearchView.as_view(), name="search"),
+    # --- playbook ---
+    path("playbook/posts/", PlaybookWallView.as_view(), name="playbook-posts"),
+    path("playbook/posts/<int:pk>/", PlaybookPostView.as_view(), name="playbook-post"),
+    path("playbook/vocabulary/", PlaybookVocabularyView.as_view(), name="playbook-vocabulary"),
+    path("playbook/compose/", PlaybookComposeView.as_view(), name="playbook-compose"),
     path(
         "posts/<int:pk>/share/<int:link_id>/revoke/",
         ReviewLinkRevokeView.as_view(),

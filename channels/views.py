@@ -19,20 +19,27 @@ from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from billing.permissions import HasFeature
+from channels import overview as connections_overview
 from channels import services
+from channels.adapters import get_connect_adapter
 from channels.adapters.base import REMOTE_OPTION_SOURCES
-from channels.adapters.zernio import get_platform_adapter
 from channels.models import SocialAccount
 from channels.serializers import (
     ConnectCompleteRequestSerializer,
     ConnectCompleteResponseSerializer,
+    ConnectionsOverviewSerializer,
     ConnectStartResponseSerializer,
+    DisconnectImpactSerializer,
+    DisconnectRequestSerializer,
+    DisconnectResultSerializer,
+    PlatformSharesSerializer,
     RemoteOptionListSerializer,
     SocialAccountSerializer,
 )
@@ -41,6 +48,7 @@ from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import request_workspace
 from content.models import Platform
+from workspaces.models import Permission
 
 
 def _redirect_url(request: Request) -> str:
@@ -52,6 +60,18 @@ def _redirect_url(request: Request) -> str:
     if not path.startswith("/"):
         raise OCCSError("redirect_path must be a path on this site.", code="invalid_redirect")
     return f"{settings.SITE_URL.rstrip('/')}{path}"
+
+
+def _can_manage(request: Request) -> bool:
+    """Disconnecting is an admin's call — it changes what publishes."""
+    from workspaces.permissions import caller_permissions
+
+    return Permission.ADMIN in caller_permissions(request)
+
+
+def _require_manage(request: Request) -> None:
+    if not _can_manage(request):
+        raise PermissionDenied("Only workspace admins can disconnect accounts.")
 
 
 class SocialAccountViewSet(
@@ -89,7 +109,7 @@ class SocialAccountViewSet(
                 detail={"source": source, "platform": account.platform},
             )
 
-        options = get_platform_adapter().list_remote_options(
+        options = get_connect_adapter().list_remote_options(
             platform=account.platform,
             provider_account_id=account.provider_account_id,
             source=source or "",
@@ -118,17 +138,19 @@ class SocialAccountViewSet(
             platform=data["platform"],
             params=data["params"],
             target_id=data.get("target_id", ""),
+            user=request.user,
         )
         if isinstance(outcome, SocialAccount):
             return Response(
                 ConnectCompleteResponseSerializer(
-                    {"needs_selection": False, "account": outcome}
+                    {"needs_selection": False, "platform": data["platform"], "account": outcome}
                 ).data
             )
         return Response(
             ConnectCompleteResponseSerializer(
                 {
                     "needs_selection": True,
+                    "platform": data["platform"],
                     "targets": [{"id": t.id, "name": t.name} for t in outcome.targets],
                     "params": outcome.params,
                 }
@@ -136,14 +158,68 @@ class SocialAccountViewSet(
         )
 
     @extend_schema(
-        request=None,
-        responses={200: SocialAccountSerializer},
-        summary="Disconnect a connected account",
+        responses={200: ConnectionsOverviewSerializer},
+        summary="Every account as the connections page draws it, and the pooled cap",
+    )
+    @action(detail=False, methods=["get"])
+    def overview(self, request: Request) -> Response:
+        workspace = request_workspace(request)
+        return Response(
+            ConnectionsOverviewSerializer(
+                {
+                    "cards": connections_overview.account_cards(workspace),
+                    "cap": connections_overview.cap_summary(workspace),
+                    "can_manage": _can_manage(request),
+                }
+            ).data
+        )
+
+    @extend_schema(
+        responses={200: PlatformSharesSerializer},
+        summary="What each platform shares through the selected provider",
+        description=(
+            "The capability rows normalisation obeys — available, reporting "
+            "delay, and why a metric is not available — so what the connect "
+            "screen promises is what analytics then shows."
+        ),
+    )
+    @action(detail=False, methods=["get"])
+    def shares(self, request: Request) -> Response:
+        request_workspace(request)
+        return Response(PlatformSharesSerializer(connections_overview.platform_shares()).data)
+
+    @extend_schema(
+        responses={200: DisconnectImpactSerializer},
+        summary="The scheduled posts a disconnect would affect",
+    )
+    @action(detail=True, methods=["get"])
+    def impact(self, request: Request, pk: str | None = None) -> Response:
+        return Response(
+            DisconnectImpactSerializer(services.disconnect_impact(self.get_object())).data
+        )
+
+    @extend_schema(
+        request=DisconnectRequestSerializer,
+        responses={200: DisconnectResultSerializer},
+        summary="Disconnect an account, and choose what happens to its scheduled posts",
+        description=(
+            "Admins only. Posts whose only destination is this account become "
+            "reminders at the same time (`scheduled=remind`) or come off the "
+            "calendar with their approval kept (`unschedule`). Posts that also "
+            "go elsewhere keep publishing there. The account's history stays."
+        ),
     )
     @action(detail=True, methods=["post"])
     def disconnect(self, request: Request, pk: str | None = None) -> Response:
-        account = services.disconnect(self.get_object())
-        return Response(SocialAccountSerializer(account).data)
+        # Looked up first: another tenant's account is a 404 before it is a 403.
+        account = self.get_object()
+        _require_manage(request)
+        payload = DisconnectRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        result = services.disconnect(
+            account, actor=request.user, scheduled=payload.validated_data["scheduled"]
+        )
+        return Response(DisconnectResultSerializer(result).data)
 
     @extend_schema(
         request=None,
@@ -153,7 +229,7 @@ class SocialAccountViewSet(
     @action(detail=True, methods=["post"])
     def reauth(self, request: Request, pk: str | None = None) -> Response:
         auth_url = services.start_reauth(
-            account=self.get_object(), redirect_url=_redirect_url(request)
+            account=self.get_object(), redirect_url=_redirect_url(request), user=request.user
         )
         return Response({"auth_url": auth_url})
 
@@ -181,5 +257,6 @@ class ChannelConnectView(APIView):
             workspace=request_workspace(request),
             platform=platform,
             redirect_url=_redirect_url(request),
+            user=request.user,
         )
         return Response({"auth_url": auth_url})

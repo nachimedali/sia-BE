@@ -59,6 +59,10 @@ def test_prod_cannot_run_on_fakes(prod_settings) -> None:
     would start fabricating rather than failing. Prod pins them off."""
     assert prod_settings.USE_FAKE_PLATFORM_ADAPTER is False
     assert prod_settings.USE_FAKE_AI_PROVIDERS is False
+    assert prod_settings.USE_FAKE_TEXT_PROVIDER is False
+    assert prod_settings.USE_FAKE_IMAGE_PROVIDER is False
+    assert prod_settings.USE_FAKE_VIDEO_PROVIDER is False
+    assert prod_settings.USE_FAKE_CHECKS_PROVIDER is False
     assert prod_settings.USE_FAKE_TREND_VENDORS is False
 
 

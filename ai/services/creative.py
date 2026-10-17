@@ -27,6 +27,7 @@ from typing import Any
 from rest_framework.exceptions import ValidationError
 
 from ai.models import CreativeKind, CreativeOption
+from ai.services import brand_assets
 from content.models import Platform
 
 #: Controls that hold exactly one choice.
@@ -80,12 +81,17 @@ VIDEO_KINDS = frozenset(
 )
 
 
+#: Kinds that are not Studio controls: the Motion step's own catalogue and a
+#: campaign plan's price lines (steps-plan S5), each read by its own service.
+SERVED_ELSEWHERE = VIDEO_KINDS | {CreativeKind.PLAN_PRICE}
+
+
 def catalog() -> dict[str, list[CreativeOption]]:
     """Every active row, grouped by kind and in display order — **including
     kinds with no rows**, so a client never has to ask whether a key exists.
-    The video kinds are not here; they have their own endpoint."""
+    The video kinds and plan prices are not here; they have their own readers."""
     grouped: dict[str, list[CreativeOption]] = {
-        kind.value: [] for kind in CreativeKind if kind not in VIDEO_KINDS
+        kind.value: [] for kind in CreativeKind if kind not in SERVED_ELSEWHERE
     }
     for row in CreativeOption.objects.filter(is_active=True, kind__in=grouped):
         grouped[row.kind].append(row)
@@ -105,7 +111,9 @@ def normalize(raw: Any) -> dict[str, Any]:
 
     errors: dict[str, str] = {}
     out: dict[str, Any] = {}
-    known = {kind.value for kind in SINGLE} | set(MULTI) | {"toggles", "avoid", "platforms"}
+    known = (
+        {kind.value for kind in SINGLE} | set(MULTI) | {"toggles", "avoid", "platforms", "assets"}
+    )
     for key in raw:
         if key not in known:
             errors[key] = "Unknown creative control."
@@ -157,8 +165,43 @@ def normalize(raw: Any) -> dict[str, Any]:
         else:
             out["platforms"] = list(dict.fromkeys(platforms))
 
+    if "assets" in raw:
+        # Structural only; ownership is `brand_assets.ensure_owned`'s, at the
+        # service boundary where the workspace is known.
+        try:
+            assets = brand_assets.clean(raw["assets"])
+        except ValidationError as exc:
+            errors["assets"] = str(exc.detail["assets"][0])  # type: ignore[index,call-overload]
+        else:
+            if assets:
+                out["assets"] = assets
+
     if errors:
         raise ValidationError({"creative": errors})
+    return out
+
+
+#: The controls a video is told about: how it looks, not what the post says.
+VIDEO_LOOK_KEYS = frozenset(
+    {
+        CreativeKind.SCENE,
+        CreativeKind.LIGHT,
+        CreativeKind.CAMERA,
+        CreativeKind.CAST,
+        CreativeKind.VIBE,
+        CreativeKind.PALETTE,
+        "moods",
+        "avoid",
+    }
+)
+
+
+def video_look(raw: Any) -> dict[str, Any]:
+    """`normalize`, narrowed to the look. Anything else is a 400 rather than
+    silently dropped (rule 18), so a client cannot believe a control applied."""
+    out = normalize(raw)
+    if extra := sorted(set(out) - VIDEO_LOOK_KEYS):
+        raise ValidationError({"creative": dict.fromkeys(extra, "Not a video control.")})
     return out
 
 
@@ -177,6 +220,11 @@ def _moods(creative: dict[str, Any]) -> list[CreativeOption]:
 
 def image_lines(creative: dict[str, Any]) -> list[str]:
     """What the image model is told about the brief's look and feel."""
+    return look_lines(creative) + keep_out_lines(creative)
+
+
+def look_lines(creative: dict[str, Any]) -> list[str]:
+    """The look and feel alone — what `rephrase` may rewrite."""
     lines: list[str] = []
     for kind, lead in _IMAGE_LEADS:
         row = _chosen(creative, kind)
@@ -185,10 +233,13 @@ def image_lines(creative: dict[str, Any]) -> list[str]:
     moods = [m.prompt_fragment for m in _moods(creative) if m.prompt_fragment]
     if moods:
         lines.append("Mood: " + "; ".join(moods) + ".")
-    avoid = (creative.get("avoid") or "").strip()
-    if avoid:
-        lines.append(f"Keep out of the frame: {avoid}.")
     return lines
+
+
+def keep_out_lines(creative: dict[str, Any]) -> list[str]:
+    """What must stay out of the frame — a rule, so never rewritten."""
+    avoid = (creative.get("avoid") or "").strip()
+    return [f"Keep out of the frame: {avoid}."] if avoid else []
 
 
 def caption_lines(creative: dict[str, Any]) -> list[str]:

@@ -302,7 +302,7 @@ def test_get_platform_adapter_resolves_the_fake_under_the_test_settings() -> Non
     assert isinstance(get_platform_adapter(), FakePlatformAdapter)
 
 
-@override_settings(USE_FAKE_PLATFORM_ADAPTER=False)
+@override_settings(USE_FAKE_PLATFORM_ADAPTER=False, SOCIAL_PROVIDER="zernio", ZERNIO_API_KEY="k")
 def test_get_platform_adapter_resolves_zernio_when_configured() -> None:
     assert isinstance(get_platform_adapter(), ZernioAdapter)
 

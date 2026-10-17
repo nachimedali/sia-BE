@@ -53,9 +53,19 @@ class ToolStateSerializer(serializers.Serializer[object]):
     slug = serializers.CharField()
     status = serializers.ChoiceField(choices=["ready", "blocked"])
     reason = serializers.CharField(allow_blank=True)
+    credits_cost = serializers.IntegerField()
+    used_this_month = serializers.IntegerField()
 
 
 class ToolReadinessSerializer(serializers.Serializer[object]):
     ready = serializers.BooleanField()
+    balance = serializers.IntegerField()
+    #: Platform staff only: `ToolConfig` is global, so a customer admin's edit
+    #: would reprice every other customer.
+    can_edit_prices = serializers.BooleanField()
     requirements = RequirementSerializer(many=True)
     tools = ToolStateSerializer(many=True)
+
+
+class ToolPriceSerializer(serializers.Serializer[object]):
+    credits_cost = serializers.IntegerField(min_value=0)

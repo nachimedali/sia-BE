@@ -14,6 +14,8 @@ from typing import Protocol
 
 from django.conf import settings
 
+from ai.providers.switches import uses_fake
+
 
 @dataclass(frozen=True)
 class TextBox:
@@ -82,7 +84,7 @@ def set_policy_override(port: PolicyPort | None) -> None:
 def get_ocr() -> OcrPort | None:
     if _ocr_override is not None:
         return _ocr_override
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("CHECKS"):
         from checks.fakes import FakeOcr
 
         return FakeOcr()
@@ -94,7 +96,7 @@ def get_ocr() -> OcrPort | None:
 def get_policy() -> PolicyPort | None:
     if _policy_override is not None:
         return _policy_override
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("CHECKS"):
         from checks.fakes import FakePolicy
 
         return FakePolicy()

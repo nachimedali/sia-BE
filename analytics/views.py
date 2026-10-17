@@ -25,7 +25,7 @@ from typing import Any
 from django.conf import settings
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -45,11 +45,14 @@ from analytics.models import (
     RepurposeCandidate,
 )
 from analytics.serializers import (
+    AnalyticsSummarySerializer,
     AudienceDemographicSerializer,
     AudienceReplyResultSerializer,
     AudienceReplySerializer,
     BestTimeSerializer,
+    CommentActionSerializer,
     CommentSerializer,
+    CommentStateSerializer,
     CompetitorComparisonSerializer,
     CompetitorSerializer,
     OverviewSerializer,
@@ -64,6 +67,7 @@ from analytics.serializers import (
     TargetPerformanceSerializer,
 )
 from analytics.services import audience, report_share, reporting, repurposing, signals
+from analytics.services import summary as summary_service
 from billing.permissions import HasFeature, HasFlag
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import ANALYTICS_V6
@@ -123,6 +127,30 @@ class AnalyticsOverviewView(_AnalyticsView):
         return Response(OverviewSerializer(result).data)
 
 
+class AnalyticsSummaryView(_AnalyticsView):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "window", int, description="Days: 7, 28, 90, 180 or 365. Defaults to 28."
+            )
+        ],
+        responses={200: AnalyticsSummarySerializer},
+        summary="The analytics page in one read: totals, daily, accounts and posts",
+        description=(
+            "Every figure is measured, pending or unavailable with its reason — "
+            "never a zero for a missing number. Only real provider captures count. "
+            "A window longer than the plan keeps is refused with "
+            "`analytics_horizon_exceeded` (402), never clipped."
+        ),
+    )
+    def get(self, request: Request) -> Response:
+        raw = request.query_params.get("window") or ""
+        if raw and not raw.isdigit():
+            raise ValidationError({"window": "A whole number of days."})
+        result = summary_service.summary(self.workspace(request), window=int(raw) if raw else None)
+        return Response(AnalyticsSummarySerializer(result).data)
+
+
 class AnalyticsPostsView(_AnalyticsView):
     @extend_schema(
         responses={200: TargetPerformanceSerializer(many=True)},
@@ -161,9 +189,11 @@ class AnalyticsCommentsView(_AnalyticsView):
         summary="The most recent comments, newest first",
     )
     def get(self, request: Request) -> Response:
-        comments = AudienceComment.objects.measured().filter(
-            post_target__post__workspace=self.workspace(request)
-        )[:COMMENT_FEED_LIMIT]
+        comments = (
+            AudienceComment.objects.measured()
+            .filter(post_target__post__workspace=self.workspace(request))
+            .prefetch_related("actions")[:COMMENT_FEED_LIMIT]
+        )
         return Response(CommentSerializer(comments, many=True).data)
 
 
@@ -204,6 +234,38 @@ class AudienceCommentReplyView(APIView):
             comment, body=payload.validated_data["body"], actor=request.user
         )
         return Response({"external_id": external_id}, status=status.HTTP_201_CREATED)
+
+
+class AudienceCommentActionView(APIView):
+    """`POST /analytics/comments/{id}/actions/` — hide, show, like, unlike or
+    delete one audience comment on the platform (SA-62).
+
+    Advanced only, like replying (402 with the upgrade path below it); 422
+    `comment_action_unsupported` where the comment's own platform flags say
+    no; another tenant's comment is a 404. Every action is recorded with its
+    actor (`AudienceCommentAction`).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=CommentActionSerializer,
+        responses={200: CommentStateSerializer},
+        summary="Moderate an audience comment",
+    )
+    def post(self, request: Request, pk: int) -> Response:
+        comment = get_object_or_404(
+            AudienceComment.objects.measured()
+            .filter(post_target__post__workspace=request_workspace(request))
+            .select_related("post_target__social_account", "post_target__post__workspace"),
+            pk=pk,
+        )
+        payload = CommentActionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        state = audience.moderate(
+            comment, action=payload.validated_data["action"], actor=request.user
+        )
+        return Response(CommentStateSerializer(state).data)
 
 
 class ZernioCommentWebhookView(APIView):

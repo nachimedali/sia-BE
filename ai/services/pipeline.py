@@ -67,13 +67,13 @@ from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
+from ai.services import brand_assets, prompting, quality, references, rephrase
 from ai.services import creative as creative_service
 from ai.services import hashtags as hashtag_service
-from ai.services import prompting, quality
 from ai.services.costing import resolve_pricing
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
-from billing.services.flags import STUDIO_VARIANTS_V2, flag_enabled
+from billing.services.flags import STUDIO_REPHRASE, STUDIO_VARIANTS_V2, flag_enabled
 from common.exceptions import InsufficientCredits, OCCSError, ProviderError
 from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
@@ -102,9 +102,17 @@ ALLOWED_MODES = frozenset(
         # cost two rows here and one prompt assembler each.
         GenerationMode.CAPTION,
         GenerationMode.SUGGEST,
+        # The Playbook's "compose from references". Created only through
+        # `create_recipe_generation`, which requires the references snapshot
+        # and a product — a direct request could name neither safely.
+        GenerationMode.RECIPE,
     }
 )
-DIRECTLY_CREATABLE_MODES = ALLOWED_MODES - {GenerationMode.REVISION, GenerationMode.AUTOPILOT}
+DIRECTLY_CREATABLE_MODES = ALLOWED_MODES - {
+    GenerationMode.REVISION,
+    GenerationMode.AUTOPILOT,
+    GenerationMode.RECIPE,
+}
 
 
 class GenerationKindNotAvailableError(OCCSError):
@@ -144,6 +152,10 @@ def create_generation(
     if mode == GenerationMode.CAPTION:
         _ensure_captionable(workspace, source_media)
 
+    # Here rather than in the serializer: a regeneration re-enters through this
+    # function with the parent's snapshot, and must be held to the same rule.
+    brand_assets.ensure_owned(workspace, kind, list((creative or {}).get("assets") or []))
+
     if kind == GenerationKind.VIDEO:
         # Entitlement first, availability second, and the order matters: a Free
         # workspace must see 402-upgrade rather than "no provider configured",
@@ -163,6 +175,45 @@ def create_generation(
 
     if product is not None:
         ensure_generation_ready(product)
+
+    return _pending(
+        workspace=workspace,
+        user=user,
+        kind=kind,
+        mode=mode,
+        prompt=prompt,
+        product=product,
+        voice_profile=voice_profile,
+        aspect=aspect,
+        render_style=render_style,
+        scene=scene,
+        creative=creative,
+        is_batch=is_batch,
+        source_media=source_media,
+        paid_slots=paid_slots,
+    )
+
+
+def _pending(
+    *,
+    workspace: Workspace,
+    user: Any,
+    kind: str,
+    mode: str,
+    prompt: str,
+    product: Product | None,
+    voice_profile: VoiceProfile | None,
+    aspect: str,
+    render_style: str,
+    scene: str,
+    creative: dict[str, Any] | None,
+    is_batch: bool,
+    source_media: MediaAsset | None,
+    paid_slots: int | None,
+) -> Generation:
+    """Price, preflight and persist the `PENDING` row — the half every entry
+    point shares once it has checked its own preconditions."""
+    entitlements = entitlements_for(workspace)
 
     # Preflight only (I5) — the authoritative check is inside the debit's own
     # transaction in `run_generation`, once the gate has passed.
@@ -207,6 +258,66 @@ def create_generation(
         source_media=source_media,
         paid_slots=slots,
         variant_pool=pool,
+    )
+
+
+class RecipeNotAllowedError(OCCSError):
+    default_code = "recipe_not_allowed"
+    default_detail = "This composition cannot be made."
+
+
+def create_recipe_generation(
+    *,
+    workspace: Workspace,
+    user: Any,
+    product: Product,
+    prompt: str,
+    creative: dict[str, Any],
+    references_snapshot: list[dict[str, Any]],
+    paid_slots: int,
+) -> Generation:
+    """A Playbook composition (`GenerationMode.RECIPE`): the product, in the
+    spirit of the references the person picked.
+
+    The one entry point for the mode, like `create_revision` is for REVISION.
+    `creative` has already been through `creative_service.normalize`;
+    `references_snapshot` is written by `playbook.services.compose` from the
+    Playbook's own rows, never by a client — which is what lets the pipeline
+    fetch the pictures it names without fetching a URL a user typed.
+    """
+    entitlements_for(workspace).require_feature("playbook")
+    if not 1 <= len(references_snapshot) <= references.MAX_REFERENCES:
+        raise RecipeNotAllowedError(
+            f"Compose from one to {references.MAX_REFERENCES} references.",
+            detail={"references": len(references_snapshot)},
+        )
+    ensure_generation_ready(product)
+
+    aspect = "4:5"
+    chosen = creative.get("format")
+    if chosen:
+        from ai.models import CreativeKind, CreativeOption
+
+        row = CreativeOption.objects.filter(kind=CreativeKind.FORMAT, key=chosen).first()
+        if row is None or row.metadata.get("kind") != GenerationKind.IMAGE:
+            raise RecipeNotAllowedError("Pick an image format.", detail={"format": chosen})
+        aspect = str(row.metadata.get("aspect") or aspect)
+
+    return _pending(
+        workspace=workspace,
+        user=user,
+        kind=GenerationKind.IMAGE,
+        mode=GenerationMode.RECIPE,
+        prompt=prompt,
+        product=product,
+        voice_profile=None,
+        aspect=aspect,
+        render_style="",
+        scene="",
+        creative={**creative, "references": references_snapshot},
+        is_batch=False,
+        source_media=None,
+        paid_slots=paid_slots,
     )
 
 
@@ -283,23 +394,65 @@ def _attempt_text(
 
 
 def _attempt_image(
-    generation: Generation, *, n: int, config: QualityGateConfig, reference_images: list[bytes]
+    generation: Generation,
+    *,
+    n: int,
+    config: QualityGateConfig,
+    reference_images: list[bytes],
+    inspiration: list[references.ReferenceImage] | None = None,
+    assets: list[tuple[dict[str, Any], bytes]] | None = None,
 ) -> tuple[list[tuple[ImageVariant, quality.QualityResult]], dict[str, Any]]:
+    """`inspiration` is a RECIPE run's reference pictures. They are attached
+    after the product's photographs — the prompt numbers them — and scored
+    by the gate as a ceiling, never as the product's identity.
+
+    `assets` are the person's brand pictures (`ai.services.brand_assets`),
+    attached last and never given to the gate."""
     provider = get_image_provider()
     text_provider = get_text_provider()
+    inspiration = inspiration or []
+    assets = assets or []
+    snapshot = list(generation.creative.get("references") or [])
+    direction = creative_service.image_lines(generation.creative)
+    if snapshot and not generation.rephrased_prompt:
+        direction = [*direction, *references.brief_lines(snapshot)]
     grounded = prompting.assemble_image_prompt(
         idea=generation.prompt,
         workspace=generation.workspace,
         product=generation.product,
         render_style=generation.render_style,
         scene=generation.scene,
-        direction=creative_service.image_lines(generation.creative),
+        direction=direction,
+        rephrased=generation.rephrased_prompt,
+        keep_out=creative_service.keep_out_lines(generation.creative),
+        rules=(
+            [
+                *(
+                    references.rule_lines(
+                        snapshot,
+                        product_images=len(reference_images),
+                        seen=[image.label for image in inspiration],
+                    )
+                    if snapshot
+                    else []
+                ),
+                *brand_assets.rule_lines(
+                    [item for item, _content in assets],
+                    first=len(reference_images) + len(inspiration) + 1,
+                ),
+            ]
+            or None
+        ),
     )
     restrictions = generation.product.restrictions if generation.product else []
 
     result = provider.generate(
         prompt=grounded.user,
-        reference_images=reference_images,
+        reference_images=[
+            *reference_images,
+            *(image.content for image in inspiration),
+            *(content for _item, content in assets),
+        ],
         aspect=generation.aspect,
         n=n,
         batch=generation.is_batch,
@@ -315,6 +468,7 @@ def _attempt_image(
                 restrictions=restrictions,
                 text_provider=text_provider,
                 identity_similarity_threshold=config.identity_similarity_threshold,
+                inspiration_images=[image.content for image in inspiration] or None,
             ),
         )
         for variant in result.variants
@@ -429,7 +583,43 @@ def _persist_variants(
                 body=words.body if words else "",
                 hashtags=words.hashtags if words else [],
                 identity_score=check.identity_score,
+                reference_similarity=(check.checks.get("reference_distance") or {}).get("score"),
+                reference_closest=(check.checks.get("reference_distance") or {}).get("closest"),
             )
+
+
+def _rephrase(generation: Generation) -> None:
+    """The Studio brief, rewritten by the text model into one prompt
+    (`ai.services.rephrase`). Studio image runs only — autopilot and every
+    caller without a brief send exactly what they always sent."""
+    if generation.kind != GenerationKind.IMAGE or not creative_service.wants_copy(
+        generation.creative
+    ):
+        return
+    if not flag_enabled(generation.workspace.organization, STUDIO_REPHRASE):
+        return
+    snapshot = generation.creative.get("references") or []
+    if generation.mode == GenerationMode.RECIPE and snapshot:
+        rewritten = rephrase.reference_brief(
+            idea=generation.prompt,
+            product=generation.product.name if generation.product else "",
+            references=references.brief_lines(snapshot),
+            choices=creative_service.look_lines(generation.creative),
+        )
+        generation.rephrased_by = rewritten.by
+        generation.rephrased_prompt = "" if rewritten.by == rephrase.TEMPLATE else rewritten.text
+        generation.save(update_fields=["rephrased_prompt", "rephrased_by"])
+        return
+    choices = []
+    if generation.render_style:
+        choices.append(f"Render style: {generation.render_style}.")
+    if generation.scene:
+        choices.append(f"Scene: {generation.scene}.")
+    choices += creative_service.look_lines(generation.creative)
+    rewritten = rephrase.image_brief(idea=generation.prompt, choices=choices)
+    generation.rephrased_by = rewritten.by
+    generation.rephrased_prompt = "" if rewritten.by == rephrase.TEMPLATE else rewritten.text
+    generation.save(update_fields=["rephrased_prompt", "rephrased_by"])
 
 
 def run_generation(generation: Generation, *, n: int = 3) -> Generation:
@@ -460,7 +650,25 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         else []
     )
 
+    # A composition's reference pictures, read once — never per attempt, and
+    # never stored (`ai.services.references`).
+    inspiration = (
+        references.images(list(generation.creative.get("references") or []))
+        if generation.mode == GenerationMode.RECIPE
+        else []
+    )
+
+    # The person's brand pictures, read once like the references above.
+    assets = (
+        brand_assets.load(list(generation.creative.get("assets") or []))
+        if generation.kind == GenerationKind.IMAGE
+        else []
+    )
+
     started = time.monotonic()
+    # Once per generation, before the attempts: a rejected attempt retries the
+    # same brief, so there is nothing to rewrite again.
+    _rephrase(generation)
     passing: list[tuple[Any, quality.QualityResult]] = []
     meta: dict[str, Any] = {}
     attempts_made = 0
@@ -472,7 +680,12 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
             attempt_results, meta = _attempt_text(generation, n=n)
         else:
             attempt_results, meta = _attempt_image(
-                generation, n=n, config=config, reference_images=reference_images
+                generation,
+                n=n,
+                config=config,
+                reference_images=reference_images,
+                inspiration=inspiration,
+                assets=assets,
             )
 
         QualityCheck.objects.bulk_create(

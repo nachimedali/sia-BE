@@ -1,0 +1,22 @@
+Welcome to ComposeVision, {{ first_name }}
+
+Your workspace {{ workspace_name }} is ready. ComposeVision turns your products
+into on-brand posts, plans when they play, and never publishes anything without
+your approval.
+
+Three steps to your first post:
+
+1. Import your website: we read your logo, palette, voice and products into
+   your brand kit, then you review each section.
+2. Add a product: photos, voice and rules, or import it from its product page.
+3. Compose and approve: generate variants in the Studio, keep the best, and
+   schedule it. Nothing goes out until someone approves.
+
+Open your workspace: {{ app_url }}
+
+Your plan: {{ plan_name }}{% if trial_ends %} (trial until {{ trial_ends }}){% elif renews_on %} (renews on {{ renews_on }}){% endif %}
+Credits: {{ credits }}
+
+Questions? Reply to this email. A real person on our team reads every reply.
+
+The ComposeVision team

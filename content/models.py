@@ -172,6 +172,10 @@ class Post(models.Model):
     # endpoint owns have no chance to run against yet (design.md A49).
     delivery_mode = models.CharField(max_length=16, choices=DeliveryMode.choices, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
+    #: The slot the author's heads-up email announced (`scheduling.heads_up`).
+    #: A slot, not a flag: rescheduling leaves it behind, and that mismatch is
+    #: what earns the new time its own heads-up.
+    heads_up_sent_for = models.DateTimeField(null=True, blank=True)
 
     # --- approval (BUILD-PLAN P2-07, P2-10, P2-11) -------------------------
     #: Where the post sits in its workspace's approval chain. Null unless it is
@@ -229,6 +233,17 @@ class Post(models.Model):
     origin_post = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="repurposed_posts"
     )
+    #: The template this post was copied from, and which version of it. A
+    #: record of where the text came from, never a link back: editing the
+    #: template does not touch this post (P1-09).
+    template = models.ForeignKey(
+        "content.PostTemplate",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="made_posts",
+    )
+    template_version = models.PositiveIntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -441,6 +456,34 @@ class PostTargetState(models.TextChoices):
     FAILED = "FAILED", "Failed"
 
 
+class ProviderState(models.TextChoices):
+    """Where this target stands **at the provider** — the publish journal
+    (SA-32, `social-provider-plan.md` G1).
+
+    SocialAPI has no idempotency key on posts, so exactly-once is ours to
+    keep: the draft's id is written here *before* it is published, and a retry
+    reads this first. A crash can then leave an unpublished draft (swept by the
+    reconciler), never a second live post. Blank for a provider that publishes
+    in one synchronous call (Zernio, the fake by default).
+    """
+
+    NONE = "", "Not started"
+    #: Media uploaded to the provider; no post exists there yet.
+    MEDIA_UPLOADED = "media_uploaded", "Media uploaded"
+    #: A draft exists at the provider. Drafts are free and never go live.
+    DRAFT_CREATED = "draft_created", "Draft created"
+    #: Publish was requested; the outcome arrives by webhook or reconciliation.
+    PUBLISH_REQUESTED = "publish_requested", "Publish requested"
+    PUBLISHED = "published", "Published"
+    FAILED = "failed", "Failed"
+    #: The unpublished draft was deleted at the provider (failed or cancelled).
+    DISCARDED = "discarded", "Draft discarded"
+    #: It went live, then was taken down on the platform or deleted at the
+    #: provider (`post.unpublished` / `post.deleted`, SA-42). The target stays
+    #: `PUBLISHED` — it was — but capture stops: there is nothing left to read.
+    REMOVED = "removed", "Removed from the platform"
+
+
 class PostTarget(models.Model):
     """design.md §6.3. Inert until Phase 8/9 wire up scheduling and
     publishing — the model exists now so `rendered_payload` has somewhere to
@@ -509,6 +552,21 @@ class PostTarget(models.Model):
     # Postgres does not treat repeated NULLs as duplicates.
     idempotency_key = models.CharField(max_length=128, null=True, blank=True, unique=True)
 
+    # --- the publish journal (SA-32) --------------------------------------
+    #: Which vendor holds `provider_post_id`, so an id minted by one provider
+    #: is never sent to the other after a switch (`social-provider-plan.md` §1).
+    provider_key = models.CharField(max_length=24, blank=True)
+    provider_state = models.CharField(
+        max_length=24, choices=ProviderState.choices, default=ProviderState.NONE, blank=True
+    )
+    #: When `provider_state` last changed — what the reconciler ages rows by.
+    provider_state_at = models.DateTimeField(null=True, blank=True)
+    #: Media uploaded to the provider for this target, released once the
+    #: publish is terminal (the Free plan holds 100 MB).
+    provider_media_ids = models.JSONField(default=list, blank=True)
+    #: The live post's address, when the provider reports one.
+    permalink = models.URLField(max_length=500, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -527,7 +585,10 @@ class PostTarget(models.Model):
                 name="unique_post_platform_target_unconnected",
             ),
         ]
-        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["state"])]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["state"]),
+            models.Index(fields=["provider_state", "provider_state_at"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.post_id} -> {self.platform} ({self.state})"
@@ -650,6 +711,9 @@ class PostTemplate(models.Model):
     )
     #: `{master_body, media_asset_ids: [...], platform_options: {platform: {...}}}`.
     payload = models.JSONField(default=dict, blank=True)
+    #: Goes up by one on every save that changes the name or the payload, so a
+    #: post can say which wording it was copied from.
+    version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

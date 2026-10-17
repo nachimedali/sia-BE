@@ -25,8 +25,8 @@ every test that never waited five minutes (design.md §14, V1 finding 1).
 
 from __future__ import annotations
 
-from typing import Any
-from urllib.parse import urljoin
+from collections.abc import Sequence
+from typing import Any, ClassVar
 
 from django.conf import settings
 
@@ -37,11 +37,14 @@ from channels.adapters.base import (
     ConnectTarget,
     PlatformAdapter,
     PlatformError,
+    PublishJournal,
+    PublishMedia,
     PublishResult,
+    absolute_media_url,
     echo_targets,
     find_offered_target,
 )
-from content.models import MediaKind
+from content.models import MediaKind, Platform
 from content.services.rules import options_for
 
 #: Zernio's `type` vocabulary for a media item, keyed by ours.
@@ -98,16 +101,16 @@ def _json(response: Any, *, label: str) -> dict[str, Any]:
     return parsed
 
 
-def _absolute(url: str) -> str:
-    """Zernio fetches media itself, so a storage-relative path is unusable to
-    it. Local/dev media is served relatively; S3 already yields an absolute
-    URL and passes through untouched."""
-    if url.startswith(("http://", "https://")):
-        return url
-    return str(urljoin(settings.PUBLIC_MEDIA_BASE_URL, url))
-
-
 class ZernioAdapter:
+    #: What the connections page tells a person before they connect.
+    selection_platforms = SELECTION_PLATFORMS
+    unsupported: ClassVar[dict[str, str]] = {}
+    #: Zernio reads comments everywhere except TikTok (no endpoint at any price).
+    comment_platforms = frozenset(Platform.values) - {Platform.TIKTOK}
+    #: Zernio does not echo our `state`; verified only when present.
+    requires_state = False
+    #: Zernio fetches `payload`'s own media URLs.
+
     # --- profiles --------------------------------------------------------
     def ensure_profile(self, *, name: str, existing_profile_id: str = "") -> str:
         if existing_profile_id:
@@ -122,7 +125,9 @@ class ZernioAdapter:
         return profile_id
 
     # --- connect ---------------------------------------------------------
-    def connect_url(self, *, platform: str, profile_id: str, redirect_url: str) -> str:
+    def connect_url(
+        self, *, platform: str, profile_id: str, redirect_url: str, state: str = ""
+    ) -> str:
         with _client() as client:
             payload = _json(
                 client.get(
@@ -261,7 +266,11 @@ class ZernioAdapter:
         provider_account_id: str,
         payload: dict[str, Any],
         idempotency_key: str,
+        journal: PublishJournal | None = None,
+        media: Sequence[PublishMedia] = (),
     ) -> PublishResult:
+        """Synchronous, with Zernio's own `x-request-id` dedup: `journal` and
+        `media` are not needed and are ignored."""
         body = {
             "content": payload.get("body", ""),
             "platforms": [
@@ -274,7 +283,7 @@ class ZernioAdapter:
             "mediaItems": [
                 {
                     "type": _MEDIA_TYPES.get(item["kind"], "image"),
-                    "url": _absolute(item["url"]),
+                    "url": absolute_media_url(item["url"]),
                     # Alt text is per-use, resolved by `render_post` (P1-06).
                     # Sent unconditionally: an empty string is a legitimate
                     # "no description", and omitting the key on some items and
@@ -303,6 +312,20 @@ class ZernioAdapter:
             platform_post_id=_platform_post_id(post, platform),
             was_replay=existing is not None,
         )
+
+    # Zernio publishes in one synchronous call, so nothing is ever pending and
+    # there is no draft to sweep or provider media to release.
+    def fetch_publish_status(self, *, provider_post_id: str) -> PublishResult:
+        raise PlatformError(
+            "Zernio publishes synchronously; there is no pending publish to read.",
+            code="not_supported",
+        )
+
+    def discard_draft(self, *, provider_post_id: str) -> None:
+        return None
+
+    def release_media(self, *, media_ids: Sequence[str]) -> list[str]:
+        return []
 
     @staticmethod
     def _replay_from_conflict(response: Any) -> PublishResult:
@@ -357,13 +380,11 @@ def _platform_post_id(post: dict[str, Any], platform: str) -> str:
 
 
 def get_platform_adapter() -> PlatformAdapter:
-    """Resolves the configured adapter. Swapping providers — Zernio for
-    bundle.social, D3's stated fallback — is a settings change (A8)."""
-    if getattr(settings, "USE_FAKE_PLATFORM_ADAPTER", False):
-        from channels.adapters.fake import _fake_adapter
+    """Kept for old import paths. The resolver is `channels.adapters.
+    get_platform_adapter`, which honours `SOCIAL_PROVIDER`."""
+    from channels.adapters import get_platform_adapter as resolve
 
-        return _fake_adapter
-    return ZernioAdapter()
+    return resolve()
 
 
 #: Our option key → Zernio's field name, per platform (P1-11).
@@ -416,6 +437,7 @@ PROVIDER_OPTION_FIELDS: dict[str, dict[str, str]] = {
         "tagged_organization_ids": "taggedOrganizations",
     },
     "tiktok": {
+        "privacy_level": "privacyLevel",
         "allow_comments": "allowComments",
         "allow_duet": "allowDuet",
     },
@@ -470,5 +492,5 @@ def _provider_options(platform: str, options: dict[str, Any]) -> dict[str, Any]:
             continue
         option = declared.get(key)
         is_media = option is not None and option.kind == "media"
-        resolved[mapping[key]] = _absolute(value) if is_media else value
+        resolved[mapping[key]] = absolute_media_url(value) if is_media else value
     return resolved

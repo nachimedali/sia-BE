@@ -8,34 +8,46 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db.models import Case, Count, Q, Value, When
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 
 from billing.permissions import HasFlag
-from billing.services.flags import PLANNING_V3
+from billing.services.flags import CAMPAIGN_BRIEF_S5, PLANNING_V3
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
 from content.models import Post
-from planning.models import BulkOperation, Campaign, Label, SavedView, Timetable
+from planning.models import BulkOperation, Campaign, CampaignStatus, Label, SavedView, Timetable
 from planning.serializers import (
     BulkOperationRequestSerializer,
     BulkOperationSerializer,
+    CampaignBriefSerializer,
+    CampaignBriefWriteSerializer,
+    CampaignCountsSerializer,
     CampaignItemSerializer,
+    CampaignPlanSerializer,
+    CampaignProgressDetailSerializer,
     CampaignSerializer,
     CampaignStatusRequestSerializer,
     LabelSerializer,
+    PlanEstimateSerializer,
+    PlanStartRequestSerializer,
     SavedViewSerializer,
+    SeedResultSerializer,
     TimetableSerializer,
 )
+from planning.services import briefs as brief_service
 from planning.services import bulk as bulk_service
 from planning.services import campaigns as campaign_service
 from planning.services import labels as label_service
+from planning.services import plans as plan_service
+from planning.services import progress as progress_service
 from planning.services import views as view_service
 from workspaces.models import Permission
 from workspaces.permissions import HasPermission
@@ -79,8 +91,50 @@ class CampaignViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Campai
     pagination_class = DefaultPagination
     queryset = Campaign.objects.select_related("brief", "created_by")
 
+    #: steps-plan S5's routes: absent (404) with the flag off.
+    S5_ACTIONS = frozenset({"brief", "plan", "estimate", "seed", "progress", "counts"})
+
     def get_permissions(self) -> Any:
-        return _view_or_edit_permissions(self.action)
+        # A read of an S5 sub-resource is a read: `view` suffices, like the list.
+        read = self.action in self.S5_ACTIONS and self.request.method in SAFE_METHODS
+        permissions = _view_or_edit_permissions("retrieve" if read else self.action)
+        if self.action in self.S5_ACTIONS:
+            permissions.append(HasFlag(CAMPAIGN_BRIEF_S5)())
+        return permissions
+
+    def get_queryset(self) -> Any:
+        """Filtered, searched and ordered **on the server** (S5): the list is
+        paginated, so a filter over the page already loaded would be wrong past
+        the first page."""
+        queryset = super().get_queryset()
+        if self.action != "list":
+            return queryset
+        params = self.request.query_params
+        status_filter = params.get("status", "").upper()
+        if status_filter in CampaignStatus.values:
+            queryset = queryset.filter(status=status_filter)
+        search = params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(created_by__first_name__icontains=search)
+                | Q(created_by__last_name__icontains=search)
+                | Q(created_by__email__icontains=search)
+            )
+        metric = params.get("metric", "").strip()
+        if metric:
+            queryset = queryset.filter(goals__0__metric=metric)
+        ordering = params.get("ordering", "")
+        if ordering == "active_first":
+            rank = Case(
+                When(status=CampaignStatus.ACTIVE, then=Value(0)),
+                When(status=CampaignStatus.PLANNING, then=Value(1)),
+                default=Value(2),
+            )
+            queryset = queryset.order_by(rank, "-starts_at", "-id")
+        elif ordering in {"starts_at", "-starts_at", "name", "-updated_at"}:
+            queryset = queryset.order_by(ordering, "-id")
+        return queryset
 
     def perform_create(self, serializer: BaseSerializer[Campaign]) -> None:
         data = dict(serializer.validated_data)
@@ -121,6 +175,105 @@ class CampaignViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Campai
             campaign, payload.validated_data["status"], actor=authenticated_user(request)
         )
         return Response(CampaignSerializer(campaign).data)
+
+    @extend_schema(
+        responses={200: CampaignCountsSerializer},
+        summary="How many campaigns are in each status",
+    )
+    @action(detail=False, methods=["get"], url_path="counts")
+    def counts(self, request: Request) -> Response:
+        rows = dict(super().get_queryset().values_list("status").annotate(n=Count("id")).order_by())
+        body = {value: rows.get(value, 0) for value in CampaignStatus.values}
+        return Response({"ALL": sum(body.values()), **body})
+
+    @extend_schema(
+        methods=["GET"],
+        responses={200: CampaignBriefSerializer},
+        summary="Read the campaign brief and the proof this workspace can offer",
+    )
+    @extend_schema(
+        methods=["PUT"],
+        request=CampaignBriefWriteSerializer,
+        responses={200: CampaignBriefSerializer},
+        summary="Save the campaign brief (partial: only the keys sent change)",
+        description="409 `campaign_closed` once the campaign is closed.",
+    )
+    @action(detail=True, methods=["get", "put"], url_path="brief")
+    def brief(self, request: Request, pk: str | None = None) -> Response:
+        campaign = self.get_object()
+        if request.method == "PUT":
+            payload = CampaignBriefWriteSerializer(data=request.data)
+            payload.is_valid(raise_exception=True)
+            brief_service.save(campaign, payload.validated_data, actor=authenticated_user(request))
+            campaign.refresh_from_db()
+        return Response(CampaignBriefSerializer(brief_service.read(campaign)).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: PlanEstimateSerializer},
+        summary="Price a plan before anything is spent",
+        description="400 `brief_incomplete` lists what is missing.",
+    )
+    @action(detail=True, methods=["post"], url_path="plan/estimate")
+    def estimate(self, request: Request, pk: str | None = None) -> Response:
+        return Response(PlanEstimateSerializer(plan_service.estimate(self.get_object())).data)
+
+    @extend_schema(
+        methods=["GET"],
+        responses={200: CampaignPlanSerializer, 204: None},
+        summary="The latest plan, with each calendar slot's draft",
+    )
+    @extend_schema(
+        methods=["POST"],
+        request=PlanStartRequestSerializer,
+        responses={202: CampaignPlanSerializer},
+        summary="Confirm the estimate and write the plan in the background",
+        description=(
+            "409 `estimate_changed` carries the new estimate; 409 `plan_in_progress`; "
+            "402 `insufficient_credits`. Credits are held now and taken once, on success."
+        ),
+    )
+    @action(detail=True, methods=["get", "post"], url_path="plan")
+    def plan(self, request: Request, pk: str | None = None) -> Response:
+        campaign = self.get_object()
+        if request.method == "GET":
+            latest = plan_service.latest(campaign)
+            if latest is None:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            return Response(CampaignPlanSerializer(plan_service.read(latest)).data)
+
+        payload = PlanStartRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        started = plan_service.start(
+            campaign,
+            user=authenticated_user(request),
+            estimate_id=payload.validated_data["estimate_id"],
+        )
+        return Response(
+            CampaignPlanSerializer(plan_service.read(started)).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @extend_schema(
+        request=None,
+        responses={200: SeedResultSerializer},
+        summary="Seed the calendar: one draft per plan slot, never scheduled",
+        description="Idempotent — seeding the same plan twice creates nothing new.",
+    )
+    @action(detail=True, methods=["post"], url_path="seed")
+    def seed(self, request: Request, pk: str | None = None) -> Response:
+        result = plan_service.seed(self.get_object(), actor=authenticated_user(request))
+        return Response(SeedResultSerializer(result).data)
+
+    @extend_schema(
+        responses={200: CampaignProgressDetailSerializer},
+        summary="Measured progress against the goal, day by day; gaps are null",
+    )
+    @action(detail=True, methods=["get"], url_path="progress")
+    def progress(self, request: Request, pk: str | None = None) -> Response:
+        return Response(
+            CampaignProgressDetailSerializer(progress_service.detail(self.get_object())).data
+        )
 
     @extend_schema(
         request=CampaignItemSerializer,

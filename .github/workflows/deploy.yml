@@ -1,0 +1,82 @@
+name: Deploy
+
+# No test phase: every push to `dev` is deployed to /srv/sia-BE over SSH. Server setup: deploy/dev/README in the
+# parent workspace (secrets SSH_HOST, SSH_USER, SSH_PORT, SSH_PRIVATE_KEY,
+# SSH_KNOWN_HOSTS).
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: sia-be-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      DEPLOY_PATH: /srv/sia-BE
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host key: a swapped server fails here instead of receiving the code.
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<CONF
+          Host sia
+            HostName ${{ secrets.SSH_HOST }}
+            User ${{ secrets.SSH_USER }}
+            Port ${{ secrets.SSH_PORT || 22 }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          CONF
+
+      # .env, the venv, media and collected static are server state, never
+      # overwritten (excluded paths are also protected from --delete).
+      - name: Upload code
+        run: |
+          rsync -az --delete \
+            --exclude '.git/' --exclude '.github/' \
+            --exclude '.env' --exclude '.env.*' \
+            --exclude '.venv/' --exclude 'media/' --exclude 'staticfiles/' \
+            --exclude '__pycache__/' --exclude '.mypy_cache/' \
+            --exclude '.pytest_cache/' --exclude '.ruff_cache/' --exclude '.e2e-mail/' \
+            ./ sia:${DEPLOY_PATH}/
+
+      - name: Install, migrate, restart
+        run: |
+          ssh sia 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/sia-BE
+          [ -d .venv ] || python3 -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet -r requirements.txt
+          export DJANGO_SETTINGS_MODULE=config.settings.prod
+          set -a; . ./.env; set +a
+          .venv/bin/python manage.py migrate --noinput
+          .venv/bin/python manage.py collectstatic --noinput
+          sudo /usr/bin/supervisorctl reread
+          sudo /usr/bin/supervisorctl update
+          sudo /usr/bin/supervisorctl restart 'sia-be:*'
+          REMOTE
+
+      - name: Health check
+        run: |
+          ssh sia 'bash -se' <<'REMOTE'
+          for i in $(seq 1 15); do
+            if curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/api/v1/health/ >/dev/null; then
+              echo "healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy"; exit 1
+          REMOTE

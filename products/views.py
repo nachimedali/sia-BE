@@ -43,6 +43,7 @@ from products.serializers import (
     ProductCompletenessSerializer,
     ProductReferenceImagesUploadSerializer,
     ProductSerializer,
+    ProductSummarySerializer,
 )
 
 # Aliased: `ProductViewSet.autopilot` is a route name fixed by design.md §7's
@@ -91,6 +92,9 @@ class ProductViewSet(
                 "posts", filter=Q(posts__status=PostStatus.PUBLISHED), distinct=True
             ),
         )
+        # Explicit: the counts group the query, and a grouped query drops
+        # `Meta.ordering` — the list came back in whatever order Postgres chose.
+        .order_by("-created_at", "-id")
     )
 
     @extend_schema(
@@ -141,6 +145,21 @@ class ProductViewSet(
             queryset = queryset.filter(platforms__contains=[platform])
 
         return queryset
+
+    @extend_schema(responses={200: ProductSummarySerializer}, summary="Products per status")
+    @action(detail=False, methods=["get"])
+    def summary(self, request: Request) -> Response:
+        """The counts on the products page's status tiles.
+
+        Over the whole catalogue and ignoring any filter: each tile is itself
+        a filter, so its number must not change when it is pressed.
+        """
+        products = Product.objects.filter(workspace=request_workspace(request))
+        counts = {
+            key: Count("id", filter=PRODUCT_STATUS_FILTERS[key])
+            for key in ("ready", "needs_reference", "autopilot_on")
+        }
+        return Response(products.aggregate(all=Count("id"), **counts))
 
     def perform_create(self, serializer: BaseSerializer[Product]) -> None:
         assert isinstance(serializer, ProductSerializer)  # always this view's own serializer_class

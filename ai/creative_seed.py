@@ -226,51 +226,11 @@ SCENES = [
         "desert-dunes",
         "Desert dunes",
         ["M2 18c3-5 6-5 9 0s6 5 11-2", "M2 21h20"],
-        description="Sahara ripples near Douz",
+        description="Wind-rippled golden sand",
         colors=["#F6B26B", "#F8D49A", "#E9A35A"],
-        fragment="on the wind-rippled crest of a golden Saharan dune near Douz, with a clear sky "
+        fragment="on the wind-rippled crest of a golden desert dune, with a clear sky "
         "and long sand shadows",
         group="outdoor",
-    ),
-    # Tunisian signatures
-    _opt(
-        "sidi-bou-said",
-        "Sidi Bou Saïd",
-        ["M4 21V10l8-6 8 6v11", "M9 21v-6a3 3 0 016 0v6"],
-        description="Whitewash and blue doors",
-        colors=["#BFE3F2", "#E9F5FA", "#1F5FA8"],
-        fragment="on a whitewashed terrace in Sidi Bou Saïd beside a studded blue door, with "
-        "bougainvillea and a clear Mediterranean sky",
-        group="tunisia",
-    ),
-    _opt(
-        "medina-souk",
-        "Medina souk",
-        ["M12 2v3", "M8 5h8l1 4H7z", "M7 9v8a5 5 0 0010 0V9"],
-        description="Arches, lanterns, textiles",
-        colors=["#5A2E1A", "#A9622E", "#C98B4F"],
-        fragment="in a medina souk under carved stone arches, with brass lanterns and hand-woven "
-        "textiles warmly blurred behind",
-        group="tunisia",
-    ),
-    _opt(
-        "dar-courtyard",
-        "Dar courtyard",
-        [*HOUSE, "M10 20v-5h4v5"],
-        description="Patterned tiles, fountain, arches",
-        colors=["#F3EEE4", "#2E8C8A", "#C9A45C"],
-        fragment="in the courtyard of a traditional Tunisian dar with patterned zellige tiles, "
-        "horseshoe arches and a small fountain",
-        group="tunisia",
-    ),
-    _opt(
-        "tunis-rooftop",
-        "Rooftop at dusk",
-        ["M3 21V12h5v9", "M8 21V8h4v13", "M12 21v-9h4v9", "M16 21V10h5v11", "M10 8V5"],
-        description="Minaret skyline, evening",
-        colors=["#4A3A8C", "#B66A8E", "#F7C982"],
-        fragment="on a Tunis rooftop at dusk with whitewashed domes and a minaret on the skyline",
-        group="tunisia",
     ),
 ]
 
@@ -748,7 +708,7 @@ PALETTES = [
     ),
 ]
 
-# --- languages (locked to FR/EN, L-6) ---------------------------------------------
+# --- languages (FR/EN/IT, L-6 as amended 2026-10-12) --------------------------------
 LANG_ICON = [
     "M3 5h8",
     "M7 3v2",
@@ -778,6 +738,16 @@ LANGUAGES = [
         "copywriter would, not as a translation.",
         code="en",
         name="English",
+    ),
+    _opt(
+        "it",
+        "IT",
+        LANG_ICON,
+        description="Italian",
+        fragment="Write the headline and caption in natural, idiomatic Italian as a native "
+        "copywriter would, not as a translation.",
+        code="it",
+        name="Italian",
     ),
 ]
 
@@ -1121,30 +1091,15 @@ PRESETS = [
         "ramadan-evenings",
         "Ramadan evenings",
         [SPARKLE],
-        description="Rooftop · blue hour · family",
+        description="Terrace · blue hour · family",
         values={
-            "scene": "tunis-rooftop",
+            "scene": "garden-terrace",
             "light": "blue-hour",
             "camera": "three-quarter",
             "cast": "group",
             "vibe": "family",
             "moods": ["warm", "cinematic"],
             "tempo": "andante",
-        },
-    ),
-    _opt(
-        "medina-story",
-        "Medina story",
-        [SPARKLE],
-        description="Souk · golden hour · hands · film",
-        values={
-            "scene": "medina-souk",
-            "light": "golden-hour",
-            "camera": "close-crop",
-            "cast": "hands",
-            "vibe": "everyday",
-            "moods": ["film", "editorial"],
-            "tempo": "presto",
         },
     ),
 ]

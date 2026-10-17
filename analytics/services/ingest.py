@@ -41,10 +41,11 @@ from analytics.models import (
 )
 from analytics.providers import get_metrics_registry
 from analytics.providers.base import MetricsError, MetricsUnsupportedError, RawMetricPayload
+from analytics.services import account_history
 from analytics.services.normalise import normalise
 from analytics.services.sentiment import classify_comments
 from channels.models import SocialAccount, SocialAccountStatus
-from content.models import PostTarget, PostTargetState
+from content.models import PostTarget, PostTargetState, ProviderState
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
         logger.warning("metric capture failed", exc_info=True, extra={"target_id": target.pk})
         return None
 
+    note_insights_permission(account, payload.insights_permission)
     if payload.is_pending:
         logger.info("metric capture pending", extra={"target_id": target.pk})
         return None
@@ -198,6 +200,32 @@ def capture_target(target: PostTarget, rung: dt.datetime) -> PostMetric | None:
         followers=account.followers_cached or None,
         reactions=_post_reactions(provider, target),
     )
+
+
+#: Shown on the connections page when an account lacks the insights permission.
+INSIGHTS_RECONNECT_REASON = "Reconnect to enable reach and views."
+
+
+def note_insights_permission(account: SocialAccount, permitted: bool | None) -> None:
+    """Records what a provider answer proved about the account's insights
+    permission (SA-53, plan G13). Missing: reach and views read unavailable
+    and the connections page asks for a reconnect. Present again (after a
+    reconnect): the prompt goes. `None` proves nothing and changes nothing."""
+    if permitted is None:
+        return
+    capabilities = dict(account.capabilities or {})
+    if capabilities.get("insights") is permitted:
+        return
+    capabilities["insights"] = permitted
+    account.capabilities = capabilities
+    fields = ["capabilities", "updated_at"]
+    if not permitted and not account.reconnect_reason:
+        account.reconnect_reason = INSIGHTS_RECONNECT_REASON
+        fields.append("reconnect_reason")
+    elif permitted and account.reconnect_reason == INSIGHTS_RECONNECT_REASON:
+        account.reconnect_reason = ""
+        fields.append("reconnect_reason")
+    account.save(update_fields=fields)
 
 
 def _post_reactions(provider: Any, target: PostTarget) -> dict[str, int] | None:
@@ -315,7 +343,12 @@ def capture_comments(target: PostTarget) -> int:
     if not target.provider_post_id:
         return 0
 
-    provider = get_metrics_registry().for_comments(target.platform)
+    registry = get_metrics_registry()
+    if not registry.audience_ready:
+        # The provider's comment reading is not built yet: wait, rather than
+        # recording that this platform has no comments.
+        return 0
+    provider = registry.for_comments(target.platform)
     if provider is None:
         _mark_comments_unavailable(target)
         return 0
@@ -331,7 +364,13 @@ def capture_comments(target: PostTarget) -> int:
     )
     try:
         fetched = provider.fetch_comments(
-            platform=target.platform, provider_post_id=target.provider_post_id, since=newest
+            platform=target.platform,
+            provider_post_id=target.provider_post_id,
+            since=newest,
+            platform_post_id=target.platform_post_id,
+            provider_account_id=(
+                target.social_account.provider_account_id if target.social_account else ""
+            ),
         )
     except MetricsUnsupportedError:
         _mark_comments_unavailable(target)
@@ -340,21 +379,30 @@ def capture_comments(target: PostTarget) -> int:
         logger.warning("comment fetch failed", exc_info=True, extra={"target_id": target.pk})
         return 0
 
+    _note_comment_capture(target)
+    return store_comments(target, fetched)
+
+
+def store_comments(target: PostTarget, snapshots: list[Any]) -> int:
+    """Stores the comments not already held, classified once. Returns how many
+    were new. **The one write path for audience comments** — the poll above and
+    the `comment.received` webhook both call it, so the two cannot drift and a
+    comment arriving both ways is one row (unique on `(target, external_id)`).
+    """
     # Bounded by what was just fetched, not by the post's lifetime comment
     # count: a post with ten thousand comments would otherwise transfer ten
     # thousand ids on each of its hundred-odd captures.
     known = set(
         target.post_comments.filter(
-            external_id__in=[snapshot.external_id for snapshot in fetched]
+            external_id__in=[snapshot.external_id for snapshot in snapshots]
         ).values_list("external_id", flat=True)
     )
-    fresh = [snapshot for snapshot in fetched if snapshot.external_id not in known]
-    _note_comment_capture(target)
+    fresh = [snapshot for snapshot in snapshots if snapshot.external_id not in known]
     if not fresh:
         return 0
 
     classified = classify_comments([snapshot.body for snapshot in fresh])
-    AudienceComment.objects.bulk_create(
+    created = AudienceComment.objects.bulk_create(
         [
             AudienceComment(
                 post_target=target,
@@ -364,14 +412,15 @@ def capture_comments(target: PostTarget) -> int:
                 sentiment=verdict.sentiment,
                 sentiment_score=verdict.score,
                 posted_at=snapshot.posted_at or timezone.now(),
-                reactions=snapshot.reactions or {},
+                reactions=snapshot.reactions,
+                capabilities=snapshot.capabilities,
                 availability=Availability.MEASURED,
             )
             for snapshot, verdict in zip(fresh, classified, strict=True)
         ],
         ignore_conflicts=True,
     )
-    return len(fresh)
+    return len(created)
 
 
 def _note_comment_capture(target: PostTarget) -> None:
@@ -444,6 +493,8 @@ def capture_due() -> int:
             published_at__gte=moment - dt.timedelta(days=MAX_HORIZON_DAYS),
         )
         .exclude(provider_post_id="")
+        # Taken down on the platform (SA-42): nothing left to measure.
+        .exclude(provider_state=ProviderState.REMOVED)
         .select_related("social_account", "post__workspace__organization__plan")
     )
     if not targets:
@@ -487,14 +538,18 @@ def snapshot_accounts() -> int:
         if fetch is None:
             continue
         try:
-            stats = fetch(provider_account_id=account.provider_account_id)
+            stats = fetch(
+                provider_account_id=account.provider_account_id, platform=account.platform
+            )
         except MetricsError:
             logger.warning(
                 "account snapshot failed", exc_info=True, extra={"account_id": account.pk}
             )
             continue
 
+        note_insights_permission(account, stats.pop("insights_permission", None))
         _capture_demographics(account, provider, moment)
+        account_history.capture_history(account, provider, today=moment.date())
 
         followers = stats.get("followers")
         _snapshot, created = AccountSnapshot.objects.get_or_create(

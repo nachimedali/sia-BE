@@ -14,6 +14,7 @@ prose that is not in the payload cannot have come from the data.
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 import pytest
 
@@ -59,7 +60,7 @@ def stat(**overrides: object) -> statistics.SegmentStat:
     return statistics.SegmentStat(**base)  # type: ignore[arg-type]
 
 
-def payload_for(*stats: statistics.SegmentStat) -> dict[str, object]:
+def payload_for(*stats: statistics.SegmentStat) -> dict[str, Any]:
     return narrate.build_payload(
         list(stats),
         window_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
@@ -72,7 +73,7 @@ class TestThePayload:
     def test_carries_the_grade_and_sample_size_of_every_finding(self) -> None:
         payload = payload_for(stat(), stat(value="FEED", sample_size=9))
 
-        graded = {row["segment"]: row for row in payload["findings"]}  # type: ignore[index]
+        graded = {row["segment"]: row for row in payload["findings"]}
         assert graded["CAROUSEL"]["sample_size"] == 20
         assert graded["CAROUSEL"]["confidence"] == "STRONG"
         assert graded["FEED"]["sample_size"] == 9
@@ -81,7 +82,7 @@ class TestThePayload:
         """The payload is the *input* to rendering, so a sentence in it would
         be a sentence nothing validated."""
         payload = payload_for(stat())
-        for finding in payload["findings"]:  # type: ignore[union-attr]
+        for finding in payload["findings"]:
             assert "narration" not in finding
 
 

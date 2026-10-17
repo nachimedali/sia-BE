@@ -106,7 +106,7 @@ def _seed_approval_chain(workspace: Workspace) -> ApprovalChain:
 
 
 @transaction.atomic
-def provision_extra_workspace(*, user: User, name: str) -> Workspace:
+def provision_extra_workspace(*, user: User, name: str, description: str = "") -> Workspace:
     """A second (or twentieth) brand inside an organization the user already
     belongs to (P0-46, P0-18).
 
@@ -131,6 +131,7 @@ def provision_extra_workspace(*, user: User, name: str) -> Workspace:
         organization=organization,
         name=name,
         slug=Workspace.unique_slug(name),
+        description=description,
         status=WorkspaceStatus.PENDING_BILLING,
     )
     Membership.objects.create(

@@ -187,6 +187,15 @@ class AutopilotLanding(models.TextChoices):
     REVIEW_QUEUE = "REVIEW_QUEUE", "Review queue"
 
 
+class AutopilotTimeWindow(models.TextChoices):
+    """When in the workspace's local day a weekday slot falls (X-38). The hour
+    each window means is `products.services.autopilot.WINDOW_TIMES`."""
+
+    MORNING = "MORNING", "Morning"
+    MIDDAY = "MIDDAY", "Midday"
+    EVENING = "EVENING", "Evening"
+
+
 class AutopilotConfig(models.Model):
     """design.md §6.4, §8.7. One per product — autopilot is a mode of operating
     a product, so there is nothing to configure twice.
@@ -209,6 +218,12 @@ class AutopilotConfig(models.Model):
     )
     lookahead_days = models.PositiveSmallIntegerField(
         default=14, validators=[MinValueValidator(1), MaxValueValidator(365)]
+    )
+    # X-38: chosen weekdays (0 = Monday) at a local time window. Non-empty
+    # replaces the `cadence_days` grid; empty keeps it.
+    weekdays = models.JSONField(default=list, blank=True)
+    time_window = models.CharField(
+        max_length=8, choices=AutopilotTimeWindow.choices, default=AutopilotTimeWindow.EVENING
     )
 
     strategy = models.CharField(

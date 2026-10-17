@@ -22,11 +22,12 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from django.db.models import Count
 from django.utils import timezone
 
 from billing.services.entitlements import entitlements_for
 from common.setup import Requirement, done, is_ready, missing
-from tools.models import Tool, ToolConfig
+from tools.models import Tool, ToolConfig, ToolUsage
 from tools.services import HASHTAG_WINDOW_DAYS
 from workspaces.models import Workspace
 
@@ -60,15 +61,13 @@ def _published_targets(workspace: Workspace) -> int:
     return len(signals.performance(workspace.pk, horizon_days=horizon))
 
 
-def tool_requirements(workspace: Workspace) -> list[Requirement]:
+def tool_requirements(
+    workspace: Workspace, *, balance: int, corpus: int, captures: int
+) -> list[Requirement]:
     """`credits` blocks everything; the other two block one tool each, so they
     are warnings rather than closed doors — five tools still work."""
     cheapest = ToolConfig.objects.order_by("credits_cost").values_list("credits_cost", flat=True)
     price = next(iter(cheapest), 1)
-    balance = entitlements_for(workspace).credits_remaining()
-
-    corpus = _corpus_items(workspace)
-    captures = _published_targets(workspace)
 
     credits_row = (done if balance >= price else missing)(
         "credits", f"{balance} credits", facts={"balance": balance, "cheapest": price}
@@ -109,10 +108,21 @@ def _reason(
     return None
 
 
-def tool_states(workspace: Workspace) -> list[dict[str, Any]]:
-    balance = entitlements_for(workspace).credits_remaining()
-    corpus = _corpus_items(workspace)
-    captures = _published_targets(workspace)
+def _used_this_month(workspace: Workspace) -> dict[str, int]:
+    """Runs per tool since the first of this month (UTC), this workspace only."""
+    start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    rows = (
+        ToolUsage.objects.filter(workspace=workspace, created_at__gte=start)
+        .values("tool")
+        .annotate(n=Count("id"))
+    )
+    return {row["tool"]: row["n"] for row in rows}
+
+
+def tool_states(
+    workspace: Workspace, *, balance: int, corpus: int, captures: int
+) -> list[dict[str, Any]]:
+    used = _used_this_month(workspace)
 
     states = []
     for config in ToolConfig.objects.all():
@@ -128,15 +138,23 @@ def tool_states(workspace: Workspace) -> list[dict[str, Any]]:
                 "slug": config.slug,
                 "status": BLOCKED if reason else READY,
                 "reason": reason or "",
+                "credits_cost": config.credits_cost,
+                "used_this_month": used.get(config.slug, 0),
             }
         )
     return states
 
 
 def tools_readiness(workspace: Workspace) -> dict[str, Any]:
-    requirements = tool_requirements(workspace)
+    # Each of these is a query (or several); both halves of the answer read the
+    # same three numbers, so they are taken once.
+    balance = entitlements_for(workspace).credits_remaining()
+    corpus = _corpus_items(workspace)
+    captures = _published_targets(workspace)
+    requirements = tool_requirements(workspace, balance=balance, corpus=corpus, captures=captures)
     return {
         "ready": is_ready(requirements),
+        "balance": balance,
         "requirements": requirements,
-        "tools": tool_states(workspace),
+        "tools": tool_states(workspace, balance=balance, corpus=corpus, captures=captures),
     }

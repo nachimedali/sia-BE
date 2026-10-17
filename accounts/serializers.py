@@ -50,6 +50,10 @@ class VerifyEmailSerializer(serializers.Serializer[Any]):
     token = serializers.CharField()
 
 
+class VerifyCodeSerializer(serializers.Serializer[Any]):
+    code = serializers.RegexField(r"^\d{6}$", error_messages={"invalid": "Enter the 6-digit code."})
+
+
 class PasswordResetRequestSerializer(serializers.Serializer[Any]):
     email = serializers.EmailField()
 

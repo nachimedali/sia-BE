@@ -227,6 +227,39 @@ def test_credits_roll_over_when_the_plan_says_so(workspace) -> None:
     assert ledger.credit_balance(workspace) == 250
 
 
+def test_credit_grant_resets_the_allowance_but_keeps_purchased_packs(workspace) -> None:
+    """A bought pack survives the monthly reset; only the allowance expires.
+
+    The reset used to zero the whole balance, packs included — while the
+    billing page promised the opposite. Same rule as video: the reset may only
+    take back what a grant put there.
+    """
+    ledger.grant_credits(workspace, 150)
+    ledger.purchase_credits(workspace, 500, note="credits_500")
+    ledger.debit_credits(workspace, 50, quota=150)
+
+    rows = ledger.grant_credits(workspace, 150)
+
+    assert [row.delta for row in rows] == [-100, 150]
+    assert ledger.credit_balance(workspace) == 650  # 500 bought + 150 fresh
+    assert ledger.pack_credit_balance(workspace) == 500
+
+
+def test_spending_past_the_allowance_draws_on_the_pack(workspace) -> None:
+    """The allowance is spent first, so a reset after an overspend expires
+    nothing and the pack is what is left of it."""
+    ledger.grant_credits(workspace, 150)
+    ledger.purchase_credits(workspace, 500, note="credits_500")
+    ledger.debit_credits(workspace, 200, quota=150)
+    assert ledger.included_credit_balance(workspace) == 0
+    assert ledger.pack_credit_balance(workspace) == 450
+
+    rows = ledger.grant_credits(workspace, 150)
+
+    assert [row.delta for row in rows] == [150]
+    assert ledger.credit_balance(workspace) == 600
+
+
 def test_video_grant_resets_the_allowance_but_keeps_purchased_packs(workspace) -> None:
     """§4.3 — included videos reset monthly; prepaid packs are bought and stay."""
     ledger.grant_video_units(workspace, 4)

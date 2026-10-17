@@ -27,3 +27,6 @@ python-dateutil
 # package's `iso3166.tab`. Present transitively via celery, declared for the
 # same reason as dateutil above.
 tzdata
+
+# WSGI server for the deployed API (deploy/dev/supervisor/sia-be.conf).
+gunicorn

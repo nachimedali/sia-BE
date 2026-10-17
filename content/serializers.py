@@ -17,6 +17,7 @@ from rest_framework import serializers
 from rest_framework.request import Request
 
 from ai.models import Generation
+from channels.models import SocialAccountStatus
 from checks.serializers import CheckSummarySerializer
 from common.workspaces import request_workspace, scope_related_field_to_workspace
 from content.models import (
@@ -28,6 +29,7 @@ from content.models import (
     PostMediaAttachment,
     PostRevision,
     PostTarget,
+    PostTargetState,
     PostTemplate,
     RecurrenceRule,
 )
@@ -189,19 +191,57 @@ class PostRevisionStateSerializer(serializers.Serializer[Any]):
     state = serializers.DictField()
 
 
+#: An account in one of these cannot publish until someone signs in again.
+RECONNECT_STATUSES = frozenset(
+    {
+        SocialAccountStatus.REAUTH_REQUIRED,
+        SocialAccountStatus.REVOKED,
+        SocialAccountStatus.PAGE_REMOVED,
+    }
+)
+
+
+class TargetFailureSerializer(serializers.Serializer[Any]):
+    message = serializers.CharField()
+    reconnect = serializers.BooleanField()
+
+
 class PostTargetSummarySerializer(serializers.ModelSerializer[PostTarget]):
     """Where a post goes and how far it has got — and nothing else.
 
-    A summary, not the target: `rendered_payload`, the provider's ids and
-    `error_detail` belong to the publish pipeline and have no business in a
-    list response. The workspace home draws a platform x weekday grid from
-    this, and the fields it needs are exactly these four.
+    A summary, not the target: `rendered_payload`, the provider's ids and the
+    raw `error_detail` belong to the publish pipeline and have no business in a
+    list response. The workspace home draws a platform x weekday grid from the
+    first four fields; `/app/published` adds the live link and, for a failed
+    target, the one sentence that says why.
     """
 
     class Meta:
         model = PostTarget
-        fields: ClassVar[tuple[str, ...]] = ("platform", "post_format", "state", "published_at")
+        fields: ClassVar[tuple[str, ...]] = (
+            "platform",
+            "post_format",
+            "state",
+            "published_at",
+            "permalink",
+            "failure",
+        )
         read_only_fields = fields
+
+    failure = serializers.SerializerMethodField()
+
+    @extend_schema_field(TargetFailureSerializer(allow_null=True))
+    def get_failure(self, target: PostTarget) -> dict[str, Any] | None:
+        """The sentence a person reads, and whether reconnecting is the fix.
+        The rest of `error_detail` — codes, request ids — stays with the
+        pipeline and the cockpit."""
+        if target.state != PostTargetState.FAILED:
+            return None
+        account = target.social_account
+        return {
+            "message": str((target.error_detail or {}).get("message") or ""),
+            "reconnect": bool(account and account.status in RECONNECT_STATUSES),
+        }
 
 
 class PostSerializer(serializers.ModelSerializer[Post]):
@@ -528,6 +568,24 @@ class PostPreviewResponseSerializer(serializers.Serializer[Any]):
     payloads = serializers.DictField(child=AdaptedPayloadSerializer())
 
 
+#: How many of a template's posts its card lists; `use_count` has the rest.
+TEMPLATE_USES_SHOWN = 5
+#: How many of a rule's newest drafts its card lists.
+RULE_RUNS_SHOWN = 3
+
+
+class TemplateUseSerializer(serializers.Serializer[Any]):
+    post = serializers.IntegerField()
+    version = serializers.IntegerField(allow_null=True)
+    status = serializers.CharField()
+
+
+class RuleRunSerializer(serializers.Serializer[Any]):
+    slot_at = serializers.DateTimeField()
+    post = serializers.IntegerField()
+    status = serializers.CharField()
+
+
 class PostTemplateSerializer(serializers.ModelSerializer[PostTemplate]):
     """`payload` is validated here against the same `rules.py` declaration a
     real post's options go through — on the way in, not at apply time
@@ -536,6 +594,8 @@ class PostTemplateSerializer(serializers.ModelSerializer[PostTemplate]):
     created_by_email = serializers.EmailField(
         source="created_by.email", read_only=True, default=None
     )
+    use_count = serializers.SerializerMethodField()
+    uses = serializers.SerializerMethodField()
 
     class Meta:
         model = PostTemplate
@@ -544,16 +604,43 @@ class PostTemplateSerializer(serializers.ModelSerializer[PostTemplate]):
             "name",
             "content_kind",
             "payload",
+            "version",
+            "use_count",
+            "uses",
             "created_by_email",
             "created_at",
             "updated_at",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = (
             "id",
+            "version",
             "created_by_email",
             "created_at",
             "updated_at",
         )
+
+    def get_use_count(self, template: PostTemplate) -> int:
+        return len(template.made_posts.all())
+
+    @extend_schema_field(TemplateUseSerializer(many=True))
+    def get_uses(self, template: PostTemplate) -> list[dict[str, Any]]:
+        """The newest few posts copied from it, each with the version it was
+        copied from. Read off the view's prefetch, newest first."""
+        return [
+            {"post": post.pk, "version": post.template_version, "status": post.status}
+            for post in list(template.made_posts.all())[:TEMPLATE_USES_SHOWN]
+        ]
+
+    def update(self, instance: PostTemplate, validated_data: dict[str, Any]) -> PostTemplate:
+        """A save that changes the wording is the next version; one that changes
+        nothing is not, so pressing Save twice does not invent a v3."""
+        changed = any(
+            key in validated_data and validated_data[key] != getattr(instance, key)
+            for key in ("name", "payload")
+        )
+        if changed:
+            validated_data["version"] = instance.version + 1
+        return super().update(instance, validated_data)
 
     def validate_content_kind(self, value: str) -> str:
         templates.ensure_creatable(value)
@@ -601,10 +688,22 @@ class RecurrenceRuleSerializer(serializers.ModelSerializer[RecurrenceRule]):
             "timezone",
             "horizon_days",
             "active",
+            "recent_runs",
             "created_at",
             "updated_at",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = ("id", "created_at", "updated_at")
+
+    recent_runs = serializers.SerializerMethodField()
+
+    @extend_schema_field(RuleRunSerializer(many=True))
+    def get_recent_runs(self, rule: RecurrenceRule) -> list[dict[str, Any]]:
+        """The newest drafts this rule made, read off the view's prefetch.
+        Always drafts when made; the status says where each one is now."""
+        return [
+            {"slot_at": occ.slot_at, "post": occ.post_id, "status": occ.post.status}
+            for occ in list(rule.occurrences.all())[:RULE_RUNS_SHOWN]
+        ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

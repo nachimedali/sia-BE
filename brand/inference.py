@@ -21,8 +21,7 @@ import re
 from collections import Counter
 from typing import Any, Protocol
 
-from django.conf import settings
-
+from ai.providers.switches import uses_fake
 from workspaces.models import BrandVoice, BusinessType
 
 _SYSTEM = (
@@ -42,10 +41,29 @@ _SYSTEM = (
 )
 
 
+_PRODUCT_SYSTEM = (
+    "You read the text of one product page for a marketing tool and pick out the "
+    "fields you are asked to fill. Answer with JSON only, no prose, with only the "
+    'keys asked for: {"short": str, "long": str, "features": [str]}. '
+    "Rules: copy every value EXACTLY from the page text — never rewrite, translate "
+    "or summarise. short is one or two whole sentences that say what the product is. "
+    "long is the paragraph that describes the product. features are 2-6 short "
+    "phrases, each naming one concrete feature (a material, a part, a use). "
+    "Leave out shipping, returns, prices, reviews and navigation. "
+    "Omit a key rather than guess."
+)
+
+#: The product fields the model may fill — never name, price, SKU or photos,
+#: which only the page's markup is trusted to state.
+PRODUCT_FIELDS = ("short", "long", "features")
+
+
 class BrandInference(Protocol):
     def infer(
         self, *, name: str, text: str, categories: list[str], products: list[str]
     ) -> dict[str, Any]: ...
+
+    def infer_product(self, *, name: str, text: str, missing: list[str]) -> dict[str, Any]: ...
 
 
 def _norm(text: str) -> str:
@@ -141,6 +159,36 @@ def _json_in(body: str) -> Any:
         return None
 
 
+def validate_product(raw: Any, *, text: str, missing: list[str]) -> dict[str, Any]:
+    """Keep only the asked-for fields whose text is on the page, verbatim."""
+    from brand.services.product_page import LONG_MAX, MAX_FEATURES, SHORT_MAX
+
+    out: dict[str, Any] = {}
+    if not isinstance(raw, dict):
+        return out
+    haystack = _norm(text)
+
+    def on_page(value: Any, longest: int) -> str:
+        if not isinstance(value, str):
+            return ""
+        value = re.sub(r"\s+", " ", value).strip()
+        return value if 0 < len(value) <= longest and _norm(value) in haystack else ""
+
+    if "short" in missing and (short := on_page(raw.get("short"), SHORT_MAX)):
+        out["short"] = short
+    if "long" in missing and (long := on_page(raw.get("long"), LONG_MAX)):
+        out["long"] = long
+    if "features" in missing and isinstance(raw.get("features"), list):
+        features: list[str] = []
+        for item in raw["features"]:
+            feature = on_page(item, 80)
+            if len(feature) >= 3 and feature.casefold() not in {f.casefold() for f in features}:
+                features.append(feature)
+        if features:
+            out["features"] = features[:MAX_FEATURES]
+    return out
+
+
 class LLMBrandInference:
     def infer(
         self, *, name: str, text: str, categories: list[str], products: list[str]
@@ -162,6 +210,19 @@ class LLMBrandInference:
             return {}
         body = result.variants[0].body if result.variants else ""
         return validate(_json_in(body), text=text, categories=categories)
+
+    def infer_product(self, *, name: str, text: str, missing: list[str]) -> dict[str, Any]:
+        from ai.providers.llm_text import get_text_provider
+
+        prompt = json.dumps(
+            {"product": name, "fill": missing, "page_text": text[:12000]}, ensure_ascii=False
+        )
+        try:
+            result = get_text_provider().generate(system=_PRODUCT_SYSTEM, prompt=prompt, n=1)
+        except Exception:  # a provider failure leaves the fields to the user
+            return {}
+        body = result.variants[0].body if result.variants else ""
+        return validate_product(_json_in(body), text=text, missing=missing)
 
 
 _ADJECTIVES = (
@@ -230,8 +291,21 @@ class FakeBrandInference:
             raw["business_type"] = "SERVICE"
         return validate(raw, text=text, categories=categories)
 
+    def infer_product(self, *, name: str, text: str, missing: list[str]) -> dict[str, Any]:
+        """The longest paragraph is the description; its first sentences the
+        short one. No features — the fake cannot tell a feature from a sentence."""
+        from brand.services.product_page import short_from
+
+        paragraphs = [p.strip() for p in text.split("\n") if len(p.split()) >= 12]
+        if not paragraphs:
+            return {}
+        long = max(paragraphs, key=len)
+        return validate_product(
+            {"long": long, "short": short_from(long)}, text=text, missing=missing
+        )
+
 
 def get_brand_inference() -> BrandInference:
-    if getattr(settings, "USE_FAKE_AI_PROVIDERS", False):
+    if uses_fake("TEXT"):
         return FakeBrandInference()
     return LLMBrandInference()

@@ -19,7 +19,7 @@ from content.serializers import AdaptedPayloadSerializer, PostMediaSerializer
 from content.services.adaptation import render_post
 from reminders.models import Reminder
 
-# Best-effort deep links into each platform's own composer — not an OCCS API,
+# Best-effort deep links into each platform's own composer — not a ComposeVision API,
 # just where that app's own "create post" screen tends to live. A dead link
 # degrades to "open the app," never a broken page.
 _COMPOSER_LINKS: dict[str, str] = {

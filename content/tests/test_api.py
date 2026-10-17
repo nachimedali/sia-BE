@@ -116,14 +116,92 @@ def test_post_exposes_its_targets_for_the_dashboard_score(
     assert by_platform[Platform.INSTAGRAM]["published_at"] is not None
     # Unpublished is null, not an epoch and not an empty string.
     assert by_platform[Platform.LINKEDIN]["published_at"] is None
-    # Only what the grid needs: no rendered payload, no provider ids, no
-    # error detail — those are the publish pipeline's, not a dashboard's.
+    # No rendered payload, no provider ids, no raw error detail — those are
+    # the publish pipeline's. The live link and a failure's sentence are what
+    # `/app/published` shows a person, so those two travel.
     assert set(by_platform[Platform.LINKEDIN]) == {
         "platform",
         "post_format",
         "state",
         "published_at",
+        "permalink",
+        "failure",
     }
+
+
+def test_a_published_target_carries_its_live_link_and_no_failure(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="x")
+    PostTarget.objects.create(
+        post=post,
+        platform=Platform.INSTAGRAM,
+        state=PostTargetState.PUBLISHED,
+        published_at=timezone.now(),
+        permalink="https://instagram.com/p/abc",
+    )
+
+    (target,) = auth_client.get(f"{POSTS_URL}{post.id}/").json()["targets"]
+    assert target["permalink"] == "https://instagram.com/p/abc"
+    assert target["failure"] is None
+
+
+def test_a_failed_target_says_why_in_a_sentence_and_nothing_more(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="x")
+    PostTarget.objects.create(
+        post=post,
+        platform=Platform.INSTAGRAM,
+        state=PostTargetState.FAILED,
+        error_detail={
+            "code": "media_rejected",
+            "message": "Instagram rejected the image ratio.",
+            "retryable": False,
+            "provider_request_id": "req_123",
+        },
+    )
+
+    (target,) = auth_client.get(f"{POSTS_URL}{post.id}/").json()["targets"]
+    assert target["permalink"] == ""
+    # The sentence, not the provider's payload: request ids stay in the cockpit.
+    assert target["failure"] == {
+        "message": "Instagram rejected the image ratio.",
+        "reconnect": False,
+    }
+
+
+def test_a_failure_on_a_signed_out_account_asks_for_a_reconnect(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform=Platform.FACEBOOK,
+        provider_account_id="fb-1",
+        display_name="Page",
+        status="REAUTH_REQUIRED",
+    )
+    post = create_post(workspace=workspace, author=user, master_body="x")
+    PostTarget.objects.create(
+        post=post,
+        platform=Platform.FACEBOOK,
+        social_account=account,
+        state=PostTargetState.FAILED,
+        error_detail={"message": "The Page's sign-in expired."},
+    )
+
+    (target,) = auth_client.get(f"{POSTS_URL}{post.id}/").json()["targets"]
+    assert target["failure"] == {"message": "The Page's sign-in expired.", "reconnect": True}
+
+
+def test_a_failed_target_with_no_message_still_reads_as_failed(
+    auth_client: Any, workspace: Any, user: Any
+) -> None:
+    post = create_post(workspace=workspace, author=user, master_body="x")
+    PostTarget.objects.create(post=post, platform=Platform.INSTAGRAM, state=PostTargetState.FAILED)
+
+    (target,) = auth_client.get(f"{POSTS_URL}{post.id}/").json()["targets"]
+    assert target["failure"] == {"message": "", "reconnect": False}
 
 
 def test_post_targets_are_not_client_writable(auth_client: Any, workspace: Any) -> None:

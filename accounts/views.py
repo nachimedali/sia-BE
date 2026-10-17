@@ -24,14 +24,16 @@ from accounts.serializers import (
     RegisterSerializer,
     SessionSerializer,
     UserSerializer,
+    VerifyCodeSerializer,
     VerifyEmailSerializer,
 )
 from accounts.services import auth as auth_service
-from common.exceptions import OCCSError
+from common.exceptions import NotFoundError, OCCSError
 from common.throttling import (
     LoginThrottle,
     PasswordResetThrottle,
     RegisterThrottle,
+    VerificationCodeThrottle,
     VerificationResendThrottle,
 )
 
@@ -88,6 +90,41 @@ class VerifyEmailView(APIView):
             # that owns the envelope (design.md A3).
             raise OCCSError(
                 "This verification link is invalid or has expired.", code="invalid_token"
+            )
+        return Response({"verified": True})
+
+
+class VerifyCodeView(APIView):
+    """Onboarding step 1: the six-digit code from the verification email.
+
+    Needs the session registration issued — a code alone is a small space, and
+    tying it to the signed-in account is what keeps it from being sprayed
+    across everyone's.
+    """
+
+    permission_classes: list[Any] = [IsAuthenticated]
+    throttle_classes: list[Any] = [VerificationCodeThrottle]
+
+    @extend_schema(
+        request=VerifyCodeSerializer,
+        responses={200: None, 400: None, 404: None},
+        summary="Verify the account's email with the emailed code",
+        description=(
+            "400 `invalid_code` for a wrong, expired, spent or burned code — one answer, "
+            "so a guess learns nothing. Five wrong tries spend the code. 404 while the "
+            "transactional-email rollout is off."
+        ),
+    )
+    def post(self, request: Request) -> Response:
+        user = cast(User, request.user)
+        if not auth_service.transactional_email_enabled(user):
+            raise NotFoundError("This endpoint does not exist.")
+        serializer = VerifyCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if not auth_service.verify_code(user, serializer.validated_data["code"]):
+            raise OCCSError(
+                "That code is wrong or has expired. Request a new one.", code="invalid_code"
             )
         return Response({"verified": True})
 

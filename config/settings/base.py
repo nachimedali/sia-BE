@@ -79,6 +79,14 @@ LOCAL_APPS = [
     # holds the ports that `trends/` and the creative half of `ai/` move
     # behind, so Phase 12 swaps an adapter rather than editing call sites.
     "integrations",
+    # Workspace search behind the top bar's `/app/search` (A-14). No models.
+    "search",
+    # The Playbook: trending public posts to compose from (`/app/playbook`).
+    "playbook",
+    # Which vendor publishes, measures and reads comments (SocialAPI.ai,
+    # Zernio as the alternative): selection, the SocialAPI client, its rate
+    # budget and the call log (`social-provider-plan.md`, SA-00…SA-12).
+    "social_providers",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -221,7 +229,7 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "OCCS API",
+    "TITLE": "ComposeVision API",
     "DESCRIPTION": (
         "Marketing content system for product-led businesses. "
         "Every non-2xx response uses the single error envelope described in design.md §7.1; "
@@ -306,6 +314,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "reminders.tasks.send_due_reminders",
         "schedule": crontab(minute="*"),
     },
+    # Every minute, like the reminder scan: the heads-up names a countdown, and
+    # a scan that ran every quarter hour would send "2 hours" at 1h46.
+    "scheduling-remind-upcoming-posts": {
+        "task": "scheduling.tasks.remind_upcoming_posts",
+        "schedule": crontab(minute="*"),
+    },
     "reminders-expire-stale": {
         "task": "reminders.tasks.expire_stale_reminders",
         "schedule": crontab(hour=4, minute=0),
@@ -337,6 +351,20 @@ CELERY_BEAT_SCHEDULE = {
     "scheduling-publish-due": {
         "task": "scheduling.tasks.publish_due_posts",
         "schedule": crontab(minute="*"),
+    },
+    # SocialAPI publishes in the background (SA-32): this reads the outcome
+    # of each accepted publish, deletes drafts that will never go out and
+    # frees provider media. The poll stays after webhooks land (SA-42) as the
+    # net under a lost delivery.
+    "scheduling-publish-reconcile": {
+        "task": "scheduling.tasks.publish_reconcile",
+        "schedule": crontab(minute="*/2"),
+    },
+    # Drafts a crash left at the provider before the journal recorded them.
+    # Hourly: they cost nothing and never go live.
+    "scheduling-publish-sweep-orphan-drafts": {
+        "task": "scheduling.tasks.publish_sweep_orphan_drafts",
+        "schedule": crontab(minute=25),
     },
     # Hourly, because the metric ladder's tightest rung is T+1h (design.md
     # §8.9). The scan asks which targets are *owed* a capture rather than each
@@ -392,6 +420,25 @@ CELERY_BEAT_SCHEDULE = {
     # asks which configs are owed a run, so the cadence lives on the config
     # where an operator can retune it, not in this schedule. After the trend
     # and repurpose jobs, so a drafting run is grounded in the freshest corpus.
+    # Every half hour, though each Playbook source runs only on its own
+    # `refresh_minutes` — the cadence (and YouTube's quota) lives on the row.
+    # Daily: the provider call log is operational, kept for the cockpit's
+    # window and no longer (`SOCIALAPI_CALL_RETENTION_DAYS`).
+    "social-providers-prune-calls": {
+        "task": "social_providers.tasks.prune_provider_calls",
+        "schedule": crontab(hour=1, minute=40),
+    },
+    # Webhook deliveries the queue never ran or a worker abandoned are handed
+    # out again, and old ones pruned (SA-40). Every five minutes: the vendor
+    # was already told yes, so this is the only retry they get.
+    "social-providers-sweep-webhooks": {
+        "task": "social_providers.tasks.sweep_webhook_deliveries",
+        "schedule": crontab(minute="*/5"),
+    },
+    "playbook-collect": {
+        "task": "playbook.tasks.collect_playbook",
+        "schedule": crontab(minute="*/30"),
+    },
     "products-run-due-autopilot": {
         "task": "products.tasks.run_due_autopilot",
         "schedule": crontab(hour=5, minute=0),
@@ -439,6 +486,22 @@ USE_FAKE_REPORT_RENDERER = env.bool("USE_FAKE_REPORT_RENDERER", default=True)
 # Public URL of the frontend. Email links point here, not at the API.
 SITE_URL = env("SITE_URL", default="http://localhost:3000")
 
+# Email
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = env("EMAIL_HOST", default="localhost")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER or "no-reply@attractvision.com"
+)
+
+# How long before its slot a scheduled post's author gets the heads-up email.
+# Not commercial: it is notification timing, the same kind of value as the
+# reminder TTLs, and every plan gets the same lead.
+POST_HEADS_UP_LEAD_MINUTES = env.int("POST_HEADS_UP_LEAD_MINUTES", default=120)
+
 # -----------------------------------------------------------------------------
 # AI providers — design.md §9, D8/D9. Text targets a generic OpenAI-Chat-
 # Completions-compatible endpoint (design.md names "LLM provider" without
@@ -463,9 +526,15 @@ IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-ima
 # "no provider configured" rather than silently falling back to the fake.
 VIDEO_PROVIDER_API_KEY = env("VIDEO_PROVIDER_API_KEY", default="")
 
-USE_FAKE_AI_PROVIDERS = env.bool(
-    "USE_FAKE_AI_PROVIDERS", default=not (LLM_API_KEY and IMAGE_PROVIDER_API_KEY)
-)
+# One fake switch per vendor (`ai.providers.switches`), each on until its key
+# is set: the NVIDIA key alone makes text real and leaves image and video on
+# their fakes. `USE_FAKE_AI_PROVIDERS` forces every port onto its fake.
+USE_FAKE_AI_PROVIDERS = env.bool("USE_FAKE_AI_PROVIDERS", default=False)
+USE_FAKE_TEXT_PROVIDER = env.bool("USE_FAKE_TEXT_PROVIDER", default=not LLM_API_KEY)
+USE_FAKE_IMAGE_PROVIDER = env.bool("USE_FAKE_IMAGE_PROVIDER", default=not IMAGE_PROVIDER_API_KEY)
+USE_FAKE_VIDEO_PROVIDER = env.bool("USE_FAKE_VIDEO_PROVIDER", default=not VIDEO_PROVIDER_API_KEY)
+# The pre-publish OCR and policy checks (S4) have no vendor yet.
+USE_FAKE_CHECKS_PROVIDER = env.bool("USE_FAKE_CHECKS_PROVIDER", default=True)
 
 # Embeddings share the LLM gateway (`LLM_BASE_URL`/`LLM_API_KEY`) and the same
 # fake switch — one vendor relationship, three endpoints. Changing the model
@@ -490,8 +559,42 @@ USE_FAKE_TREND_VENDORS = env.bool(
 )
 
 # -----------------------------------------------------------------------------
+# Playbook — the wall of trending public posts (`playbook/`), filled by two free
+# providers ported from trendgen: YouTube's Data API (`YOUTUBE_API_KEY`, above)
+# and Google Trends' public RSS (no key). A provider without its key collects
+# from the fake, whose rows are marked and never served unless
+# `PLAYBOOK_SHOW_SAMPLE` is on — which `prod.py` pins off.
+# -----------------------------------------------------------------------------
+# Every Playbook variable reads an empty value as "use the default", so the
+# keys can sit blank in `.env` without failing an int or list parse at boot.
+PLAYBOOK_DEFAULT_REGION = env("PLAYBOOK_DEFAULT_REGION", default="") or "TN"
+#: The markets seeded with sources. A new market is a row, or this list and
+#: `seed_playbook_sources`.
+PLAYBOOK_REGIONS = env.list("PLAYBOOK_REGIONS", default=[]) or ["TN"]
+USE_FAKE_PLAYBOOK_COLLECTORS = env.bool("USE_FAKE_PLAYBOOK_COLLECTORS", default=False)
+PLAYBOOK_SHOW_SAMPLE = env.bool("PLAYBOOK_SHOW_SAMPLE", default=False)
+#: Where the frontend serves the fake collector's sample pictures.
+PLAYBOOK_SAMPLE_IMAGE_BASE = env("PLAYBOOK_SAMPLE_IMAGE_BASE", default="")
+PLAYBOOK_COLLECTOR_TIMEOUT_SECONDS = int(
+    env("PLAYBOOK_COLLECTOR_TIMEOUT_SECONDS", default="") or 15
+)
+PLAYBOOK_USER_AGENT = env("PLAYBOOK_USER_AGENT", default="") or "composevision-playbook/1.0"
+
+# Reading a reference post's picture for the image model (`ai.providers.
+# reference_images`). Only these hosts — the providers' own image CDNs — are
+# ever fetched; a leading dot allows subdomains. Never stored.
+REFERENCE_IMAGE_HOSTS = env.list("REFERENCE_IMAGE_HOSTS", default=[]) or [
+    "i.ytimg.com",
+    "i9.ytimg.com",
+    ".ggpht.com",
+]
+REFERENCE_IMAGE_MAX_BYTES = int(env("REFERENCE_IMAGE_MAX_BYTES", default="") or 5 * 1024 * 1024)
+REFERENCE_IMAGE_TIMEOUT_SECONDS = int(env("REFERENCE_IMAGE_TIMEOUT_SECONDS", default="") or 10)
+USE_FAKE_REFERENCE_IMAGES = env.bool("USE_FAKE_REFERENCE_IMAGES", default=False)
+
+# -----------------------------------------------------------------------------
 # Publishing provider — design.md §9, D2/D3, verified by V1 (§14). All platform
-# credentials live with the provider; OCCS stores none (§6.2). Same USE_FAKE_*
+# credentials live with the provider; ComposeVision stores none (§6.2). Same USE_FAKE_*
 # shape as billing/storage/AI: no key configured means no provider to fake
 # around.
 # -----------------------------------------------------------------------------
@@ -499,7 +602,14 @@ ZERNIO_BASE_URL = env("ZERNIO_BASE_URL", default="https://zernio.com/api")
 ZERNIO_API_KEY = env("ZERNIO_API_KEY", default="")
 ZERNIO_TIMEOUT_SECONDS = env.int("ZERNIO_TIMEOUT_SECONDS", default=30)
 
-USE_FAKE_PLATFORM_ADAPTER = env.bool("USE_FAKE_PLATFORM_ADAPTER", default=not ZERNIO_API_KEY)
+#: `True` forces the fakes, `False` forces the selected real provider, and
+#: blank (`None`) is **auto**: the fakes until the provider chosen by
+#: `SOCIAL_PROVIDER` has its key *and* its adapters — resolved at call time by
+#: `social_providers.registry`, because whether an adapter exists is a code
+#: fact a settings module cannot see. `prod.py` pins `False`.
+USE_FAKE_PLATFORM_ADAPTER: bool | None = (
+    env.bool("USE_FAKE_PLATFORM_ADAPTER") if env("USE_FAKE_PLATFORM_ADAPTER", default="") else None
+)
 
 # -----------------------------------------------------------------------------
 # Media editing (P1-12). Image editing runs on Pillow, already a dependency, so
@@ -516,6 +626,44 @@ USE_FAKE_MEDIA_EDITOR = env.bool("USE_FAKE_MEDIA_EDITOR", default=False)
 # webhook that accepted anything would be an open write path into the audience
 # tables.
 ZERNIO_WEBHOOK_SECRET = env("ZERNIO_WEBHOOK_SECRET", default="")
+
+# -----------------------------------------------------------------------------
+# SocialAPI.ai — the primary publishing, measurement and comments provider
+# (`social-provider-plan.md`); Zernio above is the kept alternative. Blank
+# values fall back to the defaults. Nothing reads these until SA-10 lands.
+# -----------------------------------------------------------------------------
+SOCIAL_PROVIDER = env("SOCIAL_PROVIDER", default="") or "socialapi"
+SOCIALAPI_BASE_URL = env("SOCIALAPI_BASE_URL", default="") or "https://api.social-api.ai/v1"
+SOCIALAPI_API_KEY = env("SOCIALAPI_API_KEY", default="")
+SOCIALAPI_WEBHOOK_SECRET = env("SOCIALAPI_WEBHOOK_SECRET", default="")
+#: The secret being retired during a rotation (`socialapi_webhooks rotate`):
+#: still accepted until the old endpoint is retired, so no delivery is lost.
+SOCIALAPI_WEBHOOK_SECRET_PREVIOUS = env("SOCIALAPI_WEBHOOK_SECRET_PREVIOUS", default="")
+#: How old a delivery's signed timestamp may be (replay protection, plan G10).
+SOCIALAPI_WEBHOOK_TOLERANCE_SECONDS = int(
+    env("SOCIALAPI_WEBHOOK_TOLERANCE_SECONDS", default="") or 300
+)
+#: How long received deliveries are kept for dedupe and the cockpit.
+SOCIALAPI_WEBHOOK_RETENTION_DAYS = int(env("SOCIALAPI_WEBHOOK_RETENTION_DAYS", default="") or 30)
+SOCIALAPI_TIMEOUT_SECONDS = int(env("SOCIALAPI_TIMEOUT_SECONDS", default="") or 30)
+#: The team-wide request budget assumed before the first response tells us the
+#: real one (`X-RateLimit-Limit`): 60/min is the Free plan with ≤2 accounts.
+#: Vendor capacity, calibrated live — not a commercial number.
+SOCIALAPI_REQUESTS_PER_MINUTE = int(env("SOCIALAPI_REQUESTS_PER_MINUTE", default="") or 60)
+#: Share of each minute background traffic (capture, comments) may never draw
+#: into, so publishing is never blocked by capture (Part 7 rule 11).
+SOCIALAPI_PUBLISH_RESERVE_RATIO = float(env("SOCIALAPI_PUBLISH_RESERVE_RATIO", default="") or 0.4)
+#: Successful reads logged to `ProviderCall`; writes and failures always are.
+SOCIALAPI_READ_SAMPLE_RATE = float(env("SOCIALAPI_READ_SAMPLE_RATE", default="") or 0.1)
+#: How long the call log is kept for the cockpit.
+SOCIALAPI_CALL_RETENTION_DAYS = int(env("SOCIALAPI_CALL_RETENTION_DAYS", default="") or 30)
+# How published media reaches SocialAPI (SA-31): `url` sends a signed URL of our
+# storage, `upload` sends the bytes. Blank = auto: `upload` for local or private
+# storage (the vendor rejects private addresses), `url` for public object storage.
+SOCIALAPI_MEDIA_MODE = env("SOCIALAPI_MEDIA_MODE", default="")
+# How long a signed media URL handed to the provider stays valid. The vendor
+# fetches at publish time; TikTok keeps pulling while it processes.
+SOCIALAPI_MEDIA_URL_TTL_SECONDS = int(env("SOCIALAPI_MEDIA_URL_TTL_SECONDS", default="") or 21600)
 
 # The publishing provider fetches media by URL, so a storage-relative path is
 # unusable to it. S3/MinIO already yields absolute URLs; local disk does not.

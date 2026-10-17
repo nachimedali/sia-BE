@@ -132,3 +132,29 @@ def thread_event(thread: Any, *, event_key: str, actor: Any, recipients: Iterabl
         },
         exclude=actor,
     )
+
+
+def account_event(account: Any, *, reason: str) -> int:
+    """Tells the workspace's admins that an account needs reconnecting — the
+    people who can do it, from the connections page."""
+    from workspaces.models import Membership
+
+    admins = [
+        membership.user
+        for membership in Membership.objects.filter(
+            workspace=account.workspace, permissions__contains=["admin"]
+        ).select_related("user")
+    ]
+    label = account.display_name or account.handle or account.get_platform_display()
+    return notify(
+        users=admins,
+        workspace=account.workspace,
+        event_key=EventKey.ACCOUNT_RECONNECT,
+        payload={
+            "social_account": account.pk,
+            "platform": account.platform,
+            "title": label,
+            "reason": reason,
+            "subject": f"Reconnect {label} on {account.get_platform_display()}: {reason}",
+        },
+    )

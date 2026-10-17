@@ -57,6 +57,7 @@ from workspaces.serializers import (
     OrganizationAddonWriteSerializer,
     OrganizationSerializer,
     WorkspaceProfileSerializer,
+    WorkspaceQuoteSerializer,
     WorkspaceSerializer,
     WorkspaceSettingsSerializer,
 )
@@ -290,7 +291,7 @@ class MembershipViewSet(WorkspaceScopedQuerySetMixin, viewsets.GenericViewSet[Me
     @extend_schema(
         request=MemberAddSerializer,
         responses={201: MembershipSerializer},
-        summary="Add an existing OCCS account to the team",
+        summary="Add an existing ComposeVision account to the team",
         description="See `workspaces.services.membership` for why this takes an existing "
         "account's email rather than sending an invitation email.",
     )
@@ -360,12 +361,24 @@ class WorkspaceListCreateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def annotated(queryset: Any) -> Any:
+        """The counts each card shows. `distinct=True` on both: two joins in
+        one query would otherwise multiply each other."""
+        return queryset.annotate(
+            member_count=Count("memberships", distinct=True),
+            product_count=Count("products", distinct=True),
+        ).order_by("created_at", "id")
+
     @extend_schema(
         responses={200: WorkspaceSerializer(many=True)}, summary="Workspaces this user can open"
     )
     def get(self, request: Request) -> Response:
         user = authenticated_user(request)
-        workspaces = Workspace.objects.filter(memberships__user=user).distinct()
+        # A subquery, not `filter(memberships__user=…)`: a filter on the same
+        # relation before `annotate` would count only the caller's membership.
+        mine = Membership.objects.filter(user=user).values("workspace")
+        workspaces = self.annotated(Workspace.objects.filter(pk__in=mine))
         return Response(WorkspaceSerializer(workspaces, many=True).data)
 
     @extend_schema(
@@ -377,15 +390,41 @@ class WorkspaceListCreateView(APIView):
         payload = WorkspaceSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         workspace = provisioning.provision_extra_workspace(
-            user=authenticated_user(request), name=payload.validated_data["name"]
+            user=authenticated_user(request),
+            name=payload.validated_data["name"],
+            description=payload.validated_data.get("description", ""),
         )
         # Outside the provisioning transaction on purpose: the gateway call is
         # a network round-trip, and holding a transaction across one is how a
         # slow vendor becomes a database outage. A failure leaves the workspace
         # `PENDING_BILLING` and read-only rather than refusing it (P0-18).
         subscriptions.sync_workspace_quantity(workspace.organization)
-        workspace.refresh_from_db()
+        workspace = self.annotated(Workspace.objects.filter(pk=workspace.pk)).get()
         return Response(WorkspaceSerializer(workspace).data, status=status.HTTP_201_CREATED)
+
+
+class WorkspaceQuoteView(APIView):
+    """`GET /workspaces/quote/` — what the next workspace would cost (P0-17).
+
+    For the caller's organization, the same one `provision_extra_workspace`
+    creates into, so the quote and the charge are about the same company.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: WorkspaceQuoteSerializer}, summary="Price of one more workspace")
+    def get(self, request: Request) -> Response:
+        user = authenticated_user(request)
+        organization = (
+            Organization.objects.filter(memberships__user=user)
+            .select_related("plan")
+            .order_by("created_at")
+            .first()
+        )
+        if organization is None:
+            raise NotFoundError("No organization.", code="organization_not_found")
+        quote = subscriptions.workspace_quote(organization)
+        return Response(WorkspaceQuoteSerializer(quote).data)
 
 
 class WorkspaceInviteView(APIView):

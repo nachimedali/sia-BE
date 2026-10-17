@@ -39,6 +39,9 @@ ALLOWED: frozenset[str] = frozenset(
     {
         # Provider rate limits — vendor capacity, not anything a customer buys.
         "RATELIMIT_REDIS_URL",
+        # A safety ceiling on a server-side image fetch (the Playbook's
+        # reference pictures) — a guard against a hostile host, not a quota.
+        "REFERENCE_IMAGE_MAX_BYTES",
         # Postgres connection reuse, in seconds. "MAX_AGE" trips the word list
         # and has nothing to do with commerce.
         "DB_CONN_MAX_AGE",

@@ -12,17 +12,19 @@ from __future__ import annotations
 
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common.exceptions import NotFoundError
 from common.workspaces import authenticated_user, request_workspace
 from tools import readiness as readiness_service
 from tools import services
 from tools.models import ToolConfig
 from tools.serializers import (
     ToolConfigSerializer,
+    ToolPriceSerializer,
     ToolReadinessSerializer,
     ToolRunSerializer,
     ToolUsageSerializer,
@@ -58,7 +60,35 @@ class ToolReadinessView(APIView):
     )
     def get(self, request: Request) -> Response:
         payload = readiness_service.tools_readiness(request_workspace(request))
+        payload["can_edit_prices"] = bool(request.user.is_staff)
         return Response(ToolReadinessSerializer(payload).data)
+
+
+class ToolPriceView(APIView):
+    """`PATCH /tools/{slug}/price/` — platform staff only (X-38).
+
+    `ToolConfig` is one row per tool for every customer, so this is an
+    operator's control, not an organization admin's: a customer repricing it
+    would reprice everyone. Applies from the next run; past usage keeps what
+    it was charged.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    @extend_schema(
+        request=ToolPriceSerializer,
+        responses={200: ToolConfigSerializer},
+        summary="Change a tool's price per run (staff only)",
+    )
+    def patch(self, request: Request, slug: str) -> Response:
+        config = ToolConfig.objects.filter(slug=slug).first()
+        if config is None:
+            raise NotFoundError("No such tool.", code="tool_not_found")
+        payload = ToolPriceSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        config.credits_cost = payload.validated_data["credits_cost"]
+        config.save(update_fields=["credits_cost", "updated_at"])
+        return Response(ToolConfigSerializer(config).data)
 
 
 class ToolRunView(APIView):

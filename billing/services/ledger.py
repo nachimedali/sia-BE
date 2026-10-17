@@ -165,18 +165,21 @@ def grant_credits(
     Credits do not roll over unless the plan says they do (§4.1), so the grant
     writes a zeroing row first. Two rows rather than one net figure, because
     "you were given 150 and 20 expired" is the answer a billing question needs.
+
+    Only the allowance expires: what was bought is not taken back, the same
+    rule `grant_video_units` applies to video.
     """
     _lock_workspace(workspace)
     rows: list[CreditLedger] = []
 
     if not rollover:
-        balance = _balance(CreditLedger, workspace)
-        if balance > 0:
+        expiring = included_credit_balance(workspace)
+        if expiring > 0:
             rows.append(
                 _append(
                     CreditLedger,
                     workspace,
-                    delta=-balance,
+                    delta=-expiring,
                     reason=reason,
                     note="expired: credits do not roll over",
                 )
@@ -336,6 +339,28 @@ def purchase_video_units(
     )
 
 
+def included_credit_balance(workspace: Workspace) -> int:
+    """The credits that did not come from a pack — what a monthly reset may
+    expire. Everything except `PURCHASE`, floored at zero: spending draws on
+    the allowance first, exactly as `included_video_balance` counts video."""
+    total = (
+        CreditLedger.objects.filter(workspace=workspace)
+        .exclude(reason=CreditReason.PURCHASE)
+        .aggregate(total=Sum("delta"))["total"]
+    )
+    return max(0, int(total or 0))
+
+
+def pack_credit_balance(workspace: Workspace) -> int:
+    """What is left of the credits bought as packs."""
+    return credit_balance(workspace) - included_credit_balance(workspace)
+
+
+def pack_video_balance(workspace: Workspace) -> int:
+    """What is left of the video units bought as packs."""
+    return video_balance(workspace) - included_video_balance(workspace)
+
+
 def included_video_balance(workspace: Workspace) -> int:
     """The part of the balance that did **not** come from a prepaid pack.
 
@@ -409,9 +434,11 @@ def replies_used_this_month(organization: Any, *, now: dt.datetime | None = None
     moment = now or timezone.now()
     start = moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     total = ReplyLedger.objects.filter(
-        organization=organization, reason=ReplyReason.OUTBOUND, created_at__gte=start
+        organization=organization,
+        reason__in=(ReplyReason.OUTBOUND, ReplyReason.REFUNDED),
+        created_at__gte=start,
     ).aggregate(total=Sum("delta"))["total"]
-    return abs(int(total or 0))
+    return max(-int(total or 0), 0)
 
 
 @transaction.atomic
@@ -462,4 +489,27 @@ def debit_reply(
         reason=ReplyReason.OUTBOUND,
         actor=actor,
         note=note,
+    )
+
+
+@transaction.atomic
+def refund_reply(debit: Any, *, note: str = "") -> Any:
+    """Returns one reply to the pool after the provider refused it — a
+    compensating row against `debit`, never an edit or a delete of it."""
+    from billing.models import ReplyLedger
+
+    organization = debit.organization
+    type(organization).objects.select_for_update().filter(pk=organization.pk).exists()
+    balance = (
+        ReplyLedger.objects.filter(organization=organization).aggregate(total=Sum("delta"))["total"]
+        or 0
+    )
+    return ReplyLedger.objects.create(
+        organization=organization,
+        workspace=debit.workspace,
+        delta=1,
+        balance_after=int(balance) + 1,
+        reason=ReplyReason.REFUNDED,
+        actor=debit.actor,
+        note=(note or f"refund of #{debit.pk}")[:200],
     )

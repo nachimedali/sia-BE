@@ -40,7 +40,7 @@ from products.services.products import attach_reference_images, create_product
 from workspaces.models import Workspace
 from workspaces.services.provisioning import provision_workspace
 
-BENCHMARK_WORKSPACE_NAME = "OCCS Eval Harness"
+BENCHMARK_WORKSPACE_NAME = "ComposeVision Eval Harness"
 
 
 @dataclass(frozen=True)

@@ -40,7 +40,9 @@ from content.models import (
     PostMediaAttachment,
     PostSource,
     PostStatus,
+    PostTarget,
     PostTemplate,
+    RecurrenceOccurrence,
     RecurrenceRule,
 )
 from content.serializers import (
@@ -125,7 +127,12 @@ class PostViewSet(
     pagination_class = DefaultPagination
     queryset = Post.objects.select_related(
         "category", "origin_post", "author", "product"
-    ).prefetch_related(_ORDERED_MEDIA_ATTACHMENTS, "targets")
+    ).prefetch_related(
+        _ORDERED_MEDIA_ATTACHMENTS,
+        # The account rides along in the same query: a failed target says
+        # whether reconnecting is the fix.
+        Prefetch("targets", queryset=PostTarget.objects.select_related("social_account")),
+    )
 
     @extend_schema(
         parameters=[
@@ -946,7 +953,14 @@ class PostTemplateViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Po
     serializer_class = PostTemplateSerializer
     permission_classes: list[Any] = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]
     pagination_class = DefaultPagination
-    queryset = PostTemplate.objects.select_related("created_by")
+    queryset = PostTemplate.objects.select_related("created_by").prefetch_related(
+        Prefetch(
+            "made_posts",
+            queryset=Post.objects.only("id", "template_id", "template_version", "status").order_by(
+                "-created_at", "-id"
+            ),
+        )
+    )
 
     def perform_create(self, serializer: BaseSerializer[PostTemplate]) -> None:
         serializer.save(
@@ -976,7 +990,14 @@ class RecurrenceRuleViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[
     serializer_class = RecurrenceRuleSerializer
     permission_classes: list[Any] = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]
     pagination_class = DefaultPagination
-    queryset = RecurrenceRule.objects.select_related("source")
+    queryset = RecurrenceRule.objects.select_related("source").prefetch_related(
+        Prefetch(
+            "occurrences",
+            queryset=RecurrenceOccurrence.objects.select_related("post")
+            .only("id", "rule_id", "slot_at", "post_id", "post__status")
+            .order_by("-slot_at"),
+        )
+    )
     #: The rule hangs off a template, which is what carries the workspace.
     workspace_field = "source__workspace"
 

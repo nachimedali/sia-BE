@@ -234,7 +234,15 @@ class OrganizationSerializer(serializers.ModelSerializer[Organization]):
 
 
 class WorkspaceSerializer(serializers.ModelSerializer[Workspace]):
-    """A brand inside the organization."""
+    """A brand inside the organization.
+
+    `status` is read-only: billing decides it (P0-18). The counts are
+    annotations from `WorkspaceListCreateView.annotated`, which every response
+    goes through, so a card never shows a number nobody counted.
+    """
+
+    member_count = serializers.IntegerField(read_only=True)
+    product_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Workspace
@@ -242,15 +250,43 @@ class WorkspaceSerializer(serializers.ModelSerializer[Workspace]):
             "id",
             "name",
             "slug",
+            "status",
             "logo",
             "website",
             "description",
             "timezone",
             "soft_budget_posts",
             "soft_budget_credits",
+            "member_count",
+            "product_count",
             "created_at",
         )
-        read_only_fields = ("id", "slug", "created_at")
+        read_only_fields = ("id", "slug", "status", "created_at")
+
+
+class ResolvedAmountSerializer(serializers.Serializer[Any]):
+    amount_minor = serializers.IntegerField(read_only=True)
+    currency = serializers.CharField(read_only=True)
+    display = serializers.CharField(read_only=True)
+
+
+class WorkspaceQuoteSerializer(serializers.Serializer[Any]):
+    """What the next workspace would cost, stated before Create (P0-17).
+
+    `included` is -1 on an unlimited plan. `next_billed` is false beyond the
+    allowance when there is no subscription to bill against yet (a trial):
+    the page must not promise a charge that will not happen.
+    """
+
+    included = serializers.IntegerField(read_only=True)
+    used = serializers.IntegerField(read_only=True)
+    extra = serializers.IntegerField(read_only=True)
+    beyond_allowance = serializers.BooleanField(read_only=True)
+    next_billed = serializers.BooleanField(read_only=True)
+    per_workspace = ResolvedAmountSerializer(read_only=True)
+    prorated = ResolvedAmountSerializer(read_only=True, allow_null=True)
+    days_left = serializers.IntegerField(read_only=True, allow_null=True)
+    cycle_days = serializers.IntegerField(read_only=True, allow_null=True)
 
 
 class InvitationSerializer(serializers.ModelSerializer[Invitation]):

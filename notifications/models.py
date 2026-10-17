@@ -28,6 +28,9 @@ class EventKey(models.TextChoices):
     POST_REJECTED = "post.rejected", "A post was rejected"
     THREAD_ASSIGNED = "thread.assigned", "A thread was assigned to you"
     THREAD_COMMENTED = "thread.commented", "Someone replied on a thread"
+    #: The platform revoked access or removed a Page (SA-42): nothing publishes
+    #: through the account until someone reconnects it.
+    ACCOUNT_RECONNECT = "account.reconnect", "A connected account needs reconnecting"
 
 
 class Transport(models.TextChoices):
@@ -54,6 +57,8 @@ DEFAULT_TRANSPORTS: dict[str, list[str]] = {
     # product, and the one preference everybody eventually changes should be
     # the default.
     EventKey.THREAD_COMMENTED: [Transport.IN_APP],
+    # Scheduled posts stop going out until someone acts: worth an email.
+    EventKey.ACCOUNT_RECONNECT: [Transport.IN_APP, Transport.EMAIL],
 }
 
 

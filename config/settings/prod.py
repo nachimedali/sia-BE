@@ -21,12 +21,12 @@ SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 X_FRAME_OPTIONS = "DENY"
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+# Backend, port and TLS come from base.py's env reads; the four below are read
+# again without a fallback so a deploy missing them fails at boot instead of
+# trying to relay through localhost.
 EMAIL_HOST = env("EMAIL_HOST")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
-EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")
 
 SENTRY_DSN = env("SENTRY_DSN", default="")
@@ -40,10 +40,25 @@ SENTRY_DSN = env("SENTRY_DSN", default="")
 # fallback so a missing one stops the boot instead.
 USE_FAKE_PLATFORM_ADAPTER = False
 USE_FAKE_AI_PROVIDERS = False
+USE_FAKE_TEXT_PROVIDER = False
+USE_FAKE_IMAGE_PROVIDER = False
+USE_FAKE_VIDEO_PROVIDER = False
+USE_FAKE_CHECKS_PROVIDER = False
 USE_FAKE_MEDIA_EDITOR = False
 USE_FAKE_TREND_VENDORS = False
+USE_FAKE_PLAYBOOK_COLLECTORS = False
+USE_FAKE_REFERENCE_IMAGES = False
+# The fake collector's rows are fixtures. A deploy with no YouTube key still
+# collects from the fake (that is the registry's rule), and this is what keeps
+# those rows off a customer's wall.
+PLAYBOOK_SHOW_SAMPLE = False
 # The filesystem fake is served without auth (config/urls.py). A deploy that
 # lost AWS_S3_ENDPOINT_URL must fail at upload, not serve media publicly.
 USE_FAKE_STORAGE = False
 STORAGES = {**STORAGES, "default": {"BACKEND": "storages.backends.s3.S3Storage"}}  # noqa: F405
-ZERNIO_API_KEY = env("ZERNIO_API_KEY")
+# The selected social provider's key is read without a fallback: a deploy that
+# lost it must fail at boot, not quietly start publishing nowhere.
+if SOCIAL_PROVIDER == "zernio":  # noqa: F405
+    ZERNIO_API_KEY = env("ZERNIO_API_KEY")
+else:
+    SOCIALAPI_API_KEY = env("SOCIALAPI_API_KEY")

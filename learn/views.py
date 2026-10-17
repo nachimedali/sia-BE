@@ -58,7 +58,9 @@ class DigestViewSet(WorkspaceScopedQuerySetMixin, viewsets.ReadOnlyModelViewSet[
         HasPermission(Permission.ANALYZE),
     ]
     pagination_class = DefaultPagination
-    queryset = Digest.objects.prefetch_related("findings", "proposed_rulesets__rules")
+    queryset = Digest.objects.select_related("campaign").prefetch_related(
+        "findings", "proposed_rulesets__rules__decisions"
+    )
 
     @extend_schema(
         request=RunLearnSerializer,

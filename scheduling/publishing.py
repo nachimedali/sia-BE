@@ -34,14 +34,22 @@ from django.utils import timezone
 from billing.services.entitlements import entitlements_for
 from billing.services.subscriptions import current_period_start
 from channels import services as channel_services
-from channels.adapters.base import PlatformError
-from channels.adapters.zernio import get_platform_adapter
+from channels.adapters import get_platform_adapter, provider_key
+from channels.adapters.base import PlatformError, PublishResult
 from channels.models import SocialAccount, SocialAccountStatus
 from common.exceptions import OCCSError
 from common.mail import Email, get_mail_sender
 from common.ratelimit import ProviderRateLimiter
-from content.models import DeliveryMode, Post, PostStatus, PostTarget, PostTargetState
+from content.models import (
+    DeliveryMode,
+    Post,
+    PostStatus,
+    PostTarget,
+    PostTargetState,
+    ProviderState,
+)
 from content.services.adaptation import render_post
+from scheduling.journal import TargetJournal, publish_media
 from workspaces.services import approvals
 
 logger = logging.getLogger(__name__)
@@ -252,11 +260,21 @@ def _publish_target(target: PostTarget) -> None:
     `PlatformError` with `retryable=True` means the caller should back off — the
     Celery task is what turns that into a countdown, because only it knows how
     many attempts it has already spent.
+
+    A provider that publishes in the background (SocialAPI) answers *pending*:
+    the target stays `PUBLISHING` and `scheduling.reconcile` reads the outcome.
+    Such a target is never sent again from here — a second request while the
+    platform is still processing is how a post goes out twice.
     """
     if target.state == PostTargetState.PUBLISHED:
         # I9's local half: a replayed task does not re-send, regardless of
         # whether the provider still remembers the idempotency key.
         return
+    if (
+        target.state == PostTargetState.PUBLISHING
+        and target.provider_state == ProviderState.PUBLISH_REQUESTED
+    ):
+        return  # the provider has it; the reconciler reads the outcome
 
     account = target.social_account
     if account is None:
@@ -271,6 +289,16 @@ def _publish_target(target: PostTarget) -> None:
     except channel_services.AccountNotPublishableError as error:
         raise _terminal(target, error.message, error.payload) from error
 
+    # An id minted by one vendor is never sent to another (plan §1); the
+    # account's half of that is `ensure_publishable`'s.
+    provider = provider_key("publish")
+    if target.provider_key and target.provider_key != provider:
+        raise _terminal(
+            target,
+            "This post was started with another publishing provider; schedule it again.",
+            {"target_provider": target.provider_key, "provider": provider},
+        )
+
     allowance = _limiter(account).consume_for_publish()
     if not allowance:
         raise PlatformError(
@@ -280,30 +308,66 @@ def _publish_target(target: PostTarget) -> None:
         )
 
     target.state = PostTargetState.PUBLISHING
-    target.save(update_fields=["state", "updated_at"])
+    target.provider_key = provider
+    target.save(update_fields=["state", "provider_key", "updated_at"])
 
+    adapter = get_platform_adapter()
     try:
-        result = get_platform_adapter().publish(
+        result = adapter.publish(
             platform=target.platform,
             provider_account_id=account.provider_account_id,
             payload=target.rendered_payload,
             idempotency_key=target.idempotency_key or "",
+            journal=TargetJournal(target),
+            media=publish_media(target),
         )
     except PlatformError as error:
         _record_failure(target, error)
         raise
 
+    record_outcome(target, result)
+
+
+def record_outcome(target: PostTarget, result: PublishResult) -> None:
+    """Writes what the provider answered — now, or later via the reconciler."""
+    if result.failed:
+        error = PlatformError(
+            str(result.error.get("message") or "The platform refused this post."),
+            detail={"provider": dict(result.error)},
+            code=str(result.error.get("code") or "publish_failed")[:64],
+            retryable=False,
+        )
+        TargetJournal(target).record(provider_state=ProviderState.FAILED)
+        _record_failure(target, error)
+        return
+
     target.provider_post_id = result.provider_post_id
+    if result.pending:
+        target.state = PostTargetState.PUBLISHING
+        target.error_detail = {}
+        target.save(update_fields=["provider_post_id", "state", "error_detail", "updated_at"])
+        logger.info(
+            "publish accepted, awaiting the provider",
+            extra={"post_id": target.post_id, "target_id": target.pk, "platform": target.platform},
+        )
+        return
+
     target.platform_post_id = result.platform_post_id
-    target.published_at = timezone.now()
+    target.permalink = result.permalink[:500]
+    target.published_at = result.published_at or timezone.now()
     target.state = PostTargetState.PUBLISHED
+    target.provider_state = ProviderState.PUBLISHED if target.provider_state else ""
+    target.provider_state_at = timezone.now()
     target.error_detail = {}
     target.save(
         update_fields=[
             "provider_post_id",
             "platform_post_id",
+            "permalink",
             "published_at",
             "state",
+            "provider_state",
+            "provider_state_at",
             "error_detail",
             "updated_at",
         ]
@@ -360,13 +424,13 @@ def publish_post(post: Post) -> Post:
             if error.retryable and target.state != PostTargetState.FAILED:
                 retryable = error
 
-    _settle(post, targets)
+    settle(post, targets)
     if retryable is not None:
         raise retryable
     return post
 
 
-def _settle(post: Post, targets: list[PostTarget]) -> None:
+def settle(post: Post, targets: list[PostTarget]) -> None:
     states = {target.state for target in targets}
     if PostTargetState.PENDING in states or PostTargetState.PUBLISHING in states:
         # Something is still owed an attempt; leave the post mid-flight so the

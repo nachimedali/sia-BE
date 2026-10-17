@@ -16,7 +16,7 @@ import pytest
 import time_machine
 
 from analytics.models import AudienceDemographic, Availability, DemographicDimension
-from analytics.providers.zernio import _shares
+from analytics.providers.base import proportions as _shares
 from analytics.services import ingest
 
 pytestmark = pytest.mark.django_db

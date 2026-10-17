@@ -129,6 +129,11 @@ class Generation(models.Model):
     render_style = models.CharField(max_length=64, blank=True)
     scene = models.CharField(max_length=200, blank=True)
     motion = models.CharField(max_length=64, blank=True)
+    # The Studio brief as the text model rewrote it (`ai.services.rephrase`),
+    # and which model wrote it — "template" when the rewrite failed its checks
+    # and the brief went as written; both empty when it was never rephrased.
+    rephrased_prompt = models.TextField(blank=True, default="")
+    rephrased_by = models.CharField(max_length=64, blank=True, default="")
     duration = models.PositiveIntegerField(null=True, blank=True)
     #: **Every Studio control, as the user set it** — scene, light, camera,
     #: who is in the frame, moods, palette, language, call to action, format,
@@ -235,6 +240,13 @@ class GenerationVariant(models.Model):
     #: the quality gate measured it. **Null** for text variants and for rows
     #: from before this was kept — unknown is not a low score.
     identity_score = models.FloatField(null=True, blank=True)
+    #: A Playbook composition only: how close the render sits to the nearest
+    #: reference post, 0-1, and which one (0 = R1). The gate refuses anything
+    #: above `quality.REFERENCE_MAX_SIMILARITY`; what passed is shown beside
+    #: the picture. Null when no reference picture was read — unknown, not
+    #: "unlike".
+    reference_similarity = models.FloatField(null=True, blank=True)
+    reference_closest = models.PositiveSmallIntegerField(null=True, blank=True)
     platform = models.CharField(max_length=16, blank=True)
     rank = models.PositiveSmallIntegerField(default=0)
     rationale = models.CharField(max_length=300, blank=True)
@@ -405,6 +417,9 @@ class CreativeKind(models.TextChoices):
     REEL_STYLE = "reel_style", "Reel style"
     MUSIC = "music", "Music bed"
     VIDEO_EXTRA = "video_extra", "Video surcharge"
+    # A campaign plan's price lines (steps-plan S5, `planning/plan_seed.py`).
+    # `metadata.credits` on each row, so the price is an admin edit.
+    PLAN_PRICE = "plan_price", "Campaign plan price"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
@@ -537,6 +552,9 @@ class VideoRender(models.Model):
     #: The post copy: the caption of the post this lands on, and the source of
     #: a reel's burned-in captions.
     text = models.TextField(blank=True)
+    # The motion brief as the text model rewrote it; see `Generation`.
+    rephrased_prompt = models.TextField(blank=True, default="")
+    rephrased_by = models.CharField(max_length=64, blank=True, default="")
     #: The still a clip animates, or a reel's first shot: what the output is
     #: `derived_from`.
     source = models.ForeignKey(

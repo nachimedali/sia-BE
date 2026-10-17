@@ -16,8 +16,16 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
-from common.mail import Email, get_mail_sender
-from workspaces.models import Invitation, Membership, OrganizationMembership, Role, Workspace
+from common.mail import Email, first_name_of, get_mail_sender
+from workspaces.models import (
+    Invitation,
+    Membership,
+    OrganizationMembership,
+    Permission,
+    Role,
+    Workspace,
+    resolved_permissions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +44,14 @@ def invite(
         workspace=workspace, email=email, role=role, invited_by=invited_by
     )
 
+    context = _invitation_context(invitation, invited_by)
     get_mail_sender().send(
         Email(
             to=invitation.email,
-            subject=f"You have been invited to {workspace.name}",
-            template="email/workspace_invitation.txt",
+            subject=f"{context['inviter_name']} invited you to {workspace.name}",
+            template="workspace_invitation",
             context={
-                "workspace_name": workspace.name,
-                "inviter": getattr(invited_by, "email", ""),
+                **context,
                 "accept_url": f"{base_url.rstrip('/')}/accept-invite?token={raw}",
             },
         )
@@ -53,6 +61,51 @@ def invite(
         extra={"workspace_id": workspace.pk, "invitation_id": invitation.pk},
     )
     return invitation
+
+
+#: Avatar colours for the member strip, cycled. Display only.
+_MEMBER_COLOURS = ("#4A36A0", "#23918E", "#6B57C4", "#2E2170", "#1A7472")
+_MEMBERS_SHOWN = 5
+
+
+def _initials(text: str) -> str:
+    words = [w for w in text.replace("@", " ").replace(".", " ").split() if w]
+    return "".join(w[0] for w in words[:2]).upper() or "?"
+
+
+def _invitation_context(invitation: Invitation, invited_by: Any) -> dict[str, Any]:
+    """What the invitation design shows: who is asking, the brand, the people
+    already in it, and exactly what the role will be allowed to do."""
+    workspace = invitation.workspace
+    memberships = Membership.objects.filter(workspace=workspace)
+    shown = list(memberships.select_related("user").order_by("created_at")[:_MEMBERS_SHOWN])
+    member_count = memberships.count()
+    inviter_membership = memberships.filter(user=invited_by).first() if invited_by else None
+    inviter_name = first_name_of(invited_by) if invited_by else workspace.name
+    granted = resolved_permissions(invitation.role, invitation.permissions)
+    brands = workspace.organization.workspaces.count() if workspace.organization_id else 1
+    return {
+        "email": invitation.email,
+        "workspace_name": workspace.name,
+        "workspace_initials": _initials(workspace.name),
+        "inviter_name": inviter_name,
+        "inviter_email": getattr(invited_by, "email", ""),
+        "inviter_initials": _initials(inviter_name) if invited_by else "",
+        "inviter_role": inviter_membership.get_role_display() if inviter_membership else "",
+        "role": invitation.get_role_display(),
+        "role_permissions": [p.label for p in Permission if p.value in granted],
+        "members": [
+            {
+                "initials": _initials(m.user.email),
+                "color": _MEMBER_COLOURS[i % len(_MEMBER_COLOURS)],
+            }
+            for i, m in enumerate(shown)
+        ],
+        "member_count": member_count,
+        "more_members": max(0, member_count - _MEMBERS_SHOWN),
+        "brands_text": f"{brands} brand{'' if brands == 1 else 's'}",
+        "expires_on": invitation.expires_at.strftime("%d %b %Y"),
+    }
 
 
 @transaction.atomic

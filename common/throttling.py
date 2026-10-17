@@ -90,6 +90,14 @@ class PasswordResetThrottle(IPTokenBucketThrottle):
     refill_per_second = 1 / 120
 
 
+class VerificationCodeThrottle(IPTokenBucketThrottle):
+    # Per IP, on top of the five-guess cap each code carries: that cap stops
+    # walking one code, this stops walking many accounts from one place.
+    scope = "auth:verify-code"
+    capacity = 10
+    refill_per_second = 1 / 30
+
+
 class VerificationResendThrottle(IPTokenBucketThrottle):
     scope = "auth:resend"
     capacity = 5

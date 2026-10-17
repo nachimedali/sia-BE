@@ -39,8 +39,24 @@ USE_FAKE_MAIL = True
 USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True
+# Hermetic: the suite never reads a real social-provider key from `.env`. The
+# live SocialAPI check opts in with `SOCIALAPI_LIVE_TESTS=1` and reads the key
+# from the environment itself (`social_providers/tests/test_live.py`).
+SOCIALAPI_API_KEY = ""
+SOCIALAPI_WEBHOOK_SECRET = ""
 USE_FAKE_TREND_VENDORS = True
+USE_FAKE_PLAYBOOK_COLLECTORS = True
+USE_FAKE_REFERENCE_IMAGES = True
+PLAYBOOK_SHOW_SAMPLE = True
 USE_FAKE_MEDIA_EDITOR = True
+# The root conftest turns the master `USE_FAKE_AI_PROVIDERS` on for every
+# test. The per-port switches are pinned off so the master alone decides: a
+# test that turns it off reaches the real adapter (against a mocked transport),
+# and a key in the local `.env` never changes what the suite does.
+USE_FAKE_TEXT_PROVIDER = False
+USE_FAKE_IMAGE_PROVIDER = False
+USE_FAKE_VIDEO_PROVIDER = False
+USE_FAKE_CHECKS_PROVIDER = False
 MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="occs-test-media-"))
 STORAGES = {
     **STORAGES,  # noqa: F405

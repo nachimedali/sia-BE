@@ -33,6 +33,7 @@ SEEDS = [
     "ai.migrations.0009_revise_reason",
     "ai.migrations.0011_catalog_v2",
     "ai.migrations.0013_video_catalog",
+    "ai.migrations.0017_italian_language",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -68,6 +69,8 @@ def test_the_seed_migrations_populate_every_catalogue_a_fresh_install_needs() ->
     # S3: the Motion step's controls, each with its price on the row.
     for kind in ("video_length", "motion", "video_aspect", "reel_style", "music", "video_extra"):
         assert CreativeOption.objects.filter(kind=kind).exists(), kind
+    # L-6 amended: Italian reaches a database seeded before it existed.
+    assert CreativeOption.objects.filter(kind="language", key="it", is_active=True).exists()
     clip = CreativeOption.objects.get(kind="video_length", key="clip-5")
     assert clip.metadata["credits"] == 6
     assert TrendSource.objects.filter(workspace__isnull=True).count() == counts["TrendSource"]
@@ -108,3 +111,43 @@ def test_the_guard_keeps_the_suite_off_the_seed(settings) -> None:
     before = _counts()
     _run_all()
     assert _counts() == before
+
+
+def test_socialapi_capability_rows_seed_unavailable_pairs_too() -> None:
+    """SA-51: the rows that say *no* are what turn a vendor's `0` into a null,
+    so they are seeded as deliberately as the ones that say yes — and an
+    operator who flips one in admin keeps the flip."""
+    from analytics.models import MetricCapability
+
+    seed = import_module("analytics.migrations.0011_seed_socialapi_capabilities")
+    seed.forwards(apps, None)
+    rows = MetricCapability.objects.filter(provider_key="socialapi")
+
+    assert rows.count() == len(seed.ROWS)
+    facebook_saves = rows.get(platform="facebook", metric_key="saves")
+    assert facebook_saves.available is False and facebook_saves.note
+    instagram_reach = rows.get(platform="instagram", metric_key="reach")
+    assert instagram_reach.available is True
+    assert instagram_reach.latency_hint is not None
+    assert instagram_reach.latency_hint.total_seconds() == 48 * 3600
+    assert not rows.filter(platform="tiktok", available=True).exists()
+
+    MetricCapability.objects.filter(pk=facebook_saves.pk).update(available=True, note="")
+    seed.forwards(apps, None)
+
+    assert rows.count() == len(seed.ROWS)
+    assert rows.get(pk=facebook_saves.pk).available is True
+
+
+def test_the_frozen_rows_match_the_capability_table_they_were_taken_from() -> None:
+    """Drift between the two is allowed only through a new migration; until
+    one exists, they say the same thing."""
+    from social_providers.socialapi.capabilities import METRICS
+
+    seed = import_module("analytics.migrations.0011_seed_socialapi_capabilities")
+    live = {
+        (platform, metric, row["available"], row["latency_hours"], row["note"])
+        for platform, metrics in METRICS.items()
+        for metric, row in metrics.items()
+    }
+    assert set(seed.ROWS) == live

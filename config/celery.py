@@ -87,6 +87,15 @@ app.conf.task_routes = {
     "checks.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
+    # The Playbook's collection is the same kind of work as trend harvest:
+    # elastic, lowest priority, and a refused run keeps the last wall.
+    "playbook.tasks.*": {"queue": "trends_q"},
+    # Webhook post/account lifecycle decides whether posts go out (SA-42):
+    # the publish pool. The audience half joins the measurement pool below.
+    "social_providers.tasks.process_webhook_lifecycle": {"queue": "publish_q"},
+    "social_providers.tasks.process_webhook_inbox": {"queue": "metrics_q"},
+    # Housekeeping, like the other prune jobs.
+    "social_providers.tasks.*": {"queue": "metrics_q"},
     # Grants, trial expiry and reconciliation are periodic bookkeeping: nobody
     # is waiting on them, and they must never delay a scheduled publish.
     "billing.tasks.*": {"queue": "metrics_q"},
@@ -94,6 +103,9 @@ app.conf.task_routes = {
     # Bulk items are ordinary content edits at volume, and a batch of 500 must
     # never be able to delay a scheduled publish — so they share `media_q`'s
     # bookkeeping posture rather than sitting anywhere near `publish_q`.
+    # A campaign plan (S5) is one provider call and a person is watching its
+    # progress, so it joins the generation pool ahead of the bulk wildcard.
+    "planning.tasks.run_campaign_plan": {"queue": "ai_q"},
     "planning.tasks.*": {"queue": "media_q"},
     "learn.tasks.*": {"queue": "analyze_q"},
     # Cohort benchmarks (P8) rebuild a projection over every contributor and

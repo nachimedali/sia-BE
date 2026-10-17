@@ -22,6 +22,8 @@ from analytics.providers.zernio import ZernioMetricsProvider
 from channels.adapters.base import PlatformAdapter
 from channels.adapters.fake import FakePlatformAdapter
 from channels.adapters.zernio import ZernioAdapter
+from social_providers.socialapi.metrics import SocialAPIMetricsProvider
+from social_providers.socialapi.publish import SocialAPIAdapter
 
 #: Anything that acquires measurement. Naming them explicitly rather than
 #: pattern-matching on "fetch": `fetch_metrics` and `fetch_comments` are the
@@ -35,6 +37,9 @@ MEASUREMENT_METHODS = (
     "changed_since",
     "supports",
     "supports_comments",
+    "read_metric",
+    "fetch_demographics",
+    "fetch_account_history",
 )
 
 PUBLISH_METHODS = (
@@ -47,7 +52,7 @@ PUBLISH_METHODS = (
 )
 
 
-@pytest.mark.parametrize("adapter", [FakePlatformAdapter, ZernioAdapter])
+@pytest.mark.parametrize("adapter", [FakePlatformAdapter, ZernioAdapter, SocialAPIAdapter])
 @pytest.mark.parametrize("method", MEASUREMENT_METHODS)
 def test_the_publish_port_carries_no_measurement_method(adapter: Any, method: str) -> None:
     assert not hasattr(adapter, method), (
@@ -56,7 +61,9 @@ def test_the_publish_port_carries_no_measurement_method(adapter: Any, method: st
     )
 
 
-@pytest.mark.parametrize("provider", [FakeMetricsProvider, ZernioMetricsProvider])
+@pytest.mark.parametrize(
+    "provider", [FakeMetricsProvider, ZernioMetricsProvider, SocialAPIMetricsProvider]
+)
 @pytest.mark.parametrize("method", PUBLISH_METHODS)
 def test_the_metrics_port_carries_no_publish_method(provider: Any, method: str) -> None:
     assert not hasattr(provider, method), (
@@ -78,3 +85,6 @@ def test_the_two_ports_share_no_module() -> None:
     vacuously true."""
     assert ZernioMetricsProvider.__module__.startswith("analytics.providers")
     assert ZernioAdapter.__module__.startswith("channels.adapters")
+    # One vendor, two modules: SocialAPI's ports share a client, never a class.
+    assert SocialAPIMetricsProvider.__module__ != SocialAPIAdapter.__module__
+    assert not issubclass(SocialAPIMetricsProvider, SocialAPIAdapter)
