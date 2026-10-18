@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING
 
 from ai.prompts.image_v1 import PROMPT_PREFIX as IMAGE_PROMPT_PREFIX
 from ai.prompts.text_v1 import SYSTEM_PROMPT as TEXT_SYSTEM_PROMPT
+from brand.services.kit import kit_for
+from brand.services.kit import prompt_lines as kit_prompt_lines
 from products import brief as product_brief
 
 if TYPE_CHECKING:
@@ -268,6 +270,13 @@ def assemble_image_prompt(
         user_lines.append("\n".join(rules))
         grounding["references"] = True
     user_lines += _restriction_lines(product)
+
+    # The brand kit (S1-06): appended here, after the rewrite, like the
+    # restrictions — a rewrite of the brief never gets to drop the brand's colours.
+    kit_lines = kit_prompt_lines(kit_for(workspace))
+    if kit_lines:
+        user_lines += kit_lines
+        grounding["brand_kit"] = True
 
     if signal:
         user_lines.append(signal)

@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from checks.ports import OcrResult, PolicyFinding, PolicyResult, TextBox
+from checks.ports import OcrResult, PolicyFinding, PolicyResult, TextBox, VideoFacts
 
 META_HEALTH = "https://transparency.meta.com/policies/ad-standards/"
 
@@ -113,3 +113,22 @@ class ScriptedOcr:
     def read(self, image: bytes) -> OcrResult:
         self.calls += 1
         return OcrResult(boxes=self.boxes, provider="scripted")
+
+
+class FakeVideo:
+    """Facts for a video that opens with movement, has no black frames and no
+    dead air. The fake clip the video fake produces is not decodable, so this
+    stands in for the reader; it returns no last frame, which the end-card check
+    reports as not inspected rather than inventing a picture."""
+
+    def inspect(self, path: str) -> VideoFacts:
+        return VideoFacts(
+            duration=8.0,
+            has_audio=True,
+            black=[],
+            silent=[],
+            first_luma=0.45,
+            motion=0.2,
+            last_frame=None,
+            provider="fake",
+        )

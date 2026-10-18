@@ -132,6 +132,14 @@ VIDEO_S3 = "video_s3"
 #: refused for a check.
 CHECKS_S4 = "checks_s4"
 
+#: steps-plan S2 — the audience inbox: every captured comment in one list with
+#: its intent, an assignee, a status and internal notes, saved replies, and the
+#: reply that reuses the Advanced entitlement. Off restores pre-step behaviour:
+#: the inbox endpoints answer 404 and nothing codes a comment. Coding, triage
+#: and notes already written stay where they are — a flag hides a screen, it
+#: does not delete what a teammate wrote.
+INBOX_S2 = "inbox_s2"
+
 #: steps-plan S5 — the campaign brief, the generated plan and seeding the
 #: calendar with drafts. Off restores pre-step behaviour: the brief, plan,
 #: seed and progress endpoints answer 404 and a campaign is the Phase 3
@@ -175,6 +183,7 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     BRAND_IMPORT_S1: True,
     VIDEO_S3: True,
     CHECKS_S4: True,
+    INBOX_S2: True,
     CAMPAIGN_BRIEF_S5: True,
     STUDIO_REPHRASE: True,
     PRODUCT_SCAN_ASSIST: True,

@@ -98,9 +98,22 @@ class CommentCapabilitiesSerializer(serializers.Serializer[Any]):
     can_private_reply = serializers.BooleanField()
 
 
+#: The platform's five flags, in the order the serializer declares them.
+CAPABILITY_FLAGS = ("can_reply", "can_hide", "can_like", "can_delete", "can_private_reply")
+
+
+def normalised_capabilities(raw: dict[str, Any] | None) -> dict[str, bool] | None:
+    """The five flags, every one present. `None` stays `None` (the provider said
+    nothing: offer no action on its behalf); a provider that sent only some of
+    them has said "no" to the rest, which is what `_allowed` already does — a
+    partial dict must not 500 the feed."""
+    if raw is None:
+        return None
+    return {key: bool(raw.get(key)) for key in CAPABILITY_FLAGS}
+
+
 class CommentSerializer(serializers.ModelSerializer[AudienceComment]):
-    #: `null` where the provider gives no flags: offer no action on its behalf.
-    capabilities = CommentCapabilitiesSerializer(allow_null=True, read_only=True)
+    capabilities = serializers.SerializerMethodField()
     #: `false` where the platform gives no reaction breakdown (SA-61) — shown
     #: as "not shared", never as zero.
     reactions_shared = serializers.SerializerMethodField()
@@ -124,6 +137,10 @@ class CommentSerializer(serializers.ModelSerializer[AudienceComment]):
 
     def get_reactions_shared(self, comment: AudienceComment) -> bool:
         return comment.reactions is not None
+
+    @extend_schema_field(CommentCapabilitiesSerializer(allow_null=True))
+    def get_capabilities(self, comment: AudienceComment) -> dict[str, bool] | None:
+        return normalised_capabilities(comment.capabilities)
 
     @extend_schema_field(CommentStateSerializer)
     def get_state(self, comment: AudienceComment) -> dict[str, Any]:

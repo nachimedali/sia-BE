@@ -24,6 +24,7 @@ from content.models import (
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post
+from inbox.models import SavedReply
 from learn.models import Digest
 from planning.models import BulkOperation, Campaign, Label, SavedView, Timetable
 from products.services.products import create_product
@@ -384,7 +385,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 22
+    assert len(router.registry) == 23
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -450,6 +451,9 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
             workspace=other_workspace, name="Not yours", colour="#FF5722"
         ),
         "saved-view": SavedView.objects.create(workspace=other_workspace, name="Not yours"),
+        "saved-reply": SavedReply.objects.create(
+            workspace=other_workspace, title="Not yours", body="Not yours"
+        ),
         "timetable": Timetable.objects.create(
             workspace=other_workspace, name="Not yours", timezone="UTC"
         ),

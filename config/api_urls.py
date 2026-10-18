@@ -108,6 +108,14 @@ from content.views import (
     PostViewSet,
     RecurrenceRuleViewSet,
 )
+from inbox.views import (
+    InboxCommentDetailView,
+    InboxCommentListView,
+    InboxCommentNotesView,
+    InboxCommentReplyView,
+    InboxSummaryView,
+    SavedReplyViewSet,
+)
 from learn.views import DigestViewSet, ProposedRuleViewSet
 from notifications.views import NotificationListView, NotificationPreferenceView
 from onboarding.views import OnboardingCompleteView, OnboardingView
@@ -170,6 +178,7 @@ router.register("recurrence-rules", RecurrenceRuleViewSet, basename="recurrence-
 router.register("threads", ThreadViewSet, basename="thread")
 router.register("campaigns", CampaignViewSet, basename="campaign")
 router.register("labels", LabelViewSet, basename="label")
+router.register("inbox/saved-replies", SavedReplyViewSet, basename="saved-reply")
 router.register("saved-views", SavedViewViewSet, basename="saved-view")
 router.register("timetables", TimetableViewSet, basename="timetable")
 router.register("bulk-operations", BulkOperationViewSet, basename="bulk-operation")
@@ -289,6 +298,19 @@ urlpatterns = [
     path("analytics/best-times/", AnalyticsBestTimesView.as_view(), name="analytics-best-times"),
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
     path("analytics/comments/", AnalyticsCommentsView.as_view(), name="analytics-comments"),
+    path("inbox/comments/", InboxCommentListView.as_view(), name="inbox-comments"),
+    path("inbox/comments/<int:pk>/", InboxCommentDetailView.as_view(), name="inbox-comment"),
+    path(
+        "inbox/comments/<int:pk>/notes/",
+        InboxCommentNotesView.as_view(),
+        name="inbox-comment-notes",
+    ),
+    path(
+        "inbox/comments/<int:pk>/reply/",
+        InboxCommentReplyView.as_view(),
+        name="inbox-comment-reply",
+    ),
+    path("inbox/summary/", InboxSummaryView.as_view(), name="inbox-summary"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
     # --- Phase 6: demographics and competitors ---
     # Both answer for the caller's own workspace, so there is no id for the

@@ -75,6 +75,7 @@ LOCAL_APPS = [
     # section, versioned into the brand kit every generation reads.
     "brand",
     "checks",
+    "inbox",
     # The seam to the trendgen service (BUILD-PLAN L11-L12). No models; it
     # holds the ports that `trends/` and the creative half of `ai/` move
     # behind, so Phase 12 swaps an adapter rather than editing call sites.
@@ -244,6 +245,10 @@ SPECTACULAR_SETTINGS = {
         # (top-level and the nested per-post view); spectacular otherwise
         # can't tell the two `kind` enums apart and mangles the name.
         "MediaKindEnum": "content.models.MediaKind",
+        # The inbox's triage status and intent get stable names (S2) rather than
+        # the hash-suffixed ones spectacular invents for a collision.
+        "TriageStatusEnum": "inbox.models.TriageStatus",
+        "IntentEnum": "inbox.models.Intent",
         # Same collision, `GenerationKind` on both `Generation.kind` and
         # `GenerationVariant.kind`.
         "GenerationKindEnum": "ai.models.GenerationKind",
@@ -370,6 +375,12 @@ CELERY_BEAT_SCHEDULE = {
     # §8.9). The scan asks which targets are *owed* a capture rather than each
     # publish queueing five future tasks, so a missed hour backfills on the
     # next tick instead of being lost.
+    # Comments arrive by poll or webhook; coding them is a separate, cheap
+    # pass (S2) so capture never waits on a classifier.
+    "inbox-code-new-comments": {
+        "task": "inbox.tasks.code_new_comments",
+        "schedule": crontab(minute="*/10"),
+    },
     "analytics-capture-due-metrics": {
         "task": "analytics.tasks.capture_due_metrics",
         "schedule": crontab(minute=5),

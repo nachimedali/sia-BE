@@ -32,7 +32,10 @@ import hashlib
 import io
 import json
 import logging
+import shutil
+import tempfile
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 from django.db import transaction
@@ -43,8 +46,9 @@ from PIL import Image, UnidentifiedImageError
 
 from accounts.models import User
 from billing.services.flags import CHECKS_S4, flag_enabled
+from checks.logo import find_logo
 from checks.models import CheckRun, CheckRunState, CheckStatus, CheckVerdict
-from checks.ports import TextBox, get_ocr, get_policy
+from checks.ports import TextBox, VideoFacts, get_ocr, get_policy, get_video
 from common.exceptions import StateConflict
 from content.models import MediaAsset, MediaKind, Platform, Post, PostFormat
 from content.services.rules import FormatRule, format_rule
@@ -56,7 +60,6 @@ logger = logging.getLogger(__name__)
 LEGIBLE_MIN_HEIGHT = 0.025
 #: How close (Euclidean RGB) an image colour must be to a brand colour to count.
 PALETTE_DISTANCE = 80.0
-PALETTE_ROLES = ("Primary", "Accent", "Highlight")
 
 LABELS = {
     "format": "Size and frame",
@@ -332,15 +335,11 @@ def _check_palette(
 ) -> list[dict[str, Any]]:
     if not images:
         return []
-    from brand.services.imports import active_core
+    from brand.services.kit import kit_for
 
-    core = active_core(post.workspace)
-    colors = (((core.sections if core else {}) or {}).get("palette") or {}).get("colors") or []
+    kit = kit_for(post.workspace)
     brand = [
-        rgb
-        for c in colors
-        if isinstance(c, dict) and c.get("role") in PALETTE_ROLES
-        if (rgb := _hex_rgb(str(c.get("hex", "")))) is not None
+        rgb for _role, hex_ in (kit.colors if kit else ()) if (rgb := _hex_rgb(hex_)) is not None
     ]
     if not brand:
         return [
@@ -376,17 +375,71 @@ def _check_palette(
     ]
 
 
-def _check_logo(post: Post, images: list[MediaAsset]) -> list[dict[str, Any]]:
+#: How wide, as a share of the picture, a logo has to be for the detector to
+#: find it at all — said in the message, so "not found" is never read as "absent".
+LOGO_REACH = "about a seventh of the picture's width"
+
+
+def _workspace_logo(post: Post) -> bytes | None:
+    """The brand's logo file, read once per run; `None` when there is none or it
+    cannot be read."""
+    if not post.workspace.logo:
+        return None
+    try:
+        with post.workspace.logo.open("rb") as handle:
+            return bytes(handle.read())
+    except (OSError, ValueError):
+        return None
+
+
+def _check_logo(
+    post: Post, images: list[MediaAsset], read: Callable[[MediaAsset], bytes], logo: bytes | None
+) -> list[dict[str, Any]]:
     if not images or not post.workspace.logo:
         return []
-    return [
-        _result(
-            "logo",
-            CheckStatus.UNAVAILABLE,
-            "Logo detection is not configured. Check by eye that the logo is present and "
-            "undistorted.",
-        )
-    ]
+    if logo is None:
+        return [_result("logo", CheckStatus.UNAVAILABLE, "The workspace logo could not be read.")]
+
+    out: list[dict[str, Any]] = []
+    for asset in images:
+        subject = f"A-{asset.pk}"
+        try:
+            match = find_logo(read(asset), logo)
+        except (UnidentifiedImageError, OSError, ValueError):
+            continue
+        if match.state == "unsearchable":
+            return [
+                _result(
+                    "logo",
+                    CheckStatus.UNAVAILABLE,
+                    "The logo is too plain (one flat colour) to be searched for in a picture. "
+                    "Check by eye that it is present and undistorted.",
+                )
+            ]
+        if match.state == "distorted":
+            out.append(
+                _result(
+                    "logo",
+                    CheckStatus.FIX,
+                    f"The logo in {subject} looks stretched out of its proportions"
+                    f" ({match.corner}). Place it again at its own shape.",
+                    subject=subject,
+                    media=asset.pk,
+                )
+            )
+        elif match.state == "not_found":
+            out.append(
+                _result(
+                    "logo",
+                    CheckStatus.FIX,
+                    f"We could not find the logo in {subject}. It can only be recognised when it"
+                    f" is {LOGO_REACH} and clear of what is behind it, so this is not proof it"
+                    " is missing: check by eye.",
+                    subject=subject,
+                    media=asset.pk,
+                )
+            )
+    return out or [_result("logo", CheckStatus.PASS, "The logo is in place in every image.")]
 
 
 def _check_policy(post: Post, formats: dict[str, str]) -> list[dict[str, Any]]:
@@ -440,18 +493,142 @@ def _check_policy(post: Post, formats: dict[str, str]) -> list[dict[str, Any]]:
     return [_result("policy", CheckStatus.PASS, f"No policy issue found for {names}.")]
 
 
-def _check_video(videos: list[MediaAsset]) -> list[dict[str, Any]]:
-    return [
-        _result(
+#: Largest video read into memory and measured. Past this the file is not
+#: inspected (reported, not skipped silently).
+VIDEO_MAX_BYTES = 200 * 1024 * 1024
+#: Opening conditions that say "no hook": a black or near-black first frame, or
+#: a picture that hardly changes across the first second.
+HOOK_BLACK_LUMA = 0.06
+HOOK_MIN_MOTION = 0.015
+BLACK_STRETCH = 1.0  # seconds of black mid-video that count as a fault
+DEAD_AIR = 2.0  # seconds of silence under a soundtrack that count as a fault
+
+
+def _stamp(seconds: float) -> str:
+    whole = int(seconds)
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def _read_video(asset: MediaAsset) -> VideoFacts | None:
+    """Measure one video, or `None` when it cannot be read or is too large."""
+    port = get_video()
+    if port is None:
+        return None
+    try:
+        if asset.file.size > VIDEO_MAX_BYTES:
+            return None
+    except (OSError, ValueError):
+        return None
+    folder = tempfile.mkdtemp(prefix="checks-video-")
+    try:
+        path = Path(folder) / "clip.mp4"
+        with asset.file.open("rb") as source, path.open("wb") as target:
+            shutil.copyfileobj(source, target)
+        return port.inspect(str(path))
+    except Exception:
+        logger.warning("video %s could not be inspected", asset.pk, exc_info=True)
+        return None
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _judge_video(asset: MediaAsset, facts: VideoFacts, logo: bytes | None) -> list[dict[str, Any]]:
+    subject = f"A-{asset.pk}"
+    found: list[dict[str, Any]] = []
+
+    def fix(key: str, message: str) -> None:
+        found.append(_result(key, CheckStatus.FIX, message, subject=subject, media=asset.pk))
+
+    if facts.first_luma < HOOK_BLACK_LUMA and facts.motion < HOOK_MIN_MOTION:
+        fix(
             "video",
-            CheckStatus.UNAVAILABLE,
-            "The hook, dead air and black frames are not inspected yet: nothing here decodes "
-            "video frames.",
-            subject=f"A-{asset.pk}",
-            media=asset.pk,
+            "It opens on a black frame and nothing moves in the first second: there is no hook.",
         )
-        for asset in videos
-    ]
+    elif facts.motion < HOOK_MIN_MOTION:
+        fix("video", "Nothing moves in the first second, so nothing makes a viewer stay.")
+    for start, end in facts.black:
+        if start <= 0.05:
+            continue  # the opening is judged above
+        if end - start >= BLACK_STRETCH:
+            fix("video", f"Black frames from {_stamp(start)} to {_stamp(end)}.")
+    if facts.has_audio:
+        for start, end in facts.silent:
+            if end - start >= DEAD_AIR:
+                fix(
+                    "video", f"Dead air from {_stamp(start)} to {_stamp(end)}: the sound drops out."
+                )
+
+    if not found:
+        found.append(
+            _result(
+                "video",
+                CheckStatus.PASS,
+                "It opens with movement and has no black frames"
+                + (" or dead air." if facts.has_audio else "; it has no sound track."),
+                subject=subject,
+                media=asset.pk,
+            )
+        )
+
+    if logo is not None:
+        if facts.last_frame is None:
+            found.append(
+                _result(
+                    "logo",
+                    CheckStatus.UNAVAILABLE,
+                    "The end card was not inspected: no last frame could be read.",
+                    subject=subject,
+                    media=asset.pk,
+                )
+            )
+        else:
+            try:
+                match = find_logo(facts.last_frame, logo)
+            except (UnidentifiedImageError, OSError, ValueError):
+                match = None
+            if match is not None and match.state in ("not_found", "distorted"):
+                found.append(
+                    _result(
+                        "logo",
+                        CheckStatus.FIX,
+                        "We could not find the logo on the last frame of the video. It can only be"
+                        f" recognised when it is {LOGO_REACH} and clear of what is behind it, so"
+                        " check the end card by eye.",
+                        subject=subject,
+                        media=asset.pk,
+                    )
+                )
+            elif match is not None and match.state == "found":
+                found.append(
+                    _result(
+                        "logo",
+                        CheckStatus.PASS,
+                        "The logo is on the end card.",
+                        subject=subject,
+                        media=asset.pk,
+                    )
+                )
+    return found
+
+
+def _check_video(videos: list[MediaAsset], logo: bytes | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for asset in videos:
+        facts = _read_video(asset)
+        if facts is None:
+            out.append(
+                _result(
+                    "video",
+                    CheckStatus.UNAVAILABLE,
+                    "The hook, dead air and black frames were not inspected: the video could not "
+                    "be read here.",
+                    subject=f"A-{asset.pk}",
+                    media=asset.pk,
+                )
+            )
+            continue
+        out.extend(_judge_video(asset, facts, logo))
+    return out
 
 
 # -----------------------------------------------------------------------------
@@ -483,15 +660,17 @@ def run_checks(post: Post, *, actor: User | None = None, run: CheckRun | None = 
     read = _bytes_reader()
     legibility, safe = _check_text(images, formats, read)
     palette = _check_palette(post, images, read)
+    logo_bytes = _workspace_logo(post) if images or videos else None
+    logo = _check_logo(post, images, read, logo_bytes)
     del read  # the image bytes: not held through the policy reader's latency
     results = [
         *_check_format(media, formats),
         *legibility,
         *safe,
         *palette,
-        *_check_logo(post, images),
+        *logo,
         *_check_policy(post, formats),
-        *_check_video(videos),
+        *_check_video(videos, logo_bytes),
     ]
     verdict, counts = _verdict(results)
     if run is None:

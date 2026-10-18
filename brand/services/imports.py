@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import SplitResult, urljoin, urlsplit
 
@@ -36,7 +37,7 @@ from brand.models import (
     ProductImport,
     ReviewState,
 )
-from brand.services import extract
+from brand.services import downstream, extract
 from categories.models import Category
 from common.exceptions import OCCSError, StateConflict
 from content.models import Platform
@@ -271,6 +272,12 @@ def run_import(run: BrandImport) -> BrandImport:
             name=name, text=text, categories=categories, products=[p["name"] for p in products]
         )
         _advance(run, ImportStage.COMPETITORS)
+        inferred = {
+            **inferred,
+            "competitors": _verify_competitors(
+                fetcher, inferred.get("competitors") or [], domain, read
+            ),
+        }
         _advance(run, ImportStage.VOICE)
 
         _advance(run, ImportStage.PALETTE)
@@ -330,6 +337,14 @@ def _assemble(
             ),
             base,
         )
+    offers = extract.extract_offers(pages)
+    sections: dict[str, Any] = {
+        "products": {"items": products, **({"offers": offers} if offers else {})},
+        "audience": inferred.get("audience") or {"summary": "", "segments": []},
+        "competitors": {"items": inferred.get("competitors") or []},
+        "voice": voice,
+        "palette": {"colors": palette, "fonts": fonts},
+    }
     category = None
     if inferred.get("category"):
         row = Category.objects.filter(parent__isnull=True, name=inferred["category"]).first()
@@ -345,15 +360,69 @@ def _assemble(
                 else {}
             ),
         },
-        "sections": {
-            "products": {"items": products},
-            "audience": inferred.get("audience") or {"summary": "", "segments": []},
-            "competitors": {"items": inferred.get("competitors") or []},
-            "voice": voice,
-            "palette": {"colors": palette, "fonts": fonts},
-        },
+        "sections": sections,
+        "confidence": _confidence(sections),
         "inferred": ["audience", "competitors", "voice", "market"],
     }
+
+
+def _confidence(sections: dict[str, Any]) -> dict[str, str]:
+    """How sure the reading of each section is, one word, from what was found —
+    and absent for a section that found nothing (an unknown is not a low score).
+
+    `high` is read straight off the page (a price in markup, a colour in the
+    stylesheet); `medium` is read but thin; `inferred` is a model's or a rule's
+    judgement; `verified` is a competitor whose own site answered."""
+    out: dict[str, str] = {}
+    items = (sections.get("products") or {}).get("items") or []
+    if items:
+        out["products"] = "high" if any(row.get("price") for row in items) else "medium"
+    if (sections.get("audience") or {}).get("summary"):
+        out["audience"] = "inferred"
+    competitors = (sections.get("competitors") or {}).get("items") or []
+    if competitors:
+        kinds = {row.get("relationship") for row in competitors}
+        out["competitors"] = (
+            "verified" if kinds == {"verified"} else "mixed" if "verified" in kinds else "inferred"
+        )
+    voice = sections.get("voice") or {}
+    if voice.get("preset") or voice.get("descriptors") or voice.get("quote"):
+        out["voice"] = "inferred"
+    if (sections.get("palette") or {}).get("colors"):
+        out["palette"] = "high"
+    return out
+
+
+#: A competitor is "verified" only when its own website answers and says its
+#: name; one that merely exists as a domain is still a guess.
+_NAME_NOISE = re.compile(r"[^a-z0-9]+")
+
+
+def _verify_competitors(
+    fetcher: SiteFetcher, competitors: list[dict[str, Any]], own_domain: str, read: list[str]
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in competitors:
+        domain = str(row.get("domain") or "").removeprefix("www.")
+        item = dict(row)
+        if domain and domain != own_domain:
+            page = _read(fetcher, f"https://{domain}/", read)
+            if page is not None and page.ok and "html" in page.content_type:
+                parsed = extract.parse_page(page.url, page.text)
+                heard = _NAME_NOISE.sub(
+                    "", " ".join([parsed.title, parsed.metas.get("og:site_name", "")]).casefold()
+                )
+                name = _NAME_NOISE.sub("", str(row.get("name") or "").casefold())
+                if name and name in heard:
+                    item["relationship"] = "verified"
+                    item["source"] = parsed.url
+                    socials = (extract.extract_identity([parsed], domain).get("socials") or {}).get(
+                        "value"
+                    )
+                    if socials:
+                        item["socials"] = socials
+        out.append(item)
+    return out
 
 
 # --- review --------------------------------------------------------------------------
@@ -385,7 +454,19 @@ def _clean_section(section: str, value: Any) -> dict[str, Any]:
             if row.get("image"):
                 item["image"] = str(row["image"])[:500]
             items.append(item)
-        return {"items": items[: extract.MAX_PRODUCTS]}
+        cleaned: dict[str, Any] = {"items": items[: extract.MAX_PRODUCTS]}
+        offers = [
+            {
+                "text": str(row["text"]).strip()[:160],
+                "kind": str(row.get("kind") or "")[:16],
+                "source": str(row.get("source") or "")[:500],
+            }
+            for row in value.get("offers") or []
+            if isinstance(row, dict) and str(row.get("text") or "").strip()
+        ][: extract.MAX_OFFERS]
+        if offers:
+            cleaned["offers"] = offers
+        return cleaned
     if section == "audience":
         segments = [str(s).strip()[:40] for s in value.get("segments") or [] if str(s).strip()]
         return {"summary": str(value.get("summary") or "").strip()[:400], "segments": segments[:8]}
@@ -520,10 +601,21 @@ def _fill(workspace: Workspace, run: BrandImport, sections: dict[str, Any]) -> l
     return filled
 
 
+@dataclass
+class ApplyResult:
+    core: BrandCore
+    kept: list[str]
+    filled: list[str]
+    #: Field-level difference from the previous version (S1-05); empty on the first.
+    changes: list[dict[str, str]]
+    downstream: downstream.Downstream
+
+
 @transaction.atomic
-def apply(run: BrandImport, *, user: User) -> tuple[BrandCore, list[str], list[str]]:
-    """`(core, kept, filled)`: the new version, the sections kept from an
-    earlier hand edit, and the workspace fields pre-filled."""
+def apply(run: BrandImport, *, user: User) -> ApplyResult:
+    """The new version, the sections kept from an earlier hand edit, the
+    workspace fields pre-filled, what changed field by field, and what the
+    accepted sections wrote downstream (products, taste, tracked competitors)."""
     if run.status != ImportStatus.SUCCEEDED:
         raise ImportNotReadyError(detail={"status": run.status})
     missing = [s for s in SECTIONS if s not in run.review]
@@ -532,6 +624,7 @@ def apply(run: BrandImport, *, user: User) -> tuple[BrandCore, list[str], list[s
 
     previous = active_core(run.workspace)
     found = run.result.get("sections") or {}
+    confidence = run.result.get("confidence") or {}
     sections: dict[str, Any] = {}
     kept: list[str] = []
     for section in SECTIONS:
@@ -541,11 +634,17 @@ def apply(run: BrandImport, *, user: User) -> tuple[BrandCore, list[str], list[s
             sections[section] = earlier
             kept.append(section)
             continue
-        sections[section] = {
+        entry: dict[str, Any] = {
             "value": run.edits.get(section) if edited else found.get(section, {}),
             "origin": "you" if edited else "site",
             "source": "" if edited else run.url,
         }
+        # Edited by a person: certain, by definition. Otherwise what the reading
+        # said, and nothing at all for a section that found nothing.
+        label = "confirmed" if edited else confidence.get(section)
+        if label:
+            entry["confidence"] = label
+        sections[section] = entry
 
     core = BrandCore.objects.create(
         workspace=run.workspace,
@@ -556,6 +655,26 @@ def apply(run: BrandImport, *, user: User) -> tuple[BrandCore, list[str], list[s
         created_by=user,
     )
     filled = _fill(run.workspace, run, sections)
+    changes = (
+        downstream.diff_sections(previous.sections, sections, skip=frozenset(kept))
+        if previous
+        else []
+    )
+
+    # What the accepted sections write beyond the kit. A section kept from a hand
+    # edit was not re-accepted this time, so it writes nothing again.
+    wrote = downstream.Downstream()
+    if "products" not in kept:
+        downstream.create_product_drafts(
+            run.workspace, (sections["products"]["value"] or {}).get("items") or [], wrote
+        )
+    if "voice" not in kept:
+        downstream.propose_taste(run.workspace, sections["voice"]["value"] or {}, user, wrote)
+    if "competitors" not in kept:
+        downstream.track_competitors(
+            run.workspace, (sections["competitors"]["value"] or {}).get("items") or [], wrote
+        )
+
     run.status = ImportStatus.APPLIED
     run.save(update_fields=["status", "updated_at"])
-    return core, kept, filled
+    return ApplyResult(core, kept, filled, changes, wrote)

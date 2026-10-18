@@ -85,6 +85,9 @@ app.conf.task_routes = {
     "brand.tasks.*": {"queue": "ai_q"},
     # Pre-publish checks (S4) call the OCR and policy readers: provider latency.
     "checks.tasks.*": {"queue": "ai_q"},
+    # Coding an audience comment (S2) may ask the text model: provider latency,
+    # and never the publish pool.
+    "inbox.tasks.*": {"queue": "ai_q"},
     "analytics.tasks.*": {"queue": "metrics_q"},
     "trends.tasks.*": {"queue": "trends_q"},
     # The Playbook's collection is the same kind of work as trend harvest:

@@ -42,6 +42,11 @@ EXCEPTIONS = {
     # indirection, so it is deferred to Phase 12 (M0-06) rather than rushed
     # into the seam.
     "analytics/views.py": ("trends.services",),
+    # The brand import (S1-04) starts watching a verified competitor through the
+    # same `competitors.track` the competitor page uses. Same deferral, same
+    # reason (M0-06): competitor sources are workspace-private, so trendgen never
+    # serves them and an indirection here would be a port with one adapter.
+    "brand/services/downstream.py": ("trends.services",),
     "analytics/serializers.py": ("trends.models",),
 }
 
