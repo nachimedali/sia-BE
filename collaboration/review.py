@@ -119,12 +119,46 @@ def resolve(raw: str) -> ReviewLink | None:
     tell those apart, which is the point: distinguishing them would confirm
     that a post exists behind a token someone guessed.
     """
-    link = (
-        ReviewLink.objects.select_related("post", "post__workspace")
+    link = _lookup(raw)
+    return link if link is not None and link.is_usable else None
+
+
+def resolve_readable(raw: str) -> ReviewLink | None:
+    """Like `resolve`, but a **spent** approve link still reads (P7).
+
+    A client who approved yesterday and opens the email again reads what they
+    decided rather than a bare 404. Expired and revoked still close it, and
+    every action keeps refusing a spent link — reading is all that survives.
+    """
+    link = _lookup(raw)
+    return link if link is not None and link.is_open else None
+
+
+def _lookup(raw: str) -> ReviewLink | None:
+    return (
+        ReviewLink.objects.select_related("post", "post__workspace", "created_by")
         .filter(token_hash=ReviewLink.hash_token(raw))
         .first()
     )
-    return link if link is not None and link.is_usable else None
+
+
+def decision_of(link: ReviewLink) -> dict[str, Any] | None:
+    """What this link decided, if it decided anything: the newest approve or
+    request-changes the guest recorded through it."""
+    from workspaces.models import ApprovalAction, ApprovalActionType
+
+    names: dict[str, str] = {
+        ApprovalActionType.APPROVE: "approved",
+        ApprovalActionType.REQUEST_CHANGES: "changes_requested",
+    }
+    row = (
+        ApprovalAction.objects.filter(guest_link=link, action__in=list(names))
+        .order_by("-created_at")
+        .first()
+    )
+    if row is None:
+        return None
+    return {"decision": names[row.action], "at": row.created_at, "note": row.note}
 
 
 def spend(link: ReviewLink) -> ReviewLink:
@@ -170,9 +204,15 @@ def guest_context(link: ReviewLink) -> dict[str, Any]:
             ),
         )
     )
+    sender = link.created_by
     return {
         "link": link,
         "post": post,
+        # P7: the page speaks the sender's language and tells time in the
+        # workspace's zone — the client reads it in the brand's context.
+        "language": getattr(sender, "language", "") or "en",
+        "timezone": post.workspace.timezone or "UTC",
+        "decision": decision_of(link),
         "payloads": {
             platform: payload.as_dict()
             for platform, payload in render_post(post, platforms).items()

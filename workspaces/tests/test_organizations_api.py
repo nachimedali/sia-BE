@@ -22,6 +22,7 @@ from billing.models import (
     SubscriptionStatus,
 )
 from billing.services import subscriptions
+from conftest import PASSWORD
 from workspaces.models import ApiKey, Invitation, Membership, Role, Workspace, WorkspaceStatus
 from workspaces.services import invitations as invitation_service
 
@@ -344,12 +345,20 @@ def test_accepting_twice_is_refused(workspace: Any) -> None:
         invitation_service.accept(raw_token=raw, password="a-good-password")
 
 
-def test_an_existing_account_needs_no_password(workspace: Any, other_user: Any) -> None:
+def test_an_existing_account_signs_in_to_join(workspace: Any, other_user: Any) -> None:
+    """P6: whoever holds the link must also hold the account. Joining used to
+    need no password at all for an address that already had one, so a
+    forwarded invite email was enough to attach someone else's account."""
     _invitation, raw = Invitation.issue(
         workspace=workspace, email=other_user.email, role=Role.EDITOR
     )
 
-    membership = invitation_service.accept(raw_token=raw)
+    with pytest.raises(invitation_service.InvitationWrongPasswordError):
+        invitation_service.accept(raw_token=raw)
+    with pytest.raises(invitation_service.InvitationWrongPasswordError):
+        invitation_service.accept(raw_token=raw, password="not-their-password")
+
+    membership = invitation_service.accept(raw_token=raw, password=PASSWORD)
 
     assert membership.user == other_user
     assert membership.permissions

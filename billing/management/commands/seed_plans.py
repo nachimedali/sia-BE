@@ -79,6 +79,9 @@ PLANS: list[dict[str, Any]] = [
     {
         "code": "free",
         "display_name": "Free",
+        # L-4: the quota trial replaced free-forever on the public page. The
+        # row stays for the accounts that sit on it.
+        "is_public": False,
         "tagline": "Plan and get reminded. No card required.",
         "price_monthly_cents": 0,
         "price_annual_cents": 0,
@@ -176,7 +179,7 @@ PLANS: list[dict[str, Any]] = [
     {
         "code": "advanced",
         "display_name": "Advanced",
-        "tagline": "Approvals, API access and auto-approve autopilot.",
+        "tagline": "Approval chains, API access and the most video.",
         "price_monthly_cents": 9700,
         "price_annual_cents": 92400,
         "price_per_workspace_cents": 9700,
@@ -212,7 +215,9 @@ PLANS: list[dict[str, Any]] = [
             "api_access": True,
             "video_generation": True,
             "autopilot": True,
-            "autopilot_auto_approve": True,
+            # L-2: nothing publishes without a human, on any plan. The flag
+            # stays in the matrix, false everywhere, so no plan can sell it.
+            "autopilot_auto_approve": False,
             "auto_publish": True,
             "analytics_history_days": 730,
             "credits_rollover": False,
@@ -226,6 +231,18 @@ PLANS: list[dict[str, Any]] = [
 ]
 
 
+# How each plan presents itself on the pricing and help pages (P4, P8). Kept
+# out of `PLANS` on purpose: `billing/0018` imports that list and creates rows
+# from it before these columns exist (`0020`), so a key added there would break
+# every fresh database at 0018.
+PRESENTATION: dict[str, dict[str, Any]] = {
+    "trial": {"support_response": "2 working days"},
+    "free": {"support_response": "2 working days"},
+    "pro": {"support_response": "1 working day", "is_recommended": True},
+    "advanced": {"support_response": "Same working day"},
+}
+
+
 class Command(BaseCommand):
     help = "Seed or update the three plans with the design.md §4.1 matrix."
 
@@ -234,7 +251,9 @@ class Command(BaseCommand):
         for spec in PLANS:
             code = spec["code"]
             plan, created = Plan.objects.update_or_create(
-                code=code, defaults={k: v for k, v in spec.items() if k != "code"}
+                code=code,
+                defaults={k: v for k, v in spec.items() if k != "code"}
+                | PRESENTATION.get(code, {}),
             )
             self._seed_default_price(plan)
             verb = "created" if created else "updated"

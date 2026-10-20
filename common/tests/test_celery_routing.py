@@ -96,3 +96,16 @@ def test_unrouted_tasks_do_not_land_on_a_real_queue() -> None:
     route = app.amqp.router.route({}, "some.unregistered.task")
     assert route["queue"].name == "default"
     assert route["queue"].name not in QUEUE_NAMES
+
+
+def test_every_registered_task_routes_to_a_declared_queue() -> None:
+    """Part 7 rule 9, checked against what is registered rather than a list: a
+    new task nobody routed fails here instead of sitting on `default`."""
+    app.loader.import_default_modules()
+    unrouted = sorted(
+        name
+        for name in app.tasks
+        if not name.startswith("celery.")
+        and app.amqp.router.route({}, name)["queue"].name not in QUEUE_NAMES
+    )
+    assert unrouted == []

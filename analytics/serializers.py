@@ -34,9 +34,10 @@ class TargetPerformanceSerializer(serializers.Serializer[Any]):
     platform = serializers.CharField()
     published_at = serializers.DateTimeField()
     engagement_rate = serializers.FloatField()
-    impressions = serializers.IntegerField()
-    likes = serializers.IntegerField()
-    comments = serializers.IntegerField()
+    #: Null where the platform cannot report it — never 0 (rule 4).
+    impressions = serializers.IntegerField(allow_null=True)
+    likes = serializers.IntegerField(allow_null=True)
+    comments = serializers.IntegerField(allow_null=True)
     #: Null until the account has enough history to rank against — the UI shows
     #: "not enough history yet" rather than a number that looks authoritative.
     percentile = serializers.FloatField(allow_null=True)
@@ -57,7 +58,10 @@ class BestTimeSerializer(serializers.Serializer[Any]):
 
 class OverviewSerializer(serializers.Serializer[Any]):
     posts = serializers.IntegerField()
-    impressions = serializers.IntegerField()
+    #: Null when no post's impressions could be measured.
+    impressions = serializers.IntegerField(allow_null=True)
+    #: Posts left out of `impressions` because their platform cannot report it.
+    impressions_excluded = serializers.IntegerField()
     engagement_rate = serializers.FloatField()
     top = TargetPerformanceSerializer(many=True)
     #: Keyed by `PostSource` (`AI`/`MANUAL`) — §8.9's honest self-audit.
@@ -274,6 +278,8 @@ class SharedReportSerializer(serializers.Serializer[dict[str, Any]]):
     payload = serializers.JSONField()
     document_url = serializers.CharField(allow_blank=True)
     expires_at = serializers.DateTimeField()
+    shared_at = serializers.DateTimeField()
+    brand_url = serializers.CharField(allow_blank=True)
 
 
 class AudienceDemographicSerializer(serializers.ModelSerializer[AudienceDemographic]):

@@ -1,0 +1,9 @@
+Confirm your new email
+
+You asked to change the email on your ComposeVision account from {{ old_email }} to {{ new_email }}.
+
+Confirm it here:
+
+{{ confirm_url }}
+
+This link works for 24 hours. Until you click it, you keep signing in with {{ old_email }}. If you did not ask for this, ignore this email; nothing changes.

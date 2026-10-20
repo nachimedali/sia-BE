@@ -486,6 +486,9 @@ STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 USE_FAKE_BILLING = env.bool("USE_FAKE_BILLING", default=not STRIPE_SECRET_KEY)
+# True in prod.py only: there the fake gateway is swapped for one that refuses
+# every money path with a 503, because the fake's webhook secret is public (F1).
+FAKE_BILLING_REFUSES = False
 
 # P6-05. No PDF engine ships yet — the real one needs a headless browser or a
 # typesetting library, which is a system dependency a fresh checkout must not

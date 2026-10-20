@@ -64,6 +64,13 @@ def test_prod_cannot_run_on_fakes(prod_settings) -> None:
     assert prod_settings.USE_FAKE_VIDEO_PROVIDER is False
     assert prod_settings.USE_FAKE_CHECKS_PROVIDER is False
     assert prod_settings.USE_FAKE_TREND_VENDORS is False
+    assert prod_settings.USE_FAKE_SITE_FETCHER is False
+
+
+def test_prod_refuses_payments_instead_of_faking_them(prod_settings) -> None:
+    """F1, C1: with no Stripe key the fake gateway is selected, and its webhook
+    secret is public. Prod swaps it for one that answers 503."""
+    assert prod_settings.FAKE_BILLING_REFUSES is True
 
 
 def test_dev_settings_import_cleanly() -> None:

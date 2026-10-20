@@ -32,3 +32,26 @@ def send_templated_email(
         # A transient SMTP failure must not silently lose a verification link.
         logger.warning("email send failed, retrying", extra={"template": template})
         raise self.retry(exc=exc) from exc
+
+
+@shared_task(
+    name="accounts.tasks.build_data_export", bind=True, max_retries=2, default_retry_delay=60
+)
+def build_data_export(self: Any, export_id: int) -> None:
+    """Builds one person's data export and emails them (P2). Routed to
+    `media_q` (config/celery.py): it writes a file, and nobody is blocked on it
+    the way they are on a verification link."""
+    from accounts.models import DataExport, DataExportState
+    from accounts.services.self_service import build_export
+
+    export = DataExport.objects.select_related("user").filter(pk=export_id).first()
+    if export is None or export.state != DataExportState.PREPARING:
+        return
+    try:
+        build_export(export)
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            DataExport.objects.filter(pk=export_id).update(state=DataExportState.FAILED)
+            logger.exception("data export failed", extra={"export_id": export_id})
+            return
+        raise self.retry(exc=exc) from exc

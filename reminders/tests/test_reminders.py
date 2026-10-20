@@ -238,3 +238,23 @@ def test_reminder_calendar_list_is_workspace_scoped(
     assert response.status_code == 200
     ids = [row["id"] for row in response.json()["results"]]
     assert ids == [mine.id]
+
+
+# -----------------------------------------------------------------------------
+# P7: the packet is read in the author's language and the workspace's zone
+# -----------------------------------------------------------------------------
+def test_the_packet_carries_the_authors_language_and_the_workspaces_zone(
+    workspace: Any, user: Any, outbox: list[Any]
+) -> None:
+    workspace.timezone = "Europe/Rome"
+    workspace.save(update_fields=["timezone"])
+    user.language = "it"
+    user.save(update_fields=["language"])
+    _armed_reminder(workspace, user, in_minutes=0)
+    services.send_due()
+
+    body = _public_client().get(f"/api/v1/reminders/{_token_from_outbox(outbox)}/packet/").json()
+
+    assert body["language"] == "it"
+    assert body["timezone"] == "Europe/Rome"
+    assert body["workspace_name"] == workspace.name

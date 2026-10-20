@@ -7,6 +7,8 @@ import hmac
 import json
 from typing import Any
 
+from rest_framework import status
+
 from billing.gateways.base import (
     BillingGatewayError,
     CheckoutMode,
@@ -14,6 +16,7 @@ from billing.gateways.base import (
     PortalSession,
     WebhookVerificationError,
 )
+from common.exceptions import OCCSError
 
 FAKE_WEBHOOK_SECRET = "whsec_fake"
 
@@ -92,3 +95,37 @@ class FakeBillingGateway:
 
 # Module-level so tests can inspect calls after a view has run.
 _fake_gateway = FakeBillingGateway()
+
+
+class PaymentsNotConfiguredError(OCCSError):
+    """503: this deployment has no payment provider (F1)."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_code = "payments_not_configured"
+    default_detail = "Payments are not configured on this server."
+
+
+class RefusingBillingGateway:
+    """What a deployment without a Stripe key gets instead of the fake (F1, C1).
+
+    The fake's webhook secret is a constant in the source, so on a server it
+    would accept a forged "paid" checkout from anyone who read the repository.
+    This one refuses every call that moves money or grants a plan. A quantity
+    update raises the gateway's own error instead, because its caller parks the
+    workspace `PENDING_BILLING` rather than refusing the person (P0-18).
+    """
+
+    def create_checkout_session(self, **_: Any) -> CheckoutSession:
+        raise PaymentsNotConfiguredError()
+
+    def create_portal_session(self, **_: Any) -> PortalSession:
+        raise PaymentsNotConfiguredError()
+
+    def update_subscription_quantity(self, **_: Any) -> None:
+        raise BillingGatewayError("Payments are not configured on this server.")
+
+    def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
+        raise PaymentsNotConfiguredError()
+
+
+_refusing_gateway = RefusingBillingGateway()

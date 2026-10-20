@@ -12,9 +12,11 @@ from __future__ import annotations
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Count
+from django.contrib.auth import get_user_model
+from django.db.models import Count, Exists, OuterRef
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -22,6 +24,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.views import issue_session
 from billing.models import OrganizationAddon
 from billing.permissions import HasFeature
 from billing.services import subscriptions
@@ -29,15 +32,18 @@ from billing.services.entitlements import entitlements_for
 from common.exceptions import NotFoundError, OCCSError, StateConflict
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
+from common.throttling import IPTokenBucketThrottle
 from common.workspaces import authenticated_user, request_workspace
 from workspaces.models import (
     ApiKey,
     AuditLog,
+    Invitation,
     Membership,
     Organization,
     Permission,
+    Role,
     Workspace,
-    permissions_for,
+    resolved_permissions,
 )
 from workspaces.permissions import HasPermission
 from workspaces.serializers import (
@@ -47,15 +53,20 @@ from workspaces.serializers import (
     ApprovalChainSerializer,
     ApprovalStageSerializer,
     AuditLogSerializer,
+    InvitationAcceptedSerializer,
     InvitationAcceptSerializer,
     InvitationCreateSerializer,
+    InvitationPreviewSerializer,
     InvitationSerializer,
     MemberAddSerializer,
+    MemberRemoveSerializer,
     MembershipRoleUpdateSerializer,
     MembershipSerializer,
     OrganizationAddonSerializer,
     OrganizationAddonWriteSerializer,
     OrganizationSerializer,
+    OwnershipSerializer,
+    PendingInvitationSerializer,
     WorkspaceProfileSerializer,
     WorkspaceQuoteSerializer,
     WorkspaceSerializer,
@@ -271,12 +282,12 @@ class MembershipViewSet(WorkspaceScopedQuerySetMixin, viewsets.GenericViewSet[Me
     read response or vice versa.
     """
 
-    queryset = Membership.objects.select_related("user", "invited_by", "workspace")
+    queryset = Membership.objects.select_related("user", "invited_by", "workspace__organization")
     serializer_class = MembershipSerializer
     pagination_class = None  # a team roster; §4.1's largest cap is 25 rows.
 
     def get_permissions(self) -> list[Any]:
-        if self.request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+        if self.request.method in {"POST", "PATCH", "PUT", "DELETE"} or self.action == "ownership":
             return [IsAuthenticated(), HasPermission(Permission.ADMIN)()]
         return [IsAuthenticated()]
 
@@ -314,13 +325,42 @@ class MembershipViewSet(WorkspaceScopedQuerySetMixin, viewsets.GenericViewSet[Me
     def partial_update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         payload = MembershipRoleUpdateSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        updated = membership.change_role(self.get_object(), role=payload.validated_data["role"])
+        updated = self.get_object()
+        if "role" in payload.validated_data:
+            updated = membership.change_role(updated, role=payload.validated_data["role"])
+        if "permissions" in payload.validated_data:
+            updated = membership.set_permissions(
+                updated, permissions=payload.validated_data["permissions"]
+            )
         return Response(MembershipSerializer(updated).data)
 
-    @extend_schema(responses={204: None}, summary="Remove a member")
+    @extend_schema(
+        request=MemberRemoveSerializer,
+        responses={204: None},
+        summary="Remove a member, handing over their open work",
+        description="409 `owns_items` when they still own open threads or scheduled posts and no "
+        "`reassign_to` member is named (P5).",
+    )
     def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        membership.remove_member(self.get_object())
+        payload = MemberRemoveSerializer(data=request.data or {})
+        payload.is_valid(raise_exception=True)
+        target = self.get_object()
+        heir_id = payload.validated_data.get("reassign_to")
+        heir = None
+        if heir_id is not None:
+            # Looked up without the workspace scope on purpose: a member of
+            # another workspace is a 400 here (`invalid_reassign`), not a 404 —
+            # the id is a payload field, not the resource being addressed.
+            heir = Membership.objects.filter(pk=heir_id).select_related("user").first()
+            if heir is None:
+                raise membership.InvalidReassignError(detail={"reassign_to": heir_id})
+        membership.remove_member(target, reassign_to=heir, actor=authenticated_user(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(responses={200: OwnershipSerializer}, summary="What a member still owns")
+    @action(detail=True, methods=["get"])
+    def ownership(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return Response(OwnershipSerializer(membership.ownership(self.get_object())).data)
 
 
 class OrganizationListView(APIView):
@@ -444,16 +484,7 @@ class WorkspaceInviteView(APIView):
     )
     def post(self, request: Request, pk: int) -> Response:
         user = authenticated_user(request)
-        workspace = Workspace.objects.filter(pk=pk, memberships__user=user).first()
-        if workspace is None:
-            raise NotFoundError("No such workspace.", code="workspace_not_found")
-
-        caller = Membership.objects.filter(user=user, workspace=workspace).first()
-        held = set(caller.permissions) if caller and caller.permissions else set()
-        if not held and caller is not None:
-            held = permissions_for(caller.role)
-        if "admin" not in held:
-            raise PermissionDenied("Only an admin can invite people to this workspace.")
+        workspace = _admin_workspace(request, pk, "invite people to this workspace")
 
         payload = InvitationCreateSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
@@ -467,6 +498,152 @@ class WorkspaceInviteView(APIView):
         return Response(InvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
 
 
+def _admin_workspace(
+    request: Request, pk: int, action: str = "manage this workspace's invitations"
+) -> Workspace:
+    """The workspace `pk` if the caller is a member with `admin`: another
+    workspace is 404 (Part 7 rule 3), a member without `admin` 403."""
+    caller = (
+        Membership.objects.select_related("workspace")
+        .filter(user=authenticated_user(request), workspace_id=pk)
+        .first()
+    )
+    if caller is None:
+        raise NotFoundError("No such workspace.", code="workspace_not_found")
+    if "admin" not in resolved_permissions(caller.role, caller.permissions):
+        raise PermissionDenied(f"Only an admin can {action}.")
+    return caller.workspace
+
+
+def _pending_invite(request: Request, pk: int, invite_id: int) -> tuple[Workspace, Invitation]:
+    """A pending invite of an admin's workspace, or 404."""
+    workspace = _admin_workspace(request, pk)
+    invitation = _pending(workspace).filter(pk=invite_id).first()
+    if invitation is None:
+        raise NotFoundError("No such invitation.", code="invitation_not_found")
+    return workspace, invitation
+
+
+def _pending(workspace: Workspace) -> Any:
+    return (
+        Invitation.objects.filter(
+            workspace=workspace, accepted_at__isnull=True, revoked_at__isnull=True
+        )
+        .select_related("invited_by")
+        # One query for the whole list, not one per row (read by the serializer).
+        .annotate(
+            has_account=Exists(get_user_model().objects.filter(email__iexact=OuterRef("email")))
+        )
+        .order_by("-created_at")
+    )
+
+
+class WorkspaceInviteListView(APIView):
+    """`GET /workspaces/{id}/invites/` (P5): the invites still waiting."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: PendingInvitationSerializer(many=True)}, summary="Pending invitations"
+    )
+    def get(self, request: Request, pk: int) -> Response:
+        workspace = _admin_workspace(request, pk)
+        return Response(PendingInvitationSerializer(_pending(workspace), many=True).data)
+
+
+class WorkspaceInviteDetailView(APIView):
+    """`DELETE /workspaces/{id}/invites/{invite_id}/` (P5): revoke."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={204: None}, summary="Revoke a pending invitation")
+    def delete(self, request: Request, pk: int, invite_id: int) -> Response:
+        _workspace, invitation = _pending_invite(request, pk, invite_id)
+        invitations.revoke(invitation, actor=authenticated_user(request))
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WorkspaceInviteResendView(APIView):
+    """`POST /workspaces/{id}/invites/{invite_id}/resend/` (P5): a fresh link
+    and a fresh clock; the old link stops working."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=None, responses={200: PendingInvitationSerializer}, summary="Resend an invitation"
+    )
+    def post(self, request: Request, pk: int, invite_id: int) -> Response:
+        workspace, invitation = _pending_invite(request, pk, invite_id)
+        fresh = invitations.invite(
+            workspace=workspace,
+            email=invitation.email,
+            role=invitation.role,
+            invited_by=authenticated_user(request),
+            base_url=settings.SITE_URL,
+        )
+        return Response(PendingInvitationSerializer(fresh).data)
+
+
+class InvitationGoneError(OCCSError):
+    """410: the invite existed and can't be used any more (expired or used)."""
+
+    status_code = status.HTTP_410_GONE
+    default_code = "gone"
+
+
+class InviteTokenThrottle(IPTokenBucketThrottle):
+    """Generous, like the review one: a person retyping a password must never
+    see it. Defence in depth against naive enumeration and password guessing
+    through the accept form, which a 256-bit token alone does not cover."""
+
+    scope = "workspaces:invite"
+    capacity = 30
+    refill_per_second = 0.5
+
+
+class InvitationPreviewView(APIView):
+    """`GET /invites/{token}/` (P6): checked as the page opens.
+
+    200 with who invited you, to which workspace and with which role; 410 with
+    `expired` or `used`; 404 `invalid_token` for one that never existed or was
+    withdrawn.
+    """
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+    throttle_classes: list[Any] = [InviteTokenThrottle]
+
+    @extend_schema(
+        responses={200: InvitationPreviewSerializer},
+        summary="Preview a workspace invitation",
+        auth=[],
+    )
+    def get(self, request: Request, token: str) -> Response:
+        invitation, state = invitations.preview(token)
+        if invitation is None:
+            raise NotFoundError("This invitation link is not valid.", code="invalid_token")
+        if state != "ok":
+            message = (
+                "This invitation has expired."
+                if state == "expired"
+                else "This invitation was already used."
+            )
+            raise InvitationGoneError(message, code=state)
+        return Response(
+            InvitationPreviewSerializer(
+                {
+                    "inviter": invitations.inviter_name(invitation),
+                    "workspace_name": invitation.workspace.name,
+                    "role": invitation.role,
+                    "role_label": Role(invitation.role).label,
+                    "email": invitation.email,
+                    "account_exists": invitations.has_account(invitation.email),
+                    "expires_at": invitation.expires_at,
+                }
+            ).data
+        )
+
+
 class InvitationAcceptView(APIView):
     """`POST /invites/{token}/accept/` (P0-47).
 
@@ -477,21 +654,33 @@ class InvitationAcceptView(APIView):
 
     authentication_classes: list[Any] = []
     permission_classes: list[Any] = [AllowAny]
+    throttle_classes: list[Any] = [InviteTokenThrottle]
 
     @extend_schema(
         request=InvitationAcceptSerializer,
-        responses={201: MembershipSerializer},
+        responses={201: InvitationAcceptedSerializer},
         summary="Accept a workspace invitation",
+        description="Answers with the membership and a session pair, as registration does.",
     )
     def post(self, request: Request, token: str) -> Response:
         payload = InvitationAcceptSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         try:
             membership_row = invitations.accept(
-                raw_token=token, password=payload.validated_data.get("password") or None
+                raw_token=token,
+                password=payload.validated_data.get("password") or None,
+                name=payload.validated_data.get("name", ""),
             )
         except invitations.InvitationNeedsPasswordError as exc:
             raise OCCSError(str(exc), code="password_required") from exc
+        except invitations.InvitationWrongPasswordError as exc:
+            raise OCCSError(str(exc), code="wrong_password") from exc
+        except invitations.InvitationWeakPasswordError as exc:
+            raise OCCSError(
+                " ".join(exc.messages),
+                code="invalid",
+                detail={"fields": {"password": exc.messages}},
+            ) from exc
         except invitations.InvitationInvalidError as exc:
             # 404, not 400: an invalid token and a token that never existed
             # are the same answer, and distinguishing them tells an attacker
@@ -499,7 +688,15 @@ class InvitationAcceptView(APIView):
             raise NotFoundError(
                 "This invitation is no longer valid.", code="invalid_token"
             ) from exc
-        return Response(MembershipSerializer(membership_row).data, status=status.HTTP_201_CREATED)
+        session = issue_session(membership_row.user)
+        return Response(
+            {
+                **MembershipSerializer(membership_row).data,
+                "access": session["access"],
+                "refresh": session["refresh"],
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class OrganizationAddonView(APIView):

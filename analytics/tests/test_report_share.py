@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 import time_machine
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from analytics.models import Report, ReportRun, ReportRunStatus, ReportSchedule, ReportShareLink
 from analytics.services import report_share, schedules
@@ -138,6 +139,45 @@ class TestSharing:
 
         assert context["payload"] == run.payload
         assert context["report_name"] == "Monthly performance"
+
+    def test_the_guest_page_says_when_it_was_shared_and_links_the_brands_site(
+        self, run: ReportRun, user: Any
+    ) -> None:
+        """P1: "Shared by the brand on <date>" and a way to the brand's own site.
+        The site is the workspace's public URL; the sharer's address is not shown."""
+        workspace = run.report.workspace
+        workspace.website = "https://saveurs.example"
+        workspace.save(update_fields=["website"])
+        link, raw = report_share.issue(run, created_by=user)
+
+        body = APIClient().get(f"/api/v1/shared-reports/{raw}/").json()
+
+        assert body["brand_url"] == "https://saveurs.example"
+        assert body["shared_at"][:10] == link.created_at.date().isoformat()
+        assert user.email not in str(body)
+
+    def test_a_brand_with_no_site_gets_no_link(self, run: ReportRun, user: Any) -> None:
+        _link, raw = report_share.issue(run, created_by=user)
+
+        assert APIClient().get(f"/api/v1/shared-reports/{raw}/").json()["brand_url"] == ""
+
+    def test_dead_expired_and_revoked_links_answer_the_same_404(
+        self, run: ReportRun, user: Any
+    ) -> None:
+        link, raw = report_share.issue(run, created_by=user)
+        expired, raw_expired = report_share.issue(run, created_by=user, email="other@example.com")
+        ReportShareLink.objects.filter(pk=expired.pk).update(
+            expires_at=timezone.now() - dt.timedelta(minutes=1)
+        )
+        report_share.revoke(link)
+
+        bodies = [
+            APIClient().get(f"/api/v1/shared-reports/{token}/")
+            for token in (raw, raw_expired, "never-existed")
+        ]
+
+        assert {response.status_code for response in bodies} == {404}
+        assert len({response.content for response in bodies}) == 1
 
     def test_an_emailed_share_sends_exactly_one_message(self, run: ReportRun, user: Any) -> None:
         from common.mail import _fake_sender as sender

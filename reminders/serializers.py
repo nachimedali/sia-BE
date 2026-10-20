@@ -44,6 +44,10 @@ class ReminderPacketSerializer(serializers.Serializer[Reminder]):
     # deferred shape `ai/services/prompting.py` used for category-signal
     # grounding ahead of Phase 10 (design.md A70).
     recommended_sound = serializers.SerializerMethodField()
+    # P7: written in the author's language, times told in the workspace's zone.
+    language = serializers.CharField(source="post.author.language", default="en")
+    workspace_name = serializers.CharField(source="post.workspace.name")
+    timezone = serializers.CharField(source="post.workspace.timezone", default="UTC")
 
     @extend_schema_field(serializers.DictField(child=AdaptedPayloadSerializer()))
     def get_payloads(self, reminder: Reminder) -> dict[str, Any]:

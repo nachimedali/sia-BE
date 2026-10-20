@@ -87,16 +87,107 @@ def add_member(workspace: Workspace, *, email: str, role: str, invited_by: Any) 
     )
 
 
-def change_role(membership: Membership, *, role: str) -> Membership:
+def _refuse_owner(membership: Membership) -> None:
+    """The organization's owner holds everything and cannot be changed here."""
     if membership.user_id == membership.workspace.organization.owner_id:
         raise CannotModifyOwnerError(detail={"membership": membership.pk})
+
+
+def change_role(membership: Membership, *, role: str) -> Membership:
+    _refuse_owner(membership)
     _require_assignable(role)
     membership.role = role
     membership.save(update_fields=["role", "updated_at"])
     return membership
 
 
-def remove_member(membership: Membership) -> None:
-    if membership.user_id == membership.workspace.organization.owner_id:
-        raise CannotModifyOwnerError(detail={"membership": membership.pk})
+def set_permissions(membership: Membership, *, permissions: list[str]) -> Membership:
+    """P0-48, P5: the authority set, one permission at a time. The role stays as
+    the display preset it was. The owner always holds everything, so narrowing
+    them is refused rather than silently ignored."""
+    _refuse_owner(membership)
+    membership.permissions = sorted(set(permissions))
+    membership.save(update_fields=["permissions", "updated_at"])
+    return membership
+
+
+class OwnsItemsError(StateConflict):
+    """409: removing this member would orphan threads assigned to them and
+    posts they scheduled. Name who takes them over."""
+
+    default_code = "owns_items"
+    default_detail = "Choose who takes over their threads and scheduled posts."
+
+
+class InvalidReassignError(OCCSError):
+    default_code = "invalid_reassign"
+    default_detail = "Pick another member of this workspace."
+
+
+def _owned(membership: Membership) -> tuple[Any, Any]:
+    from collaboration.models import Thread, ThreadStatus
+    from content.models import Post, PostStatus
+
+    threads = Thread.objects.filter(
+        workspace=membership.workspace, assignee_id=membership.user_id
+    ).exclude(status=ThreadStatus.DONE)
+    scheduled = Post.objects.filter(
+        workspace=membership.workspace, author_id=membership.user_id, status=PostStatus.SCHEDULED
+    )
+    return threads, scheduled
+
+
+def ownership(membership: Membership) -> dict[str, Any]:
+    """What this member still owns in this workspace (P5): open threads
+    assigned to them, and posts they scheduled that have not gone out. Shown
+    before removal so the person removing them knows what changes hands."""
+    threads, scheduled = _owned(membership)
+    items = [
+        {"kind": "thread", "id": thread.pk, "title": thread.title}
+        for thread in threads.order_by("-created_at")[:20]
+    ] + [
+        {"kind": "post", "id": post.pk, "title": str(post), "at": post.scheduled_at}
+        for post in scheduled.order_by("scheduled_at")[:20]
+    ]
+    return {"threads": threads.count(), "scheduled": scheduled.count(), "items": items}
+
+
+def remove_member(
+    membership: Membership, *, reassign_to: Membership | None = None, actor: Any = None
+) -> int:
+    """Removes a member, handing their open work to `reassign_to` (P5).
+
+    Refused (409 `owns_items`) when they still own threads or scheduled posts
+    and nobody is named: a removal that orphans a scheduled post leaves it to
+    fail at publish time with no one watching. Published history keeps its
+    real author; only what is still in motion changes hands. Returns how many
+    items moved.
+    """
+    from workspaces.services.approvals import log
+
+    _refuse_owner(membership)
+
+    threads, scheduled = _owned(membership)
+    thread_count, scheduled_count = threads.count(), scheduled.count()
+    owned = thread_count + scheduled_count
+    if owned and reassign_to is None:
+        raise OwnsItemsError(detail={"threads": thread_count, "scheduled": scheduled_count})
+    if reassign_to is not None and (
+        reassign_to.workspace_id != membership.workspace_id or reassign_to.pk == membership.pk
+    ):
+        raise InvalidReassignError(detail={"reassign_to": reassign_to.pk})
+
+    moved = 0
+    if owned and reassign_to is not None:
+        moved += threads.update(assignee_id=reassign_to.user_id)
+        moved += scheduled.update(author_id=reassign_to.user_id)
+
+    log(
+        workspace=membership.workspace,
+        actor=actor,
+        verb="member.removed",
+        target_repr=membership.user.email,
+        meta={"moved": moved, "to": reassign_to.user.email if reassign_to else None},
+    )
     membership.delete()
+    return moved

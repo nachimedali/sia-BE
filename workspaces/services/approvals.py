@@ -450,6 +450,19 @@ def approve_as_guest(post: Post, *, link: Any) -> Post:
     return _advance(post, stage=current, scheduler=link.created_by)
 
 
+@transaction.atomic
+def request_changes_as_guest(post: Post, *, link: Any, note: str) -> Post:
+    """A client sending the post back from an emailed `APPROVE` link (P7).
+
+    The other half of what that link can decide. Like `approve_as_guest`, the
+    link is the delegation, so no stage authority is checked; the note is what
+    the team will act on, and is recorded against the guest, never the sender.
+    """
+    return _reject_like(
+        post, action=ApprovalActionType.REQUEST_CHANGES, actor=None, note=note, guest_link=link
+    )
+
+
 def _finalise_approval(post: Post, *, scheduler: User | None) -> Post:
     """The last stage cleared: `APPROVED`, locked, and scheduled if the author
     proposed a time (P2-10, P2-11).
@@ -511,22 +524,28 @@ def reject(post: Post, *, actor: User, note: str = "") -> Post:
     return _reject_like(post, action=ApprovalActionType.REJECT, actor=actor, note=note)
 
 
-def _reject_like(post: Post, *, action: str, actor: User, note: str) -> Post:
+def _reject_like(
+    post: Post, *, action: str, actor: User | None, note: str, guest_link: Any = None
+) -> Post:
     """Both refusals end the review wherever it had got to.
 
     `current_stage` is cleared rather than kept: a post sent back for changes
     re-enters at stage 1 when it is resubmitted, because the earlier stages
     approved text that no longer exists.
+
+    A guest link (`actor=None`) is its own delegation: no stage authority is
+    checked, and the row is recorded against the link.
     """
     to_status = _require_transition(post, action)
-    if post.current_stage is not None:
+    if post.current_stage is not None and guest_link is None:
+        assert actor is not None
         _check_stage_authority(post, post.current_stage, actor)
 
     stage = post.current_stage
     post.status = to_status
     post.current_stage = None
     post.save(update_fields=["status", "current_stage", "updated_at"])
-    _record(post, action=action, actor=actor, note=note, stage=stage)
+    _record(post, action=action, actor=actor, note=note, stage=stage, guest_link=guest_link)
     notifications.post_event(
         post,
         event_key=(

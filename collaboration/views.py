@@ -32,6 +32,7 @@ from collaboration.serializers import (
     CommentCreateSerializer,
     CommentSerializer,
     GuestCommentRequestSerializer,
+    GuestRequestChangesSerializer,
     ReactionRequestSerializer,
     ReviewLinkSerializer,
     ReviewPacketSerializer,
@@ -41,7 +42,7 @@ from collaboration.serializers import (
     ThreadSerializer,
     ThreadStatusRequestSerializer,
 )
-from common.exceptions import NotFoundError
+from common.exceptions import NotFoundError, StateConflict
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.throttling import IPTokenBucketThrottle
@@ -307,6 +308,28 @@ class _PublicReviewView(APIView):
     permission_classes: list[Any] = [AllowAny]
     throttle_classes: list[Any] = [ReviewTokenThrottle]
 
+    def resolve_readable(self, request: Request, token: str) -> ReviewLink:
+        """`resolve`, letting a spent approve link through (P7): reading it is
+        allowed, and the action views refuse it with 409 themselves."""
+        request.audience = Audience.CLIENT  # type: ignore[attr-defined]
+        link = review.resolve_readable(token)
+        if link is None:
+            raise NotFound("This link is invalid, expired or has been revoked.")
+        return link
+
+    def decide_with(self, request: Request, token: str) -> ReviewLink:
+        """The link an approve or request-changes may act through: an approve
+        link that has not decided yet. A view link is 404 (it must not learn
+        an approval endpoint exists); a decided one is 409 `already_decided`."""
+        link = self.resolve_readable(request, token)
+        if link.purpose != ReviewLinkPurpose.APPROVE:
+            raise NotFound("This link is invalid, expired or has been revoked.")
+        if link.used_at is not None:
+            raise StateConflict(
+                "This link has already been used to decide.", code="already_decided"
+            )
+        return link
+
     def resolve(self, request: Request, token: str) -> ReviewLink:
         """Resolves the link **and declares the audience**.
 
@@ -332,7 +355,7 @@ class ReviewPacketView(_PublicReviewView):
         auth=[],
     )
     def get(self, request: Request, token: str) -> Response:
-        link = self.resolve(request, token)
+        link = self.resolve_readable(request, token)
         return Response(ReviewPacketSerializer(review.guest_context(link)).data)
 
 
@@ -343,18 +366,40 @@ class ReviewApproveView(_PublicReviewView):
         summary="Approve a post from an emailed link",
         description=(
             "`APPROVE` links only, and **single-use**: the token is spent by "
-            "the approval, so the same link cannot approve twice. A "
+            "the decision, so a second approve is a 409 `already_decided`. A "
             "`GUEST_VIEW` link is a 404 here rather than a 403 — it must not "
             "learn that an approval endpoint exists for this post."
         ),
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
-        link = self.resolve(request, token)
-        if link.purpose != ReviewLinkPurpose.APPROVE:
-            raise NotFound("This link is invalid, expired or has been revoked.")
+        link = self.decide_with(request, token)
 
         approvals.approve_as_guest(link.post, link=link)
+        review.spend(link)
+        return Response(ReviewPacketSerializer(review.guest_context(link)).data)
+
+
+class ReviewRequestChangesView(_PublicReviewView):
+    @extend_schema(
+        request=GuestRequestChangesSerializer,
+        responses={200: ReviewPacketSerializer},
+        summary="Send a post back for changes from an emailed link",
+        description=(
+            "The other decision an `APPROVE` link can make (P7), with a note of "
+            "at least five characters. Spends the link like an approval does. "
+            "A view link is 404; a link that already decided is 409."
+        ),
+        auth=[],
+    )
+    def post(self, request: Request, token: str) -> Response:
+        link = self.decide_with(request, token)
+        payload = GuestRequestChangesSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        approvals.request_changes_as_guest(
+            link.post, link=link, note=payload.validated_data["note"]
+        )
         review.spend(link)
         link.refresh_from_db()
         link.post.refresh_from_db()

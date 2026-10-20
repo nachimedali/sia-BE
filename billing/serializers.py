@@ -57,6 +57,8 @@ class PlanSerializer(serializers.ModelSerializer[Plan]):
             "price_annual",
             "trial_days",
             "sort_order",
+            "is_recommended",
+            "support_response",
             "features",
             "quotas",
         )

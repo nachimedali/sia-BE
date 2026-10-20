@@ -169,6 +169,11 @@ class PlanAdmin(ImmutableCodeAdmin):
                     "currency",
                     "is_public",
                     "sort_order",
+                    # P4, P8: the pricing page's badge (one plan at a time;
+                    # saving one takes it from the others) and the help
+                    # page's reply time.
+                    "is_recommended",
+                    "support_response",
                 ),
                 "description": (
                     "`code` is the join key for Stripe mapping and analytics, so it is "

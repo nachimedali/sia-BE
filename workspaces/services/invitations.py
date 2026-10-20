@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from accounts.passwords import password_problems
 from common.mail import Email, first_name_of, get_mail_sender
 from workspaces.models import (
     Invitation,
@@ -108,8 +109,59 @@ def _invitation_context(invitation: Invitation, invited_by: Any) -> dict[str, An
     }
 
 
+def revoke(invitation: Invitation, *, actor: Any = None) -> Invitation:
+    """Withdraws a pending invite (P5); its link reads as not valid from now."""
+    from workspaces.services.approvals import log
+
+    if invitation.revoked_at is None:
+        invitation.revoked_at = timezone.now()
+        invitation.save(update_fields=["revoked_at"])
+        log(
+            workspace=invitation.workspace,
+            actor=actor,
+            verb="invitation.revoked",
+            target_repr=invitation.email,
+        )
+    return invitation
+
+
+def preview(raw_token: str) -> tuple[Invitation | None, str]:
+    """What the invite page shows as it opens (P6), before anything is accepted.
+
+    Returns the invitation and its state: ``ok``, ``expired``, ``used`` or
+    ``invalid`` (never existed, or revoked). Saying *why* a link is dead tells
+    the reader to ask for a new one, and tells nothing to anyone who does not
+    already hold the token. A revoked invite reads as invalid: the sender
+    withdrew it, and "revoked" would invite an argument the page can't settle.
+    """
+    invitation = (
+        Invitation.objects.select_related("workspace", "invited_by")
+        .filter(token_hash=Invitation.hash_token(raw_token))
+        .first()
+    )
+    if invitation is None or invitation.revoked_at is not None:
+        return None, "invalid"
+    if invitation.accepted_at is not None:
+        return invitation, "used"
+    if invitation.expires_at <= timezone.now():
+        return invitation, "expired"
+    return invitation, "ok"
+
+
+def has_account(email: str) -> bool:
+    return get_user_model().objects.filter(email__iexact=email).exists()
+
+
+def inviter_name(invitation: Invitation) -> str:
+    """The person who sent it, as the invitee would recognise them."""
+    sender = invitation.invited_by
+    if sender is None:
+        return invitation.workspace.name
+    return sender.get_full_name().strip() or sender.email
+
+
 @transaction.atomic
-def accept(*, raw_token: str, password: str | None = None) -> Membership:
+def accept(*, raw_token: str, password: str | None = None, name: str = "") -> Membership:
     """Spends an invitation, creating the account if there is not one yet.
 
     One transaction covering account creation, both memberships and spending
@@ -131,12 +183,25 @@ def accept(*, raw_token: str, password: str | None = None) -> Membership:
 
     user_model = get_user_model()
     user = user_model.objects.filter(email__iexact=invitation.email).first()
-    if user is None:
+    if user is not None:
+        # P6: holding the email is not holding the account. An address that
+        # already has one signs in to join, or a forwarded invite would be
+        # enough to attach somebody else's account to this workspace.
+        if not password or not user.check_password(password):
+            raise InvitationWrongPasswordError("Wrong email or password.")
+    else:
         if not password:
             raise InvitationNeedsPasswordError(
                 "This invitation is for a new account; choose a password to accept it."
             )
-        user = user_model.objects.create_user(email=invitation.email, password=password)
+        problems = password_problems(
+            password, user=user_model(email=invitation.email, first_name=name)
+        )
+        if problems:
+            raise InvitationWeakPasswordError(problems)
+        user = user_model.objects.create_user(
+            email=invitation.email, password=password, first_name=name.strip()[:150]
+        )
         # Accepting an emailed invitation proves control of the address as
         # convincingly as a verification link does, so asking for a second one
         # would be ceremony.
@@ -177,3 +242,15 @@ class InvitationInvalidError(Exception):
 
 class InvitationNeedsPasswordError(Exception):
     """The invited address has no account yet, so accepting has to create one."""
+
+
+class InvitationWrongPasswordError(Exception):
+    """The invited address has an account, and this is not its password."""
+
+
+class InvitationWeakPasswordError(Exception):
+    """The new account's password fails the validators; carries their messages."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__(" ".join(messages))
+        self.messages = messages

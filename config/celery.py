@@ -20,7 +20,6 @@ its own worker deployment (implementation.md Phase 16.5).
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from celery import Celery
 from kombu import Queue
@@ -67,6 +66,9 @@ app.conf.task_routes = {
     "reminders.tasks.*": {"queue": "remind_q"},
     # Transactional auth mail shares the reminder pool: same profile —
     # high priority, retried, and someone is waiting on it.
+    # A data export writes a file and nobody waits on it (P2). Listed before
+    # the wildcard below, which would otherwise claim it first.
+    "accounts.tasks.build_data_export": {"queue": "media_q"},
     "accounts.tasks.*": {"queue": "remind_q"},
     "scheduling.tasks.remind*": {"queue": "remind_q"},
     "content.tasks.media*": {"queue": "media_q"},
@@ -114,11 +116,9 @@ app.conf.task_routes = {
     # Cohort benchmarks (P8) rebuild a projection over every contributor and
     # aggregate it: the same minutes-to-hours batch posture as Learn.
     "benchmarks.tasks.*": {"queue": "analyze_q"},
+    # The queue smoke task is sent to a named queue by whoever runs it; this is
+    # only where it lands when nobody names one (rule 9: never the default).
+    "common.tasks.ping": {"queue": "metrics_q"},
 }
 
 app.autodiscover_tasks()
-
-
-@app.task(bind=True, name="config.debug_task")
-def debug_task(self: Any) -> str:
-    return f"request: {self.request!r}"

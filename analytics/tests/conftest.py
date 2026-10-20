@@ -84,7 +84,7 @@ def make_target(
 
 
 def capture(
-    target: Any, *, rate: float, at: dt.datetime | None = None, **totals: int
+    target: Any, *, rate: float, at: dt.datetime | None = None, **totals: int | None
 ) -> PostMetric:
     """One metric capture on a target. `at` defaults to now."""
     return PostMetric.objects.create(

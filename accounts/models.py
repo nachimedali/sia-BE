@@ -20,10 +20,30 @@ from django.utils import timezone
 from accounts.managers import UserManager
 
 
+class Language(models.TextChoices):
+    """The interface languages (L-6, amended 2026-10-12): English, French and
+    Italian. A fourth is a change request, not a row."""
+
+    EN = "en", "English"
+    FR = "fr", "Français"
+    IT = "it", "Italiano"
+
+
 class User(AbstractUser):
     username = None  # type: ignore[assignment]
     email = models.EmailField("email address", unique=True)
     is_email_verified = models.BooleanField(default=False)
+    #: The person's own interface language (P2). It follows them across
+    #: devices, and pages they send to people outside the team — an approval
+    #: link, a reminder — are written in it.
+    # `db_default` too, so a row written below the ORM — a historical
+    # migration, a raw insert — still lands with a language.
+    language = models.CharField(
+        max_length=2, choices=Language.choices, default=Language.EN, db_default=Language.EN
+    )
+    #: An address the person asked to move to, waiting for the link sent to
+    #: it (P2). The account keeps `email` until that link is clicked.
+    pending_email = models.EmailField(blank=True, default="", db_default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -46,6 +66,7 @@ class EmailTokenPurpose(models.TextChoices):
     VERIFY_CODE = "VERIFY_CODE", "Verify email by code"
     RESET = "RESET", "Reset password"
     INVITE = "INVITE", "Workspace invitation"
+    EMAIL_CHANGE = "EMAIL_CHANGE", "Confirm a new email"
 
 
 class EmailToken(models.Model):
@@ -64,6 +85,9 @@ class EmailToken(models.Model):
         EmailTokenPurpose.VERIFY_CODE: dt.timedelta(minutes=15),
         EmailTokenPurpose.RESET: dt.timedelta(hours=1),
         EmailTokenPurpose.INVITE: dt.timedelta(days=14),
+        # A day: long enough to find the email, short enough that a forgotten
+        # change does not sit live for a week.
+        EmailTokenPurpose.EMAIL_CHANGE: dt.timedelta(hours=24),
     }
 
     user = models.ForeignKey(
@@ -189,3 +213,34 @@ class EmailToken(models.Model):
     @property
     def is_usable(self) -> bool:
         return self.used_at is None and self.expires_at > timezone.now()
+
+
+class DataExportState(models.TextChoices):
+    PREPARING = "PREPARING", "Preparing"
+    EMAILED = "EMAILED", "Emailed"
+    FAILED = "FAILED", "Failed"
+
+
+class DataExport(models.Model):
+    """A copy of everything linked to one person (P2), built in the background
+    and emailed as a download link. One at a time per person."""
+
+    #: How long the emailed link works.
+    LINK_TTL: ClassVar[dt.timedelta] = dt.timedelta(days=7)
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="data_exports"
+    )
+    state = models.CharField(
+        max_length=12, choices=DataExportState.choices, default=DataExportState.PREPARING
+    )
+    sent_to = models.EmailField()
+    file = models.FileField(upload_to="exports/", null=True, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    ready_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-requested_at"]
+
+    def __str__(self) -> str:
+        return f"export {self.pk} for {self.user_id} ({self.state})"

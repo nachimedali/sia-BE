@@ -287,8 +287,9 @@ def test_an_approve_link_approves_once_and_is_then_spent(
     post.refresh_from_db()
     assert post.status == PostStatus.APPROVED
 
-    # Single-use: the token was spent by the approval.
-    assert client.post(f"{_packet(raw)}approve/").status_code == 404
+    # Single-use: the token was spent by the approval. A second try is told so
+    # (409) rather than 404, since the page now shows what was decided (P7).
+    assert client.post(f"{_packet(raw)}approve/").status_code == 409
     link.refresh_from_db()
     assert link.used_at is not None
 
