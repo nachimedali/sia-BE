@@ -265,6 +265,25 @@ class Plan(CatalogueItem):
 
     features = models.JSONField(default=dict, blank=True)
 
+    # --- presentation (P4, P8) ---
+    #: The one plan the pricing page marks as recommended. Chosen here, in
+    #: admin, never by the plan's position in the list: the page used to badge
+    #: whichever row sorted second, which was Free. Saving a plan with this set
+    #: takes the mark from any other (see `save`).
+    is_recommended = models.BooleanField(default=False)
+    #: How fast support replies on this plan, in words ("1 working day"). Shown
+    #: on the help page; a commercial term like any other, so a row, not copy.
+    support_response = models.CharField(max_length=40, blank=True)
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        super().save(*args, **kwargs)
+        if self.is_recommended:
+            # An explicit write rather than a signal (rule 7): one recommended
+            # plan at a time, so the page never shows two.
+            type(self)._default_manager.exclude(pk=self.pk).filter(is_recommended=True).update(
+                is_recommended=False
+            )
+
     def validation_errors(self) -> dict[str, str]:
         errors = super().validation_errors()
 

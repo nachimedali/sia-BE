@@ -22,12 +22,12 @@ from workspaces.services.provisioning import provision_workspace
 logger = logging.getLogger(__name__)
 
 
-def _app_url(path: str) -> str:
+def app_url(path: str) -> str:
     base = getattr(settings, "SITE_URL", "http://localhost:3000").rstrip("/")
     return f"{base}{path}"
 
 
-def _queue(to: str, subject: str, template: str, context: dict[str, Any]) -> None:
+def queue_email(to: str, subject: str, template: str, context: dict[str, Any]) -> None:
     """Always queued, never inline (implementation.md §4.3, Phase 2.3).
 
     An SMTP timeout must not become a failed registration.
@@ -60,9 +60,9 @@ def send_verification_email(user: User) -> None:
     Flag off sends the link-only email exactly as before the code existed.
     """
     _, raw = EmailToken.issue(user, EmailTokenPurpose.VERIFY)
-    verify_url = _app_url(f"/verify-email?token={raw}")
+    verify_url = app_url(f"/verify-email?token={raw}")
     if not transactional_email_enabled(user):
-        _queue(
+        queue_email(
             to=user.email,
             subject="Confirm your email",
             template="verify_email_link",
@@ -71,7 +71,7 @@ def send_verification_email(user: User) -> None:
         return
 
     token, code = EmailToken.issue_code(user)
-    _queue(
+    queue_email(
         to=user.email,
         subject=f"Your ComposeVision code: {code}",
         template="verify_email",
@@ -112,7 +112,7 @@ def send_welcome_email(user: User) -> None:
     )
     renews_on = subscription.period_end if subscription else None
     first_name = first_name_of(user)
-    _queue(
+    queue_email(
         to=user.email,
         subject=f"Welcome to ComposeVision, {first_name}",
         template="welcome",
@@ -194,11 +194,11 @@ def request_password_reset(email: str) -> None:
         return
 
     _, raw = EmailToken.issue(user, EmailTokenPurpose.RESET)
-    _queue(
+    queue_email(
         to=user.email,
         subject="Reset your password",
         template="reset_password",
-        context={"reset_url": _app_url(f"/reset-password?token={raw}"), "email": user.email},
+        context={"reset_url": app_url(f"/reset-password?token={raw}"), "email": user.email},
     )
 
 

@@ -210,7 +210,9 @@ class AudienceCommentReplyView(APIView):
     workspace cannot spend another's headroom.
     """
 
-    permission_classes = [IsAuthenticated]
+    #: `publish`: the reply goes out in the brand's name, so a viewer or a
+    #: contributor holding no authority to publish holds none to answer either.
+    permission_classes = [IsAuthenticated, HasPermission(Permission.PUBLISH)]
 
     @extend_schema(
         request=AudienceReplySerializer,
@@ -246,7 +248,7 @@ class AudienceCommentActionView(APIView):
     actor (`AudienceCommentAction`).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasPermission(Permission.PUBLISH)]
 
     @extend_schema(
         request=CommentActionSerializer,

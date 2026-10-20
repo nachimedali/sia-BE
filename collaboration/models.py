@@ -337,10 +337,14 @@ class ReviewLink(models.Model):
         return f"{self.purpose} link for post {self.post_id} → {self.email}"
 
     @property
+    def is_open(self) -> bool:
+        """Neither revoked nor expired: the link still reads (P7)."""
+        return self.revoked_at is None and self.expires_at > timezone.now()
+
+    @property
     def is_usable(self) -> bool:
-        if self.revoked_at is not None or self.expires_at <= timezone.now():
-            return False
-        return not (self.purpose in SINGLE_USE and self.used_at is not None)
+        """Open, and not a single-use link already spent: the link still acts."""
+        return self.is_open and not (self.purpose in SINGLE_USE and self.used_at is not None)
 
     @property
     def reviewer_name(self) -> str:

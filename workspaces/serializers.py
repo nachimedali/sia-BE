@@ -101,6 +101,8 @@ class MembershipSerializer(serializers.ModelSerializer[Membership]):
             "id",
             "user",
             "user_email",
+            # The workspace joined, so a fresh accept can open it (P6).
+            "workspace",
             "role",
             "permissions",
             "invited_by_email",
@@ -140,7 +142,67 @@ class MemberAddSerializer(serializers.Serializer[object]):
 
 
 class MembershipRoleUpdateSerializer(serializers.Serializer[object]):
-    role = serializers.ChoiceField(choices=Role.choices)
+    """A role (the preset) or the permissions themselves (P0-48, P5); one of the two."""
+
+    role = serializers.ChoiceField(choices=Role.choices, required=False)
+    permissions = serializers.ListField(
+        child=serializers.ChoiceField(choices=sorted(PERMISSIONS)), required=False, allow_empty=True
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        if "role" not in attrs and "permissions" not in attrs:
+            raise serializers.ValidationError("Send a role or a list of permissions.")
+        return attrs
+
+
+class MemberRemoveSerializer(serializers.Serializer[object]):
+    """Who takes over the member's open threads and scheduled posts (P5)."""
+
+    reassign_to = serializers.IntegerField(required=False, allow_null=True)
+
+
+class OwnedItemSerializer(serializers.Serializer[object]):
+    kind = serializers.ChoiceField(choices=["thread", "post"])
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class OwnershipSerializer(serializers.Serializer[object]):
+    threads = serializers.IntegerField()
+    scheduled = serializers.IntegerField()
+    items = OwnedItemSerializer(many=True)
+
+
+class PendingInvitationSerializer(serializers.ModelSerializer[Invitation]):
+    """A pending invite on the team page (P5). Never carries the token."""
+
+    role_label = serializers.SerializerMethodField()
+    invited_by = serializers.EmailField(source="invited_by.email", default=None, read_only=True)
+    account_exists = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Invitation
+        fields = (
+            "id",
+            "email",
+            "role",
+            "role_label",
+            "invited_by",
+            "account_exists",
+            "created_at",
+            "expires_at",
+        )
+        read_only_fields = fields
+
+    def get_role_label(self, obj: Invitation) -> str:
+        return str(Role(obj.role).label)
+
+    def get_account_exists(self, obj: Invitation) -> bool:
+        from workspaces.services.invitations import has_account
+
+        annotated = getattr(obj, "has_account", None)
+        return annotated if annotated is not None else has_account(obj.email)
 
 
 class WorkspaceSettingsSerializer(serializers.Serializer[Any]):
@@ -317,6 +379,30 @@ class InvitationAcceptSerializer(serializers.Serializer[object]):
     yet; the view decides, because only it knows."""
 
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    #: A new account's name (P6); ignored for an address that already has one.
+    name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+
+
+class InvitationAcceptedSerializer(MembershipSerializer):
+    """The accept's answer (P6): the membership, and the session it opens."""
+
+    access = serializers.CharField(read_only=True)
+    refresh = serializers.CharField(read_only=True)
+
+    class Meta(MembershipSerializer.Meta):
+        fields: ClassVar[tuple[str, ...]] = (*MembershipSerializer.Meta.fields, "access", "refresh")
+
+
+class InvitationPreviewSerializer(serializers.Serializer[object]):
+    """What the invite page shows as it opens (P6): who, where, as what."""
+
+    inviter = serializers.CharField()
+    workspace_name = serializers.CharField()
+    role = serializers.CharField()
+    role_label = serializers.CharField()
+    email = serializers.EmailField()
+    account_exists = serializers.BooleanField()
+    expires_at = serializers.DateTimeField()
 
 
 class MembershipPermissionsSerializer(serializers.Serializer[object]):

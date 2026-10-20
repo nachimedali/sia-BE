@@ -74,7 +74,7 @@ jobs:
         run: |
           ssh sia 'bash -se' <<'REMOTE'
           for i in $(seq 1 15); do
-            if curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/api/v1/health/ >/dev/null; then
+            if curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8010/api/v1/health/ >/dev/null; then
               echo "healthy"; exit 0
             fi
             sleep 2

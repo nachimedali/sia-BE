@@ -37,6 +37,24 @@ def test_overview_reports_headline_numbers_and_attribution(
     assert len(body["top"]) == 2
 
 
+def test_overview_survives_a_platform_that_cannot_report_impressions(
+    auth_client: Any, paid_workspace: Any, user: Any, social_account: Any
+) -> None:
+    """C3, rule 4: an unreadable metric is stored null, so it is the normal
+    case on real provider data. It used to be a 500 the home page read as
+    "nothing measured"."""
+    capture(make_target(paid_workspace, user, social_account), rate=0.30, impressions=None)
+    capture(make_target(paid_workspace, user, social_account), rate=0.10, impressions=500)
+
+    response = auth_client.get(OVERVIEW)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["impressions"] == 500
+    assert body["impressions_excluded"] == 1
+    assert {row["impressions"] for row in body["top"]} == {None, 500}
+
+
 def test_posts_are_ranked_best_first(
     auth_client: Any, paid_workspace: Any, user: Any, social_account: Any
 ) -> None:

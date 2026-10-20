@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from django.http import FileResponse
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,15 +20,22 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from accounts.models import User
 from accounts.serializers import (
+    AccountDeleteSerializer,
+    AccountSerializer,
+    EmailChangeSerializer,
+    EmailConfirmSerializer,
+    MeSerializer,
+    MeUpdateSerializer,
+    PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
     SessionSerializer,
-    UserSerializer,
     VerifyCodeSerializer,
     VerifyEmailSerializer,
 )
 from accounts.services import auth as auth_service
+from accounts.services import self_service
 from common.exceptions import NotFoundError, OCCSError
 from common.throttling import (
     LoginThrottle,
@@ -191,11 +199,160 @@ class PasswordResetConfirmView(APIView):
 
 
 class MeView(APIView):
+    """The signed-in person's own account (P2): read, rename, pick a language,
+    and delete. Company settings live on the workspace, never here."""
+
     permission_classes: list[Any] = [IsAuthenticated]
 
-    @extend_schema(responses={200: UserSerializer}, summary="The signed-in user")
+    @extend_schema(responses={200: MeSerializer}, summary="The signed-in user")
     def get(self, request: Request) -> Response:
-        return Response(UserSerializer(request.user).data)
+        return Response(MeSerializer(request.user).data)
+
+    @extend_schema(
+        request=MeUpdateSerializer,
+        responses={200: AccountSerializer},
+        summary="Rename, or pick a language",
+    )
+    def patch(self, request: Request) -> Response:
+        payload = MeUpdateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        user = cast(User, request.user)
+        for field, value in payload.validated_data.items():
+            setattr(user, field, value)
+        user.save(update_fields=[*payload.validated_data, "updated_at"])
+        return Response(AccountSerializer(user).data)
+
+    @extend_schema(
+        request=AccountDeleteSerializer,
+        responses={204: None},
+        summary="Delete your account",
+        description="Needs `confirm` = `DELETE <your email>`. 409 `sole_owner` while you are "
+        "the only owner of an organization others work in; 409 `active_subscription` while a "
+        "paid plan runs.",
+    )
+    def delete(self, request: Request) -> Response:
+        payload = AccountDeleteSerializer(data=request.data or {})
+        payload.is_valid(raise_exception=True)
+        self_service.delete_account(
+            cast(User, request.user), confirm=payload.validated_data["confirm"]
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AccountView(APIView):
+    """`GET /auth/me/account/`: the account page's read (P2) — `/auth/me/`
+    plus pending email, exports and sole ownerships, kept off the shell's
+    per-page read."""
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(responses={200: AccountSerializer}, summary="Your account page")
+    def get(self, request: Request) -> Response:
+        return Response(AccountSerializer(request.user).data)
+
+
+class MePasswordView(APIView):
+    permission_classes: list[Any] = [IsAuthenticated]
+    throttle_classes: list[Any] = [PasswordResetThrottle]
+
+    @extend_schema(
+        request=PasswordChangeSerializer,
+        responses={200: SessionSerializer},
+        summary="Change your password",
+        description="Needs the current password. Signs out every session, this one too, "
+        "and answers with its replacement.",
+    )
+    def post(self, request: Request) -> Response:
+        payload = PasswordChangeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        user = cast(User, request.user)
+        self_service.change_password(
+            user, current=payload.validated_data["current"], new=payload.validated_data["new"]
+        )
+        return Response(SessionSerializer(issue_session(user)).data)
+
+
+class MeEmailView(APIView):
+    permission_classes: list[Any] = [IsAuthenticated]
+    throttle_classes: list[Any] = [PasswordResetThrottle]
+
+    @extend_schema(
+        request=EmailChangeSerializer,
+        responses={202: AccountSerializer},
+        summary="Ask to change your email",
+        description="Sends a link to the new address; the email changes only when it is clicked.",
+    )
+    def post(self, request: Request) -> Response:
+        payload = EmailChangeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        user = self_service.request_email_change(
+            cast(User, request.user),
+            email=payload.validated_data["email"],
+            password=payload.validated_data["password"],
+        )
+        return Response(AccountSerializer(user).data, status=status.HTTP_202_ACCEPTED)
+
+    @extend_schema(
+        request=None, responses={200: AccountSerializer}, summary="Cancel a pending email change"
+    )
+    def delete(self, request: Request) -> Response:
+        return Response(
+            AccountSerializer(self_service.cancel_email_change(cast(User, request.user))).data
+        )
+
+
+class EmailConfirmView(APIView):
+    """The link in the email sent to a new address (P2). No session needed:
+    the token is the credential, single-use and a day long."""
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+    throttle_classes: list[Any] = [PasswordResetThrottle]
+
+    @extend_schema(
+        request=EmailConfirmSerializer,
+        responses={200: None},
+        summary="Confirm a new email",
+        auth=[],
+    )
+    def post(self, request: Request) -> Response:
+        payload = EmailConfirmSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        user = self_service.confirm_email_change(payload.validated_data["token"])
+        return Response({"email": user.email})
+
+
+class MeExportView(APIView):
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(
+        request=None,
+        responses={202: AccountSerializer},
+        summary="Email me a copy of my data",
+        description="Built in the background; 409 while one is already being prepared.",
+    )
+    def post(self, request: Request) -> Response:
+        user = cast(User, request.user)
+        self_service.request_export(user)
+        return Response(AccountSerializer(user).data, status=status.HTTP_202_ACCEPTED)
+
+
+class MeExportDownloadView(APIView):
+    """Your own export, within its 7 days. Anyone else's, or an old one, is 404."""
+
+    permission_classes: list[Any] = [IsAuthenticated]
+
+    @extend_schema(responses={(200, "application/json"): bytes}, summary="Download a data export")
+    def get(self, request: Request, pk: int) -> FileResponse:
+        export = self_service.downloadable(cast(User, request.user), pk)
+        if export is None:
+            raise NotFoundError("No such export.", code="export_not_found")
+        return FileResponse(
+            export.file.open("rb"),
+            as_attachment=True,
+            filename=f"composevision-data-{export.requested_at:%Y-%m-%d}.json",
+            content_type="application/json",
+        )
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):

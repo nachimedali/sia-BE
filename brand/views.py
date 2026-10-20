@@ -134,9 +134,17 @@ class BrandImportApplyView(APIView):
         ),
     )
     def post(self, request: Request, pk: int) -> Response:
-        core, kept, filled = imports.apply(_import(request, pk), user=authenticated_user(request))
+        result = imports.apply(_import(request, pk), user=authenticated_user(request))
         return Response(
-            BrandApplyResponseSerializer({"core": core, "kept": kept, "filled": filled}).data
+            BrandApplyResponseSerializer(
+                {
+                    "core": result.core,
+                    "kept": result.kept,
+                    "filled": result.filled,
+                    "changes": result.changes,
+                    "wrote": vars(result.downstream),
+                }
+            ).data
         )
 
 

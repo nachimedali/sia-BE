@@ -132,4 +132,13 @@ def guest_context(link: ReportShareLink) -> dict[str, Any]:
         "payload": run.payload,
         "document_url": run.document.url if run.document else "",
         "expires_at": link.expires_at,
+        # P1: when it was shared, and the brand's own public site. Never the
+        # sharer's address: a client forwards this page to people we don't know.
+        "shared_at": link.created_at,
+        "brand_url": _public_site(run.report.workspace.website),
     }
+
+
+def _public_site(url: str) -> str:
+    """Only an http(s) address leaves; anything else is not a link to show."""
+    return url if url.startswith(("https://", "http://")) else ""

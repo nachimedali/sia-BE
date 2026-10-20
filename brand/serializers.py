@@ -60,10 +60,36 @@ class BrandCoreSerializer(serializers.ModelSerializer[BrandCore]):
         read_only_fields = fields
 
 
+class BrandChangeSerializer(serializers.Serializer[Any]):
+    section = serializers.CharField()
+    field = serializers.CharField()
+    kind = serializers.ChoiceField(choices=["added", "removed", "changed"])
+    before = serializers.CharField(allow_blank=True)
+    after = serializers.CharField(allow_blank=True)
+
+
+class BrandSkippedSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField()
+    reason = serializers.CharField()
+
+
+class BrandWroteSerializer(serializers.Serializer[Any]):
+    """What the accepted sections wrote beyond the kit."""
+
+    products_created = serializers.ListField(child=serializers.CharField())
+    products_skipped = BrandSkippedSerializer(many=True)
+    taste_version = serializers.IntegerField(allow_null=True)
+    taste_activated = serializers.BooleanField()
+    competitors_tracked = serializers.ListField(child=serializers.CharField())
+    competitors_skipped = BrandSkippedSerializer(many=True)
+
+
 class BrandApplyResponseSerializer(serializers.Serializer[Any]):
     core = BrandCoreSerializer()
     kept = serializers.ListField(child=serializers.CharField())
     filled = serializers.ListField(child=serializers.CharField())
+    changes = BrandChangeSerializer(many=True)
+    wrote = BrandWroteSerializer()
 
 
 class ProductImportSerializer(serializers.ModelSerializer[ProductImport]):

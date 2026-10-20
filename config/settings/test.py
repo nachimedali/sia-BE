@@ -6,8 +6,11 @@ anything against an in-memory fake, and both are the sort of thing that breaks
 in production precisely because it was faked in CI.
 """
 
+import os
 import tempfile
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F403
 from .base import REDIS_URL
@@ -20,8 +23,14 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
-# Isolate test keyspace from the dev keyspace on the same Redis instance.
-_TEST_REDIS_DB = 15
+# Isolate test keyspace from the dev keyspace on the same Redis instance, and
+# each xdist worker from the others (X-37): every test flushes its database, so
+# workers sharing one wiped each other's rate-limit and budget keys mid-test.
+# gw0 → DB 15, gw1 → DB 14 … gw11 → DB 4; DBs 0-3 stay for dev and e2e.
+_WORKER = int(os.environ.get("PYTEST_XDIST_WORKER", "gw0").removeprefix("gw") or 0)
+if _WORKER > 11:
+    raise ImproperlyConfigured("Run the suite with at most 12 workers (-n 12): one Redis DB each.")
+_TEST_REDIS_DB = 15 - _WORKER
 _test_redis_url = REDIS_URL.rsplit("/", 1)[0] + f"/{_TEST_REDIS_DB}"
 
 CACHES = {

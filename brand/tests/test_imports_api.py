@@ -276,6 +276,7 @@ def test_a_reimport_keeps_what_the_user_edited(auth_client: Any, workspace: Any,
         "value": {"summary": "Chefs.", "segments": []},
         "origin": "you",
         "source": "",
+        "confidence": "confirmed",
     }
     assert BrandCore.objects.filter(workspace=workspace).count() == 2
 

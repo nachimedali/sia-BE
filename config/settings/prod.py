@@ -48,6 +48,13 @@ USE_FAKE_MEDIA_EDITOR = False
 USE_FAKE_TREND_VENDORS = False
 USE_FAKE_PLAYBOOK_COLLECTORS = False
 USE_FAKE_REFERENCE_IMAGES = False
+# The fake fetcher answers a brand import with fixture websites, so a customer
+# would get someone else's invented brand. The real crawler needs no key (F1).
+USE_FAKE_SITE_FETCHER = False
+# Billing is the one fake that may stay selected until Stripe is set up (W1),
+# and only in refusing form: every money path answers 503, because the fake's
+# webhook secret is a public constant (F1, C1).
+FAKE_BILLING_REFUSES = True
 # The fake collector's rows are fixtures. A deploy with no YouTube key still
 # collects from the fake (that is the registry's rule), and this is what keeps
 # those rows off a customer's wall.

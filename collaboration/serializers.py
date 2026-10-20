@@ -300,6 +300,19 @@ class ReviewPostSerializer(serializers.Serializer[Any]):
     scheduled_at = serializers.DateTimeField(allow_null=True)
 
 
+class GuestDecisionSerializer(serializers.Serializer[Any]):
+    """What an approve link decided (P7), shown when the client opens it again."""
+
+    decision = serializers.ChoiceField(choices=["approved", "changes_requested"])
+    at = serializers.DateTimeField()
+    note = serializers.CharField(allow_blank=True)
+
+
+class GuestRequestChangesSerializer(serializers.Serializer[Any]):
+    #: Five characters: "changes" with nothing to change sends the team in circles.
+    note = serializers.CharField(min_length=5, max_length=2000)
+
+
 class ReviewPacketSerializer(serializers.Serializer[Any]):
     """What a guest reviewer is handed.
 
@@ -313,6 +326,9 @@ class ReviewPacketSerializer(serializers.Serializer[Any]):
     payloads = serializers.DictField(child=AdaptedPayloadSerializer(), read_only=True)
     threads = GuestThreadSerializer(many=True, read_only=True)
     can_approve = serializers.SerializerMethodField()
+    language = serializers.CharField(read_only=True)
+    timezone = serializers.CharField(read_only=True)
+    decision = GuestDecisionSerializer(read_only=True, allow_null=True)
 
     @extend_schema_field(ReviewPostSerializer)
     def get_post(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -336,7 +352,11 @@ class ReviewPacketSerializer(serializers.Serializer[Any]):
 
         link = context["link"]
         is_approve_link: bool = link.purpose == ReviewLinkPurpose.APPROVE
-        return is_approve_link and context["post"].status == PostStatus.PENDING_REVIEW
+        return (
+            is_approve_link
+            and link.used_at is None
+            and context["post"].status == PostStatus.PENDING_REVIEW
+        )
 
 
 class GuestCommentRequestSerializer(serializers.Serializer[Any]):

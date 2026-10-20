@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.conf import settings
+from django.db.models import Q
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -52,13 +53,30 @@ def _return_urls(outcome: str) -> tuple[str, str]:
 
 
 class PlanListView(ListAPIView):  # type: ignore[type-arg]
-    """Public: the pricing page renders straight from these rows (I8)."""
+    """Public: the pricing page renders straight from these rows (I8).
+
+    Signed in, the caller's own plan is included even when it is no longer
+    public (P4): the billing page and onboarding mark "your plan", and a
+    workspace on a retired plan must still see it. Anonymous callers get only
+    the public rows. Authentication is optional here, never required.
+    """
 
     serializer_class = PlanSerializer
-    queryset = Plan.objects.filter(is_public=True)
     pagination_class = None
-    authentication_classes: list[Any] = []
     permission_classes: list[Any] = [AllowAny]
+
+    def get_queryset(self) -> Any:
+        public = Plan.objects.filter(is_public=True)
+        user = getattr(self.request, "user", None)
+        if user is None or not user.is_authenticated:
+            return public
+        from workspaces.models import Organization
+
+        own = Organization.objects.filter(owner=user).values_list("plan_id", flat=True)
+        member = Organization.objects.filter(memberships__user=user).values_list(
+            "plan_id", flat=True
+        )
+        return Plan.objects.filter(Q(is_public=True) | Q(pk__in=own) | Q(pk__in=member)).distinct()
 
     @extend_schema(summary="List public plans", responses={200: PlanSerializer(many=True)})
     def get(self, request: Request, *args: Any, **kwargs: Any) -> Response:

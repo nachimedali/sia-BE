@@ -15,6 +15,12 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenBlacklistView, TokenRefreshView
 
 from accounts.views import (
+    AccountView,
+    EmailConfirmView,
+    MeEmailView,
+    MeExportDownloadView,
+    MeExportView,
+    MePasswordView,
     MeView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
@@ -98,6 +104,7 @@ from collaboration.views import (
     ReviewLinkRevokeView,
     ReviewLinkView,
     ReviewPacketView,
+    ReviewRequestChangesView,
     ThreadViewSet,
 )
 from common.health import HealthView
@@ -107,6 +114,14 @@ from content.views import (
     PostTemplateViewSet,
     PostViewSet,
     RecurrenceRuleViewSet,
+)
+from inbox.views import (
+    InboxCommentDetailView,
+    InboxCommentListView,
+    InboxCommentNotesView,
+    InboxCommentReplyView,
+    InboxSummaryView,
+    SavedReplyViewSet,
 )
 from learn.views import DigestViewSet, ProposedRuleViewSet
 from notifications.views import NotificationListView, NotificationPreferenceView
@@ -152,9 +167,13 @@ from workspaces.views import (
     ApprovalChainStageView,
     AuditLogView,
     InvitationAcceptView,
+    InvitationPreviewView,
     MembershipViewSet,
     OrganizationAddonView,
     OrganizationListView,
+    WorkspaceInviteDetailView,
+    WorkspaceInviteListView,
+    WorkspaceInviteResendView,
     WorkspaceInviteView,
     WorkspaceListCreateView,
     WorkspaceProfileView,
@@ -170,6 +189,7 @@ router.register("recurrence-rules", RecurrenceRuleViewSet, basename="recurrence-
 router.register("threads", ThreadViewSet, basename="thread")
 router.register("campaigns", CampaignViewSet, basename="campaign")
 router.register("labels", LabelViewSet, basename="label")
+router.register("inbox/saved-replies", SavedReplyViewSet, basename="saved-reply")
 router.register("saved-views", SavedViewViewSet, basename="saved-view")
 router.register("timetables", TimetableViewSet, basename="timetable")
 router.register("bulk-operations", BulkOperationViewSet, basename="bulk-operation")
@@ -200,6 +220,16 @@ urlpatterns = [
     path("auth/refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
     path("auth/logout/", TokenBlacklistView.as_view(), name="auth-logout"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
+    path("auth/me/account/", AccountView.as_view(), name="auth-me-account"),
+    path("auth/me/password/", MePasswordView.as_view(), name="auth-me-password"),
+    path("auth/me/email/", MeEmailView.as_view(), name="auth-me-email"),
+    path("auth/me/export/", MeExportView.as_view(), name="auth-me-export"),
+    path(
+        "auth/me/exports/<int:pk>/download/",
+        MeExportDownloadView.as_view(),
+        name="auth-me-export-download",
+    ),
+    path("auth/email/confirm/", EmailConfirmView.as_view(), name="auth-email-confirm"),
     path("auth/verify-email/", VerifyEmailView.as_view(), name="auth-verify-email"),
     path("auth/verify-code/", VerifyCodeView.as_view(), name="auth-verify-code"),
     path("auth/resend-verify/", ResendVerificationView.as_view(), name="auth-resend-verify"),
@@ -215,8 +245,22 @@ urlpatterns = [
     path("workspaces/", WorkspaceListCreateView.as_view(), name="workspaces"),
     path("workspaces/quote/", WorkspaceQuoteView.as_view(), name="workspace-quote"),
     path("workspaces/<int:pk>/invite/", WorkspaceInviteView.as_view(), name="workspace-invite"),
+    path(
+        "workspaces/<int:pk>/invites/", WorkspaceInviteListView.as_view(), name="workspace-invites"
+    ),
+    path(
+        "workspaces/<int:pk>/invites/<int:invite_id>/",
+        WorkspaceInviteDetailView.as_view(),
+        name="workspace-invite-detail",
+    ),
+    path(
+        "workspaces/<int:pk>/invites/<int:invite_id>/resend/",
+        WorkspaceInviteResendView.as_view(),
+        name="workspace-invite-resend",
+    ),
     # Unauthenticated by necessity: the invitee may have no account yet, and
     # the token is the credential. Hash-only, single-use, 14 days.
+    path("invites/<str:token>/", InvitationPreviewView.as_view(), name="invite-preview"),
     path("invites/<str:token>/accept/", InvitationAcceptView.as_view(), name="invite-accept"),
     path("billing/addons/", OrganizationAddonView.as_view(), name="billing-addons"),
     # C-11 / P0-04: `/app/tools` had a frontend and no backend, so it 404'd.
@@ -289,6 +333,19 @@ urlpatterns = [
     path("analytics/best-times/", AnalyticsBestTimesView.as_view(), name="analytics-best-times"),
     path("analytics/sentiment/", AnalyticsSentimentView.as_view(), name="analytics-sentiment"),
     path("analytics/comments/", AnalyticsCommentsView.as_view(), name="analytics-comments"),
+    path("inbox/comments/", InboxCommentListView.as_view(), name="inbox-comments"),
+    path("inbox/comments/<int:pk>/", InboxCommentDetailView.as_view(), name="inbox-comment"),
+    path(
+        "inbox/comments/<int:pk>/notes/",
+        InboxCommentNotesView.as_view(),
+        name="inbox-comment-notes",
+    ),
+    path(
+        "inbox/comments/<int:pk>/reply/",
+        InboxCommentReplyView.as_view(),
+        name="inbox-comment-reply",
+    ),
+    path("inbox/summary/", InboxSummaryView.as_view(), name="inbox-summary"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
     # --- Phase 6: demographics and competitors ---
     # Both answer for the caller's own workspace, so there is no id for the
@@ -472,6 +529,11 @@ urlpatterns = [
     path("review/<str:token>/", ReviewPacketView.as_view(), name="review-packet"),
     path("review/<str:token>/approve/", ReviewApproveView.as_view(), name="review-approve"),
     path("review/<str:token>/comment/", ReviewCommentView.as_view(), name="review-comment"),
+    path(
+        "review/<str:token>/request-changes/",
+        ReviewRequestChangesView.as_view(),
+        name="review-request-changes",
+    ),
     # --- reminders: public, token-scoped, no login (design.md §8.5) ---
     # Not on `router` — a token is not a workspace-scoped pk, so the
     # cross-workspace tenancy sweep (A52) has nothing to walk here;

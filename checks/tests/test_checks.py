@@ -176,7 +176,16 @@ def test_palette_is_read_against_the_brand_kit(workspace: Any, user: Any) -> Non
     BrandCore.objects.create(
         workspace=workspace,
         version=1,
-        sections={"palette": {"colors": [{"role": "Primary", "hex": "#c03020"}]}},
+        # The shape `brand.services.imports.apply` really writes: the section's
+        # content sits under "value". The check used to read one level up, so on
+        # real data it never saw a brand colour and always said "not set".
+        sections={
+            "palette": {
+                "value": {"colors": [{"role": "Primary", "hex": "#c03020"}], "fonts": {}},
+                "origin": "site",
+                "source": "https://acme.test/",
+            }
+        },
     )
     assert [r["status"] for r in results(services.run_checks(post), "palette")] == ["FIX"]
 
@@ -185,14 +194,18 @@ def test_palette_is_read_against_the_brand_kit(workspace: Any, user: Any) -> Non
     assert [r["status"] for r in results(services.run_checks(on_brand), "palette")] == ["PASS"]
 
 
-def test_video_frames_are_reported_unchecked(workspace: Any, user: Any) -> None:
+def test_a_video_is_read_by_the_video_port_and_a_clean_one_passes(
+    workspace: Any, user: Any
+) -> None:
+    """The fake reader stands in for ffmpeg here; the real one is tested against
+    real files in `test_logo_and_video.py`."""
     clip = ingest_media(
         workspace=workspace,
         upload=SimpleUploadedFile("a.mp4", b"\x00\x00\x00\x18ftypmp42", content_type="video/mp4"),
     )
     run = services.run_checks(post_with(workspace, user, media=[clip]))
 
-    assert [r["status"] for r in results(run, "video")] == ["UNAVAILABLE"]
+    assert [r["status"] for r in results(run, "video")] == ["PASS"]
 
 
 # --- the gate ------------------------------------------------------------------------------

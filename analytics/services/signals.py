@@ -47,9 +47,10 @@ class TargetPerformance:
     platform: str
     published_at: dt.datetime
     engagement_rate: float
-    impressions: int
-    likes: int
-    comments: int
+    #: `None` where the platform cannot report the metric (rule 4).
+    impressions: int | None
+    likes: int | None
+    comments: int | None
     #: `None` until the account has `MIN_HISTORY_FOR_PERCENTILE` posts to rank
     #: this one against.
     percentile: float | None = None
@@ -61,7 +62,11 @@ class TargetPerformance:
 @dataclass
 class Overview:
     posts: int = 0
-    impressions: int = 0
+    #: Sum over the posts whose impressions were measured; `None` when none were.
+    impressions: int | None = 0
+    #: Posts left out of `impressions` because their platform could not report it
+    #: (C-07: an exclusion is stated, never hidden).
+    impressions_excluded: int = 0
     engagement_rate: float = 0.0
     top: list[TargetPerformance] = field(default_factory=list)
     by_source: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -88,9 +93,9 @@ _CAPTURE_COLUMNS = (
 class _Capture:
     captured_at: dt.datetime
     engagement_rate: float
-    impressions: int
-    likes: int
-    comments: int
+    impressions: int | None
+    likes: int | None
+    comments: int | None
 
 
 def _captures_by_target(targets: list[PostTarget]) -> dict[int, list[_Capture]]:
@@ -289,9 +294,11 @@ def overview(workspace_id: int, *, horizon_days: int) -> Overview:
         return Overview()
 
     by_source, by_media = attribution(rows)
+    measured = [row.impressions for row in rows if row.impressions is not None]
     return Overview(
         posts=len(rows),
-        impressions=sum(row.impressions for row in rows),
+        impressions=sum(measured) if measured else None,
+        impressions_excluded=len(rows) - len(measured),
         engagement_rate=round(sum(row.engagement_rate for row in rows) / len(rows), 6),
         top=rows[:5],
         by_source=by_source,

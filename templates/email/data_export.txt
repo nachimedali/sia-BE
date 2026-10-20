@@ -1,0 +1,9 @@
+Your ComposeVision data is ready
+
+The copy of your data you asked for is ready: your profile, the posts, comments and approvals you made, and your activity log.
+
+Download it from your account (you will be asked to sign in):
+
+{{ download_url }}
+
+The download is available for {{ days }} days.

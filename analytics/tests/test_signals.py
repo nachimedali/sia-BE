@@ -184,6 +184,32 @@ def test_attribution_splits_ai_from_manual(
     assert result.posts == 2
 
 
+def test_overview_sums_only_measured_impressions_and_counts_the_rest(
+    paid_workspace: Any, user: Any, social_account: Any
+) -> None:
+    """C3, C-07: unavailable rows are excluded and the exclusion is reported."""
+    capture(make_target(paid_workspace, user, social_account), rate=0.2, impressions=None)
+    capture(make_target(paid_workspace, user, social_account), rate=0.2, impressions=300)
+    capture(make_target(paid_workspace, user, social_account), rate=0.2, impressions=0)
+
+    result = signals.overview(paid_workspace.pk, horizon_days=PRO_HORIZON)
+
+    assert result.impressions == 300
+    assert result.impressions_excluded == 1
+    assert result.posts == 3
+
+
+def test_overview_with_nothing_measured_is_null_never_zero(
+    paid_workspace: Any, user: Any, social_account: Any
+) -> None:
+    capture(make_target(paid_workspace, user, social_account), rate=0.2, impressions=None)
+
+    result = signals.overview(paid_workspace.pk, horizon_days=PRO_HORIZON)
+
+    assert result.impressions is None
+    assert result.impressions_excluded == 1
+
+
 def test_overview_of_an_empty_workspace_is_not_an_error(paid_workspace: Any) -> None:
     result = signals.overview(paid_workspace.pk, horizon_days=PRO_HORIZON)
 

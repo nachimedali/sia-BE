@@ -111,7 +111,10 @@ class StripeBillingGateway:
 def get_billing_gateway() -> BillingGateway:
     """Resolves the configured gateway. Swapping is a settings change."""
     if getattr(settings, "USE_FAKE_BILLING", False):
-        from billing.gateways.fake import _fake_gateway
+        from billing.gateways.fake import _fake_gateway, _refusing_gateway
 
+        # A deployment refuses instead of faking: the fake's secret is public (F1).
+        if getattr(settings, "FAKE_BILLING_REFUSES", False):
+            return _refusing_gateway
         return _fake_gateway
     return StripeBillingGateway()

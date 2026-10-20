@@ -794,3 +794,44 @@ def site_text(pages: list[Page], limit: int = 6000) -> str:
             if size > limit:
                 return "\n".join(chunks)
     return "\n".join(chunks)
+
+
+# --- offers ----------------------------------------------------------------------------
+
+_OFFERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "shipping",
+        re.compile(
+            r"\b(free (shipping|delivery)|livraison (offerte|gratuite)|spedizione gratuita)\b", re.I
+        ),
+    ),
+    (
+        "discount",
+        re.compile(r"(\b\d{1,2}\s?% ?(off|de réduction|di sconto)\b|-\s?\d{1,2}\s?%)", re.I),
+    ),
+    ("code", re.compile(r"\b(use|with|avec|usa)?\s*(code|promo)\s*[:\"“]?\s*[A-Z0-9]{4,14}\b")),
+    ("bundle", re.compile(r"\b(buy \d+,? get \d+|2 for 1|\d+ for \d+|2 achetés?)\b", re.I)),
+)
+MAX_OFFERS = 5
+
+
+def extract_offers(pages: list[Page]) -> list[dict[str, str]]:
+    """Promotions the site states about itself, **verbatim**: a banner or a line
+    of copy that matches a known pattern, with the page it was on. Nothing is
+    paraphrased, completed or priced — a stated offer is the site's own words or
+    it is not listed."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for page in pages:
+        for block in page.blocks:
+            text = " ".join(block.split())
+            if not 6 <= len(text) <= 160 or text.casefold() in seen:
+                continue
+            for kind, pattern in _OFFERS:
+                if pattern.search(text):
+                    seen.add(text.casefold())
+                    out.append({"text": text, "kind": kind, "source": page.url})
+                    break
+            if len(out) >= MAX_OFFERS:
+                return out
+    return out

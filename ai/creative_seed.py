@@ -1371,6 +1371,26 @@ SUGGESTIONS = [
     for slug, label in entries
 ]
 
+#: The look controls that show a thumbnail (`metadata.image`, served from the
+#: frontend's `public/studio/<kind>/<key>.webp`; built by
+#: `app-FE/scripts/studio-images.py`). An option with no picture yet keeps its
+#: icon: "close-crop" is waiting on one.
+_LOOK_ROWS = {"scene": SCENES, "light": LIGHTS, "camera": CAMERAS, "cast": CAST, "vibe": VIBES}
+STUDIO_IMAGES: dict[str, tuple[str, ...]] = {
+    kind: tuple(row["key"] for row in rows if row["key"] != "close-crop")
+    for kind, rows in _LOOK_ROWS.items()
+}
+
+
+def studio_image(kind: str, key: str) -> str:
+    return f"/studio/{kind}/{key}.webp"
+
+
+for _kind, _rows in _LOOK_ROWS.items():
+    for _row in _rows:
+        if _row["key"] in STUDIO_IMAGES[_kind]:
+            _row["metadata"]["image"] = studio_image(_kind, _row["key"])
+
 #: kind -> rows. Order within a kind is `sort_order`, assigned by position.
 CATALOG: dict[str, list[dict[str, Any]]] = {
     "scene": SCENES,

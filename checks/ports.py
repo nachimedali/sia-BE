@@ -9,6 +9,7 @@ because a check that did not run is not a check that found nothing.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -64,6 +65,50 @@ class PolicyResult:
 
 class PolicyPort(Protocol):
     def review(self, *, text: str, platform: str, category: str) -> PolicyResult: ...
+
+
+@dataclass(frozen=True)
+class VideoFacts:
+    """What was measured in one video: times are seconds from the start, the
+    two luma figures run 0 (black) to 1 (white), and `motion` is how much the
+    picture changed over the opening second (0 none .. 1 a different picture)."""
+
+    duration: float
+    has_audio: bool
+    black: list[tuple[float, float]]
+    silent: list[tuple[float, float]]
+    first_luma: float
+    motion: float
+    last_frame: bytes | None
+    provider: str
+
+
+class VideoPort(Protocol):
+    def inspect(self, path: str) -> VideoFacts: ...
+
+
+_video_override: VideoPort | None = None
+
+
+def set_video_override(port: VideoPort | None) -> None:
+    global _video_override
+    _video_override = port
+
+
+def get_video() -> VideoPort | None:
+    """The frame reader: `ffmpeg` on this machine, or nothing — in which case
+    the video checks report *Not checked* rather than pass."""
+    if _video_override is not None:
+        return _video_override
+    if uses_fake("CHECKS"):
+        from checks.fakes import FakeVideo
+
+        return FakeVideo()
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        return None
+    from checks.video import FfmpegVideo
+
+    return FfmpegVideo()
 
 
 _ocr_override: OcrPort | None = None
