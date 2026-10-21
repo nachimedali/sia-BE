@@ -14,11 +14,13 @@ what's reachable" shape `PostStatus` used in Phase 4 (A47).
 from __future__ import annotations
 
 import re
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+
+from common.records import AppendOnly
 
 
 class GenerationKind(models.TextChoices):
@@ -369,6 +371,199 @@ class QualityGateConfig(models.Model):
     def get_solo(cls) -> QualityGateConfig:
         instance, _ = cls.objects.get_or_create(pk=1)
         return instance
+
+
+# -----------------------------------------------------------------------------
+# Which model serves which task, per package (pricing.plan.md, Phase 4)
+# -----------------------------------------------------------------------------
+class AITask(models.TextChoices):
+    """Every place a model is called, named once.
+
+    A task, not a mode: `Generation.mode` says what the customer asked for,
+    the task says which call answers it — one IMAGE generation makes an image
+    call, a constraint check per variant and a copy call, three tasks routed
+    separately because they have three different right models.
+    """
+
+    STUDIO_TEXT = "studio_text", "Studio text (idea, product, rewrite, suggest, revision)"
+    CAPTION_FROM_IMAGE = "caption_from_image", "Caption from an image (vision)"
+    IMAGE_COPY = "image_copy", "Headline and caption for generated images"
+    CONSTRAINT_CHECK = "constraint_check", "Brand-constraint check on an image (vision)"
+    REPHRASE = "rephrase", "Studio and motion brief rephrase"
+    BRAND_IMPORT = "brand_import", "Brand and product import from a website"
+    CAMPAIGN_PLAN = "campaign_plan", "Campaign plan"
+    DIGEST = "digest", "Digest narration"
+    TOOLS = "tools", "Tool suite"
+    SENTIMENT = "sentiment", "Audience comment sentiment"
+    INBOX_CODING = "inbox_coding", "Audience inbox coding"
+    IMAGE_STUDIO = "image_studio", "Studio images"
+    IMAGE_AUTOPILOT = "image_autopilot", "Autopilot images"
+    VIDEO_START = "video_start", "Video from a first frame, and text-to-video"
+    VIDEO_END = "video_end", "Video landing on a last frame"
+
+
+class AIKind(models.TextChoices):
+    TEXT = "text", "Text"
+    IMAGE = "image", "Image"
+    VIDEO = "video", "Video"
+
+
+#: Which vendor port answers each task. A route's provider must be the one
+#: configured for its kind (`ai.services.routing.configured_provider`).
+TASK_KINDS: dict[str, str] = {
+    AITask.IMAGE_STUDIO: AIKind.IMAGE,
+    AITask.IMAGE_AUTOPILOT: AIKind.IMAGE,
+    AITask.VIDEO_START: AIKind.VIDEO,
+    AITask.VIDEO_END: AIKind.VIDEO,
+}
+
+
+def kind_of(task: str) -> str:
+    return TASK_KINDS.get(task, AIKind.TEXT)
+
+
+#: The knobs a route may carry, per kind, and the values each accepts. Anything
+#: else is refused by `AIModelRoute.clean`, never ignored — an ignored setting
+#: is one an operator believes is in force.
+ROUTE_PARAMS: dict[str, dict[str, tuple[Any, ...]]] = {
+    AIKind.TEXT: {},
+    AIKind.IMAGE: {"image_size": ("1K", "2K", "4K"), "batch": (True, False)},
+    AIKind.VIDEO: {"resolution": ("480p", "720p", "1080p"), "audio": (True, False)},
+}
+
+
+class AIModelRoute(models.Model):
+    """The model one task uses, for one package or for all of them.
+
+    `plan` null is the default every package inherits; a row with a plan
+    overrides it for that plan only. Resolution is `ai.services.routing` and
+    nowhere else: (task, plan) → (task, default) → the settings the system
+    ran on before this table existed, so **an empty table is exactly the
+    previous behaviour**.
+
+    `provider` is stored, not implied, for the same reason social rows carry
+    `provider_key`: a model id belongs to one vendor, and a row written for
+    one gateway is skipped — not sent — once the deployment points at another.
+
+    Edits are recorded in `AIModelRouteChange`, explicitly, by the admin.
+    """
+
+    task = models.CharField(max_length=32, choices=AITask.choices)
+    plan = models.ForeignKey(
+        "billing.Plan",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="model_routes",
+        help_text="Empty = the default for every package.",
+    )
+    provider = models.CharField(max_length=32)
+    model = models.CharField(max_length=128, help_text="The vendor's exact, dated model id.")
+    fallback_model = models.CharField(
+        max_length=128,
+        blank=True,
+        help_text="Tried once, on the same provider, when the primary fails or is withdrawn.",
+    )
+    params = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+    note = models.TextField(blank=True)
+
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["task", "plan__sort_order"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["task", "plan"], name="unique_model_route_per_plan"),
+            models.UniqueConstraint(
+                fields=["task"],
+                condition=models.Q(plan__isnull=True),
+                name="unique_default_model_route",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        scope = self.plan.code if self.plan is not None else "default"
+        return f"{self.task} ({scope}): {self.provider}/{self.model}"
+
+    @property
+    def kind(self) -> str:
+        return kind_of(self.task)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "fallback_model": self.fallback_model,
+            "params": self.params,
+            "is_active": self.is_active,
+        }
+
+    def clean(self) -> None:
+        from ai.services.routing import configured_provider
+
+        errors: dict[str, str] = {}
+        expected = configured_provider(self.kind)
+        if self.provider != expected:
+            errors["provider"] = (
+                f"{self.get_task_display()} runs on the {self.kind} port, which this "
+                f"deployment points at '{expected}'. A route for another provider would "
+                "never be used."
+            )
+        if not self.model.strip():
+            errors["model"] = "A route names a model."
+        if self.fallback_model and self.fallback_model == self.model:
+            errors["fallback_model"] = "The fallback must differ from the primary model."
+        if not isinstance(self.params, dict):
+            errors["params"] = "Parameters are an object of name → value."
+        else:
+            allowed = ROUTE_PARAMS[self.kind]
+            for key, value in self.params.items():
+                if key not in allowed:
+                    names = ", ".join(sorted(allowed)) or "none"
+                    errors["params"] = f"'{key}' is not a {self.kind} parameter (allowed: {names})."
+                    break
+                if value not in allowed[key]:
+                    options = ", ".join(str(option) for option in allowed[key])
+                    errors["params"] = f"'{key}' must be one of: {options}."
+                    break
+        if errors:
+            raise ValidationError(errors)
+
+
+class AIModelRouteChange(AppendOnly):
+    """Who changed a route, from what, to what. Written by the admin on every
+    save, explicitly (no signals): a fall in acceptance rate after a model swap
+    is only attributable if the swap itself is on record."""
+
+    append_only_hint = "record a new change instead of editing this one."
+
+    # PROTECT: a route with history is deactivated, not deleted — deleting it
+    # would take its record of changes with it.
+    route = models.ForeignKey(AIModelRoute, on_delete=models.PROTECT, related_name="changes")
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"route {self.route_id} changed at {self.created_at:%Y-%m-%d %H:%M}"
 
 
 # -----------------------------------------------------------------------------

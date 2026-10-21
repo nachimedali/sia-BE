@@ -42,9 +42,9 @@ def test_schedule_reminder_arms_a_reminder(auth_client: Any, workspace: Any, use
 def test_scheduling_beyond_plan_horizon_rejected_402(
     auth_client: Any, workspace: Any, user: Any
 ) -> None:
-    """Free plan's `scheduling_horizon_days` is 7 (`seed_plans`, design.md §4.1)."""
+    """The default plan's `scheduling_horizon_days` is 30 (Spark, `seed_plans`)."""
     post = create_post(workspace=workspace, author=user, master_body="Too far out")
-    too_far = timezone.now() + dt.timedelta(days=8)
+    too_far = timezone.now() + dt.timedelta(days=31)
 
     response = auth_client.post(
         _schedule_url(post.id),

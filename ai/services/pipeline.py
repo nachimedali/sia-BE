@@ -54,6 +54,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
 
 from ai.models import (
+    AITask,
     Generation,
     GenerationKind,
     GenerationMode,
@@ -356,7 +357,12 @@ def _reference_image_bytes(product: Product | None) -> list[bytes]:
 def _attempt_text(
     generation: Generation, *, n: int
 ) -> tuple[list[tuple[TextVariant, quality.QualityResult]], dict[str, Any]]:
-    provider = get_text_provider()
+    source_media = generation.source_media
+    from_image = generation.mode == GenerationMode.CAPTION and source_media is not None
+    provider = get_text_provider(
+        AITask.CAPTION_FROM_IMAGE if from_image else AITask.STUDIO_TEXT,
+        workspace=generation.workspace,
+    )
     grounded = prompting.assemble_text_prompt(
         idea=generation.prompt,
         workspace=generation.workspace,
@@ -365,8 +371,8 @@ def _attempt_text(
         mode=generation.mode,
         direction=creative_service.caption_lines(generation.creative),
     )
-    source_media = generation.source_media
-    if generation.mode == GenerationMode.CAPTION and source_media is not None:
+    if from_image:
+        assert source_media is not None
         # The one branch, and it is on *capability* rather than on mode name:
         # this is the only mode whose input is a picture, so it is the only one
         # that needs the vision method. Everything after it — the quality gate,
@@ -408,8 +414,13 @@ def _attempt_image(
 
     `assets` are the person's brand pictures (`ai.services.brand_assets`),
     attached last and never given to the gate."""
-    provider = get_image_provider()
-    text_provider = get_text_provider()
+    provider = get_image_provider(
+        AITask.IMAGE_AUTOPILOT
+        if generation.mode == GenerationMode.AUTOPILOT
+        else AITask.IMAGE_STUDIO,
+        workspace=generation.workspace,
+    )
+    text_provider = get_text_provider(AITask.CONSTRAINT_CHECK, workspace=generation.workspace)
     inspiration = inspiration or []
     assets = assets or []
     snapshot = list(generation.creative.get("references") or [])
@@ -532,7 +543,9 @@ def _write_copy(generation: Generation, *, count: int) -> list[VariantCopy]:
             direction=creative_service.caption_lines(generation.creative),
             headline_first=True,
         )
-        result = get_text_provider().generate(system=grounded.system, prompt=grounded.user, n=count)
+        result = get_text_provider(AITask.IMAGE_COPY, workspace=generation.workspace).generate(
+            system=grounded.system, prompt=grounded.user, n=count
+        )
     except ProviderError:
         logger.warning("copy for generation %s unavailable", generation.pk, exc_info=True)
         return empty

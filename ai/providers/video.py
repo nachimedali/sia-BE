@@ -19,23 +19,37 @@ from django.conf import settings
 from ai.providers.switches import uses_fake
 
 
-def get_video_provider() -> Any | None:
+def get_video_provider(*, workspace: Any = None) -> Any | None:
     """The configured provider, or `None` when there is not one.
 
     `None` rather than an exception: "no video vendor is configured" is a
     deployment fact the pipeline turns into a clear 422 for the user, not an
     error condition callers should have to catch.
+
+    With a `workspace`, the provider comes bound to its package's video routes
+    (`video_start`, `video_end`): model, resolution and audio per call.
     """
+    inner: Any
     if uses_fake("VIDEO"):
         from ai.providers.fake import _fake_video_provider
 
-        return _fake_video_provider
-    if not getattr(settings, "VIDEO_PROVIDER_API_KEY", ""):
+        inner = _fake_video_provider
+    elif not getattr(settings, "VIDEO_PROVIDER_API_KEY", ""):
         return None
-    raise NotImplementedError(
-        "VIDEO_PROVIDER_API_KEY is set but no real video adapter is implemented yet. "
-        "Add one in ai/providers/ and resolve it here."
-    )
+    elif settings.VIDEO_PROVIDER == "openrouter":
+        from ai.providers.openrouter_video import OpenRouterVideoProvider
+
+        inner = OpenRouterVideoProvider()
+    else:
+        raise NotImplementedError(
+            f"VIDEO_PROVIDER '{settings.VIDEO_PROVIDER}' has no adapter. "
+            "Add one in ai/providers/ and resolve it here."
+        )
+    if workspace is None:
+        return inner
+    from ai.providers.routed import RoutedVideoProvider
+
+    return RoutedVideoProvider(inner, workspace=workspace)
 
 
 def get_video_composer() -> Any | None:

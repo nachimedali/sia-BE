@@ -34,14 +34,13 @@ from billing.models import (
     VideoReason,
 )
 from billing.services import ledger, pricing
-from billing.services.plans import set_plan
+from billing.services.plans import default_plan, set_plan
 from channels.services import park_accounts_over_cap
 from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
 
-FREE_PLAN_CODE = "free"
 
 BILLING_CYCLES = ("monthly", "annual")
 
@@ -58,13 +57,6 @@ STRIPE_STATUS = {
 }
 
 
-def free_plan() -> Plan:
-    plan = Plan.objects.filter(code=FREE_PLAN_CODE).first()
-    if plan is None:
-        raise RuntimeError("The 'free' plan is missing. Run `manage.py seed_plans`.")
-    return plan
-
-
 # -----------------------------------------------------------------------------
 # Checkout
 # -----------------------------------------------------------------------------
@@ -75,7 +67,8 @@ def start_checkout(
         raise OCCSError(f"Billing cycle must be one of {BILLING_CYCLES}.", code="invalid_cycle")
 
     plan = Plan.objects.filter(code=plan_code, is_public=True).first()
-    if plan is None or plan.code == FREE_PLAN_CODE:
+    # Free plans are not sold; the default plan is free by `Plan.clean`.
+    if plan is None or not (plan.price_monthly_cents or plan.price_annual_cents):
         raise OCCSError("That plan cannot be subscribed to.", code="invalid_plan")
 
     # Resolved rather than read off the plan: the price and the Stripe id both
@@ -250,7 +243,7 @@ def downgrade_to_free(workspace: Workspace, *, reason: str = "trial expired") ->
 
     Both mark; neither deletes.
     """
-    plan = free_plan()
+    plan = default_plan()
     organization = workspace.organization
     if organization.plan_id == plan.pk:
         return workspace
@@ -357,7 +350,7 @@ def expire_lapsed_trials() -> int:
     """
     now = timezone.now()
     candidates = Workspace.objects.filter(organization__trial_ends_at__lt=now).exclude(
-        organization__plan__code=FREE_PLAN_CODE
+        organization__plan__is_default=True
     )
 
     downgraded = 0

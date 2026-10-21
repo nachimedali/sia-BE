@@ -193,6 +193,7 @@ class LLMBrandInference:
     def infer(
         self, *, name: str, text: str, categories: list[str], products: list[str]
     ) -> dict[str, Any]:
+        from ai.models import AITask
         from ai.providers.llm_text import get_text_provider
 
         prompt = json.dumps(
@@ -205,20 +206,25 @@ class LLMBrandInference:
             ensure_ascii=False,
         )
         try:
-            result = get_text_provider().generate(system=_SYSTEM, prompt=prompt, n=1)
+            result = get_text_provider(AITask.BRAND_IMPORT).generate(
+                system=_SYSTEM, prompt=prompt, n=1
+            )
         except Exception:  # a provider failure leaves the inferred sections unknown
             return {}
         body = result.variants[0].body if result.variants else ""
         return validate(_json_in(body), text=text, categories=categories)
 
     def infer_product(self, *, name: str, text: str, missing: list[str]) -> dict[str, Any]:
+        from ai.models import AITask
         from ai.providers.llm_text import get_text_provider
 
         prompt = json.dumps(
             {"product": name, "fill": missing, "page_text": text[:12000]}, ensure_ascii=False
         )
         try:
-            result = get_text_provider().generate(system=_PRODUCT_SYSTEM, prompt=prompt, n=1)
+            result = get_text_provider(AITask.BRAND_IMPORT).generate(
+                system=_PRODUCT_SYSTEM, prompt=prompt, n=1
+            )
         except Exception:  # a provider failure leaves the fields to the user
             return {}
         body = result.variants[0].body if result.variants else ""

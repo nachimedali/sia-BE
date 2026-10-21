@@ -220,6 +220,13 @@ class ReactionDetail(models.TextChoices):
 
 
 class Plan(CatalogueItem):
+    #: The plan a new organization starts on and a lapsed subscription returns
+    #: to — one row, chosen in admin (pricing.plan.md D-2). It used to be the
+    #: row coded `free` by convention; a package rename is now a tick box.
+    is_default = models.BooleanField(
+        default=False,
+        help_text="New organizations start on this plan; lapsed subscriptions return to it.",
+    )
     price_monthly_cents = models.IntegerField(default=0)
     price_annual_cents = models.IntegerField(default=0)
 
@@ -283,6 +290,12 @@ class Plan(CatalogueItem):
             type(self)._default_manager.exclude(pk=self.pk).filter(is_recommended=True).update(
                 is_recommended=False
             )
+        if self.is_default:
+            # Same rule, same reason: one floor plan, or signup and downgrade
+            # would each pick whichever row the database returned first.
+            type(self)._default_manager.exclude(pk=self.pk).filter(is_default=True).update(
+                is_default=False
+            )
 
     def validation_errors(self) -> dict[str, str]:
         errors = super().validation_errors()
@@ -296,6 +309,11 @@ class Plan(CatalogueItem):
             )
         if self.max_social_accounts < 1:
             errors["max_social_accounts"] = "max_social_accounts must be at least 1."
+
+        # The floor is what a lapsed subscription falls back to; a paid floor
+        # would keep serving a paid plan to someone who stopped paying.
+        if self.is_default and (self.price_monthly_cents or self.price_annual_cents):
+            errors["is_default"] = "The default plan must be free."
 
         unknown = set(self.features) - FEATURE_KEYS
         if unknown:

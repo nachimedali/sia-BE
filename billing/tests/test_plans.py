@@ -49,11 +49,12 @@ def test_approval_workflow_and_api_access_are_advanced_only(plans) -> None:
 
 
 def test_seed_is_idempotent(plans) -> None:
-    """Four rows since L-4: the quota trial joins Free, Pro and Advanced.
-    `free` survives rather than being replaced, because existing accounts sit
-    on it and moving them is a commercial decision, not a seed."""
+    """Eight rows since the 2026-10-21 packages: Spark, Essential, Growth and
+    Scale join the legacy Free, Trial, Pro and Advanced, which survive rather
+    than being replaced because existing accounts sit on them."""
     call_command("seed_plans", verbosity=0)
-    assert Plan.objects.count() == 4
+    assert Plan.objects.count() == 8
+    assert list(Plan.objects.filter(is_default=True).values_list("code", flat=True)) == ["spark"]
 
 
 def test_social_account_cap_never_unlimited(plans) -> None:

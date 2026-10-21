@@ -195,10 +195,11 @@ def test_complete_reports_exactly_what_is_missing(client, account) -> None:
     assert set(error["detail"]["missing"]) == {"name", "category"}
 
 
-def test_the_plan_step_soft_defaults_to_free(client, account) -> None:
-    """D14: nobody hits a paywall before seeing the product."""
+def test_the_plan_step_soft_defaults_to_the_free_default_plan(client, account) -> None:
+    """D14: nobody hits a paywall before seeing the product. The default plan
+    is Spark since the 2026-10-21 packages."""
     state = client.get(ONBOARDING_URL).json()
-    assert state["plan_code"] == "free"
+    assert state["plan_code"] == "spark"
     assert 7 in state["completed_steps"]
 
 

@@ -12,7 +12,7 @@ import pytest
 from django.apps import apps
 from django.db.models import Model
 
-from ai.models import CreativeOption, GenerationCost
+from ai.models import AIModelRoute, CreativeOption, GenerationCost
 from billing.models import Currency, Pack, Plan, PlanPrice
 from categories.models import Category
 from tools.models import ToolConfig
@@ -29,11 +29,15 @@ def _seeding_on(settings) -> None:
 # Order matters: trend sources hang off the categories.
 SEEDS = [
     "billing.migrations.0018_seed_catalog",
+    "billing.migrations.0021_plan_is_default",
+    "billing.migrations.0022_packages_2026_10",
     "ai.migrations.0008_seed_catalog",
     "ai.migrations.0009_revise_reason",
     "ai.migrations.0011_catalog_v2",
     "ai.migrations.0013_video_catalog",
     "ai.migrations.0017_italian_language",
+    "ai.migrations.0021_seed_model_routes",
+    "ai.migrations.0022_video_clip_credits",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -45,6 +49,7 @@ MODELS: list[type[Model]] = [
     Pack,
     CreativeOption,
     GenerationCost,
+    AIModelRoute,
     Category,
     ToolConfig,
     TrendSource,
@@ -64,7 +69,8 @@ def test_the_seed_migrations_populate_every_catalogue_a_fresh_install_needs() ->
     _run_all()
     counts = _counts()
     assert all(n > 0 for n in counts.values()), counts
-    assert Plan.objects.filter(code="trial").exists()  # registration provisions it
+    # Registration provisions the default plan, Spark since the 2026-10-21 packages.
+    assert Plan.objects.get(is_default=True).code == "spark"
     assert CreativeOption.objects.filter(kind="scene").exists()  # the Studio's first control
     # S3: the Motion step's controls, each with its price on the row.
     for kind in ("video_length", "motion", "video_aspect", "reel_style", "music", "video_extra"):
@@ -72,7 +78,7 @@ def test_the_seed_migrations_populate_every_catalogue_a_fresh_install_needs() ->
     # L-6 amended: Italian reaches a database seeded before it existed.
     assert CreativeOption.objects.filter(kind="language", key="it", is_active=True).exists()
     clip = CreativeOption.objects.get(kind="video_length", key="clip-5")
-    assert clip.metadata["credits"] == 6
+    assert clip.metadata["credits"] == 25  # priced for a $0.10 credit (pricing.audit.md §8)
     assert TrendSource.objects.filter(workspace__isnull=True).count() == counts["TrendSource"]
 
 

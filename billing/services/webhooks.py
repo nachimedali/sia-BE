@@ -280,12 +280,21 @@ def _plan_from(subscription: dict[str, Any]) -> Plan | None:
     items = (subscription.get("items") or {}).get("data") or []
     price_ids = {_id_of(item.get("price") or {}) for item in items}
     price_ids.discard(None)
+    price_ids.discard("")
     if not price_ids:
         return None
 
     from django.db.models import Q
 
+    # Checkout reads a plan's Stripe id from its `PlanPrice` row first and the
+    # legacy `Plan` column second (`pricing.plan_price`), so the way back has
+    # to search both — a price pasted only on the row was otherwise refused here.
     query = Q()
     for price_id in price_ids:
-        query |= Q(stripe_price_id_monthly=price_id) | Q(stripe_price_id_annual=price_id)
-    return Plan.objects.filter(query).first()
+        query |= (
+            Q(stripe_price_id_monthly=price_id)
+            | Q(stripe_price_id_annual=price_id)
+            | Q(prices__stripe_price_id_monthly=price_id)
+            | Q(prices__stripe_price_id_annual=price_id)
+        )
+    return Plan.objects.filter(query).distinct().first()

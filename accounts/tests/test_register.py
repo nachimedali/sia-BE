@@ -29,7 +29,8 @@ def test_register_creates_workspace_membership_and_free_plan(plans, outbox) -> N
 
     workspace = Workspace.objects.get(organization__owner=user)
     assert workspace.organization.plan is not None
-    assert workspace.organization.plan.code == "free"
+    # The plan marked default in admin: Spark since the 2026-10-21 packages.
+    assert workspace.organization.plan.code == "spark"
     assert workspace.onboarding_complete is False
     assert workspace.slug
 

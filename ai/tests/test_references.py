@@ -245,7 +245,7 @@ def test_a_rewrite_that_adds_a_number_falls_back_to_the_lines(monkeypatch: Any) 
                 latency_ms=0,
             )
 
-    monkeypatch.setattr(rephrase, "get_text_provider", lambda: Inventive())
+    monkeypatch.setattr(rephrase, "get_text_provider", lambda *_a, **_k: Inventive())
 
     result = rephrase.reference_brief(
         idea="", product="Djerba olive oil", references=references.brief_lines(REFS[:1]), choices=[]

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ai.models import AITask
 from ai.providers.llm_text import get_text_provider
 from analytics.models import Sentiment
 from common.exceptions import ProviderError
@@ -133,7 +134,7 @@ def classify_comments(bodies: list[str]) -> list[SentimentVerdict]:
 
     numbered = "\n".join(f"{n + 1}. {bodies[index]}" for n, index in enumerate(pending))
     try:
-        result = get_text_provider().generate(system=_PROMPT, prompt=numbered, n=1)
+        result = get_text_provider(AITask.SENTIMENT).generate(system=_PROMPT, prompt=numbered, n=1)
         lines = [
             line.strip().upper() for line in result.variants[0].body.splitlines() if line.strip()
         ]

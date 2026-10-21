@@ -45,7 +45,7 @@ from django.db.models import Max, Sum
 from django.utils import timezone
 
 from accounts.models import User
-from ai.models import CreativeKind, CreativeOption
+from ai.models import AITask, CreativeKind, CreativeOption
 from ai.providers.llm_text import get_text_provider
 from ai.services.video import held_credits as video_held_credits
 from billing.models import UNLIMITED
@@ -301,7 +301,7 @@ def _template_words(inputs: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[
 def _model_words(inputs: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, str]] | None:
     """The provider's words, or `None` when they do not pass."""
     try:
-        result = get_text_provider().generate(
+        result = get_text_provider(AITask.CAMPAIGN_PLAN).generate(
             system=SYSTEM_PROMPT, prompt=json.dumps(inputs, ensure_ascii=False), n=1
         )
         reply = json.loads(result.variants[0].body)

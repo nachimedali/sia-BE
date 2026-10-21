@@ -45,6 +45,7 @@ from billing.models import (
     Subscription,
 )
 from billing.services import ledger
+from billing.services.plans import default_plan, suggest_upgrade
 from common.exceptions import (
     AddonNotEnabled,
     FeatureNotAvailable,
@@ -59,13 +60,6 @@ from workspaces.models import Workspace
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 300
-FREE_PLAN_CODE = "free"
-
-# What to suggest when a gate closes. Free → Pro covers everything except the
-# Advanced-only features, which name themselves.
-ADVANCED_ONLY = frozenset(
-    {"approval_workflow", "approval_chain_depth", "api_access", "autopilot_auto_approve"}
-)
 
 
 def _addon_version(organization: Any) -> str:
@@ -122,7 +116,7 @@ class Entitlements:
         # customer on the wrong plan instead of a visible error.
         plan = _org_plan(self.workspace)
         if plan is None:
-            return _free_plan()
+            return default_plan()
 
         if not self._trial_has_lapsed(plan):
             return plan
@@ -132,14 +126,14 @@ class Entitlements:
             "trial lapsed; resolving Free until the downgrade task runs",
             extra={"workspace_id": self.workspace.pk, "plan": plan.code},
         )
-        return _free_plan()
+        return default_plan()
 
     def _trial_has_lapsed(self, plan: Plan) -> bool:
         """True when the trial has run out and nothing has been paid."""
         ends_at = _org_trial_ends_at(self.workspace)
         if ends_at is None or ends_at > timezone.now():
             return False
-        if plan.code == FREE_PLAN_CODE:
+        if plan.is_default:
             return False
         # A live subscription means they converted; the trial end is history.
         return Subscription.current_for(self.workspace) is None
@@ -303,9 +297,7 @@ class Entitlements:
 
     # --- gates -----------------------------------------------------------
     def _suggested_plan(self, feature_key: str | None = None) -> str:
-        if feature_key in ADVANCED_ONLY:
-            return "advanced"
-        return "pro" if self.plan.code == FREE_PLAN_CODE else "advanced"
+        return suggest_upgrade(self.plan, feature_key)
 
     def require_feature(self, key: str) -> None:
         if not self.feature(key):
@@ -461,15 +453,6 @@ class Entitlements:
                 else 0
             ),
         }
-
-
-def _free_plan() -> Plan:
-    plan = Plan.objects.filter(code=FREE_PLAN_CODE).first()
-    if plan is None:
-        # Only reachable if seed_plans never ran. Refusing outright beats
-        # inventing an in-memory plan whose quotas nobody can audit.
-        raise RuntimeError("The 'free' plan is missing. Run `manage.py seed_plans`.")
-    return plan
 
 
 def entitlements_for(workspace: Workspace) -> Entitlements:

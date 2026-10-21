@@ -40,7 +40,7 @@ def test_a_long_comment_goes_to_the_provider(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(
         "analytics.services.sentiment.get_text_provider",
-        lambda: _provider_returning("POSITIVE"),
+        lambda *_a, **_k: _provider_returning("POSITIVE"),
     )
 
     verdicts = classify_comments([long_comment])
@@ -54,7 +54,7 @@ def test_a_mixed_short_comment_goes_to_the_provider(monkeypatch: Any) -> None:
     count cannot call that, so it is escalated rather than guessed."""
     monkeypatch.setattr(
         "analytics.services.sentiment.get_text_provider",
-        lambda: _provider_returning("NEGATIVE"),
+        lambda *_a, **_k: _provider_returning("NEGATIVE"),
     )
 
     verdicts = classify_comments(["love but awful"])
@@ -67,7 +67,7 @@ def test_verdicts_come_back_in_the_order_they_were_asked(monkeypatch: Any) -> No
     partial answer must not attach one comment's sentiment to another."""
     monkeypatch.setattr(
         "analytics.services.sentiment.get_text_provider",
-        lambda: _provider_returning("NEGATIVE\nPOSITIVE"),
+        lambda *_a, **_k: _provider_returning("NEGATIVE\nPOSITIVE"),
     )
 
     verdicts = classify_comments(
@@ -88,7 +88,7 @@ def test_verdicts_come_back_in_the_order_they_were_asked(monkeypatch: Any) -> No
 def test_an_unreadable_label_falls_back_to_neutral(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "analytics.services.sentiment.get_text_provider",
-        lambda: _provider_returning("I think it is quite nice actually"),
+        lambda *_a, **_k: _provider_returning("I think it is quite nice actually"),
     )
 
     verdicts = classify_comments(["a comment long enough to reach the provider path"])
@@ -108,7 +108,9 @@ def test_a_provider_failure_degrades_to_neutral_rather_than_raising(
         def generate(self, **_kwargs: Any) -> Any:
             raise ProviderError("model down")
 
-    monkeypatch.setattr("analytics.services.sentiment.get_text_provider", lambda: Exploding())
+    monkeypatch.setattr(
+        "analytics.services.sentiment.get_text_provider", lambda *_a, **_k: Exploding()
+    )
 
     verdicts = classify_comments(["a comment long enough to reach the provider path"])
 

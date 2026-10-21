@@ -151,7 +151,7 @@ def test_free_tier_cannot_reach_the_connect_flow(auth_client: Any, workspace: An
     assert response.status_code == 402
     error = response.json()["error"]
     assert error["code"] == "feature_not_available"
-    assert error["upgrade"]["suggested_plan"] == "pro"
+    assert error["upgrade"]["suggested_plan"] == "essential"
 
 
 # -----------------------------------------------------------------------------

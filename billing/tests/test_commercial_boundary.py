@@ -45,6 +45,12 @@ ALLOWED: frozenset[str] = frozenset(
         # Postgres connection reuse, in seconds. "MAX_AGE" trips the word list
         # and has nothing to do with commerce.
         "DB_CONN_MAX_AGE",
+        # The LLM gateway's per-account request budget (NVIDIA: ~40/min) and
+        # how long a call waits for it — vendor capacity shared by every brand,
+        # nothing a package sells.
+        "LLM_RATE_LIMIT_PER_MINUTE",
+        "LLM_RATE_LIMIT_MAX_WAIT_SECONDS",
+        "LLM_RATE_LIMIT_RETRIES",
     }
 )
 

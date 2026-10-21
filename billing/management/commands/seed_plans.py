@@ -27,6 +27,9 @@ PLANS: list[dict[str, Any]] = [
         # it and migrating them is a commercial decision, not a seed.
         "code": "trial",
         "display_name": "Trial",
+        # Retired from the public list by the 2026-10-21 packages (Spark is
+        # the free start now); the row stays for the accounts that sit on it.
+        "is_public": False,
         "tagline": "Six posts to see whether this works for you. No card.",
         "price_monthly_cents": 0,
         "price_annual_cents": 0,
@@ -129,6 +132,9 @@ PLANS: list[dict[str, Any]] = [
     {
         "code": "pro",
         "display_name": "Pro",
+        # Retired from the public list by the 2026-10-21 packages; kept for
+        # the subscriptions that point at it.
+        "is_public": False,
         "tagline": "Auto-publish, trends and autopilot.",
         "price_monthly_cents": 3700,
         "price_annual_cents": 34800,
@@ -179,6 +185,9 @@ PLANS: list[dict[str, Any]] = [
     {
         "code": "advanced",
         "display_name": "Advanced",
+        # Retired from the public list by the 2026-10-21 packages; kept for
+        # the subscriptions that point at it.
+        "is_public": False,
         "tagline": "Approval chains, API access and the most video.",
         "price_monthly_cents": 9700,
         "price_annual_cents": 92400,
@@ -231,6 +240,188 @@ PLANS: list[dict[str, Any]] = [
 ]
 
 
+# The packages of 2026-10-21 (pricing.audit.md §7, pricing.plan.md Phase 2).
+# Kept out of `PLANS` for the reason `PRESENTATION` is: `billing/0018` imports
+# that list and creates rows from it before `is_default` exists (`0021`).
+# `billing/0022` creates these on databases that already ran 0018.
+#
+# One credit sells for $0.10 (the `credits-100` pack): a task costs
+# `ceil(cost / (0.10 * 0.3))` credits, so AI cost stays under 30% of what a
+# credit sells for. Monthly credits are sized to each package's cadence
+# (1, 3, 6 and 12 posts a week, from the GooseWorks calendar rules) and cover
+# its videos — a clip render debits credits (`ai.services.video`), which is why
+# `included_videos` is 0 here: those units have no consumer since S3.
+_PAID_FEATURES: dict[str, Any] = {
+    "trend_engine": True,
+    "repurposing": True,
+    "playbook": True,
+    "video_generation": True,
+    "auto_publish": True,
+    "autopilot_auto_approve": False,
+    "credits_rollover": False,
+}
+
+PACKAGES: list[dict[str, Any]] = [
+    {
+        "code": "spark",
+        "display_name": "Spark",
+        "tagline": "One post a week, planned and reminded. Free, no card.",
+        "is_default": True,
+        "price_monthly_cents": 0,
+        "price_annual_cents": 0,
+        "price_per_workspace_cents": 0,
+        "sort_order": 10,
+        "monthly_ai_credits": 60,
+        "included_videos": 0,
+        "max_social_accounts": 1,
+        "max_autopublish_posts": 0,
+        "max_scheduled_posts": 4,
+        "scheduling_horizon_days": 30,
+        "max_workspace_members": 1,
+        "max_products": 1,
+        "trial_days": 0,
+        "trial_post_quota": 0,
+        "max_workspaces": 1,
+        "counts_docs_against_quota": False,
+        "max_campaigns": 1,
+        "max_tracked_competitors": 0,
+        "max_labels": 5,
+        "included_views": 2,
+        "features": {
+            "trend_engine": False,
+            "repurposing": False,
+            "playbook": False,
+            "approval_workflow": False,
+            "approval_chain_depth": 1,
+            "api_access": False,
+            "video_generation": False,
+            "autopilot": False,
+            "autopilot_auto_approve": False,
+            "auto_publish": False,
+            "analytics_history_days": 7,
+            "credits_rollover": False,
+            "reply_to_comments": False,
+        },
+        "comment_capture_interval_minutes": 1440,
+        "reaction_detail": "TOTAL",
+        "support_response": "2 working days",
+    },
+    {
+        "code": "essential",
+        "display_name": "Essential",
+        "tagline": "Three posts a week on three channels, with short videos.",
+        "price_monthly_cents": 4900,
+        "price_annual_cents": 49000,
+        "price_per_workspace_cents": 4900,
+        "sort_order": 11,
+        "monthly_ai_credits": 500,
+        "included_videos": 0,
+        "max_social_accounts": 3,
+        "max_autopublish_posts": 60,
+        "max_scheduled_posts": 100,
+        "scheduling_horizon_days": 90,
+        "max_workspace_members": 2,
+        "max_products": 3,
+        "trial_days": 7,
+        "trial_post_quota": 0,
+        "max_workspaces": 1,
+        "counts_docs_against_quota": False,
+        "max_campaigns": 5,
+        "max_tracked_competitors": 0,
+        "max_labels": 10,
+        "included_views": 5,
+        "features": {
+            **_PAID_FEATURES,
+            "approval_workflow": False,
+            "approval_chain_depth": 1,
+            "api_access": False,
+            "autopilot": False,
+            "analytics_history_days": 90,
+            "reply_to_comments": False,
+        },
+        "comment_capture_interval_minutes": 1440,
+        "reaction_detail": "TOTAL",
+        "support_response": "1 working day",
+    },
+    {
+        "code": "growth",
+        "display_name": "Growth",
+        "tagline": "Six posts a week on five channels, autopilot and 1080p video.",
+        "is_recommended": True,
+        "price_monthly_cents": 9900,
+        "price_annual_cents": 99000,
+        "price_per_workspace_cents": 9900,
+        "sort_order": 12,
+        "monthly_ai_credits": 1100,
+        "included_videos": 0,
+        "max_social_accounts": 5,
+        "max_autopublish_posts": 150,
+        "max_scheduled_posts": 300,
+        "scheduling_horizon_days": 180,
+        "max_workspace_members": 5,
+        "max_products": 10,
+        "trial_days": 7,
+        "trial_post_quota": 0,
+        "max_workspaces": 3,
+        "counts_docs_against_quota": False,
+        "max_campaigns": 20,
+        "max_tracked_competitors": 10,
+        "max_labels": 40,
+        "included_views": 20,
+        "features": {
+            **_PAID_FEATURES,
+            "approval_workflow": True,
+            "approval_chain_depth": 2,
+            "api_access": False,
+            "autopilot": True,
+            "analytics_history_days": 365,
+            "reply_to_comments": False,
+        },
+        "comment_capture_interval_minutes": 360,
+        "reaction_detail": "PER_TYPE",
+        "support_response": "1 working day",
+    },
+    {
+        "code": "scale",
+        "display_name": "Scale",
+        "tagline": "Twelve posts a week, every channel, approval chains and replies.",
+        "price_monthly_cents": 24900,
+        "price_annual_cents": 249000,
+        "price_per_workspace_cents": 24900,
+        "sort_order": 13,
+        "monthly_ai_credits": 2200,
+        "included_videos": 0,
+        "max_social_accounts": 10,
+        "max_autopublish_posts": 500,
+        "max_scheduled_posts": -1,
+        "scheduling_horizon_days": -1,
+        "max_workspace_members": 15,
+        "max_products": -1,
+        "trial_days": 7,
+        "trial_post_quota": 0,
+        "max_workspaces": 10,
+        "counts_docs_against_quota": False,
+        "max_campaigns": -1,
+        "max_tracked_competitors": -1,
+        "max_labels": -1,
+        "included_views": -1,
+        "features": {
+            **_PAID_FEATURES,
+            "approval_workflow": True,
+            "approval_chain_depth": 10,
+            "api_access": True,
+            "autopilot": True,
+            "analytics_history_days": 730,
+            "reply_to_comments": True,
+        },
+        # `0` is webhook-driven (L-4a), as on Advanced.
+        "comment_capture_interval_minutes": 0,
+        "reaction_detail": "REACTORS",
+        "support_response": "Same working day",
+    },
+]
+
+
 # How each plan presents itself on the pricing and help pages (P4, P8). Kept
 # out of `PLANS` on purpose: `billing/0018` imports that list and creates rows
 # from it before these columns exist (`0020`), so a key added there would break
@@ -238,17 +429,17 @@ PLANS: list[dict[str, Any]] = [
 PRESENTATION: dict[str, dict[str, Any]] = {
     "trial": {"support_response": "2 working days"},
     "free": {"support_response": "2 working days"},
-    "pro": {"support_response": "1 working day", "is_recommended": True},
+    "pro": {"support_response": "1 working day"},
     "advanced": {"support_response": "Same working day"},
 }
 
 
 class Command(BaseCommand):
-    help = "Seed or update the three plans with the design.md §4.1 matrix."
+    help = "Seed or update the plans: the legacy rows and the 2026-10-21 packages."
 
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
-        for spec in PLANS:
+        for spec in [*PLANS, *PACKAGES]:
             code = spec["code"]
             plan, created = Plan.objects.update_or_create(
                 code=code,
@@ -259,7 +450,7 @@ class Command(BaseCommand):
             verb = "created" if created else "updated"
             self.stdout.write(f"  {verb}: {plan.code} ({plan.display_name})")
 
-        self.stdout.write(self.style.SUCCESS(f"Seeded {len(PLANS)} plans."))
+        self.stdout.write(self.style.SUCCESS(f"Seeded {len(PLANS) + len(PACKAGES)} plans."))
 
     @staticmethod
     def _seed_default_price(plan: Plan) -> None:

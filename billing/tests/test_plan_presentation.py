@@ -60,10 +60,12 @@ def test_the_seed_sells_no_auto_approval_and_recommends_one_plan(settings) -> No
     for plan in Plan.objects.all():
         assert plan.features.get("autopilot_auto_approve", False) is False, plan.code
         assert "auto-approve" not in plan.tagline.lower(), plan.code
-    assert list(Plan.objects.filter(is_recommended=True).values_list("code", flat=True)) == ["pro"]
-    # L-4: the quota trial replaced free-forever on the public page.
-    assert not Plan.objects.get(code="free").is_public
-    assert Plan.objects.get(code="trial").is_public
+    assert list(Plan.objects.filter(is_recommended=True).values_list("code", flat=True)) == [
+        "growth"
+    ]
+    # The 2026-10-21 packages replaced every legacy row on the public page.
+    for code in ("free", "trial", "pro", "advanced"):
+        assert not Plan.objects.get(code=code).is_public, code
     assert all(p.support_response for p in Plan.objects.filter(is_public=True))
 
 

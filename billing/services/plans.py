@@ -24,6 +24,43 @@ from workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
 
+#: Named only for the bug path: an upgrade prompt must name *a* plan even when
+#: the catalogue has no public paid row to suggest (design.md A2).
+FALLBACK_SUGGESTION = "pro"
+
+
+def default_plan() -> Plan:
+    """The plan new organizations start on and lapsed subscriptions return
+    to: the row marked `is_default` in admin.
+
+    Missing is a deployment error, raised rather than papered over: inventing
+    an in-memory plan would serve quotas nobody can audit.
+    """
+    plan = Plan.objects.filter(is_default=True).first()
+    if plan is None:
+        raise RuntimeError("No plan is marked as the default. Run `manage.py seed_plans`.")
+    return plan
+
+
+def suggest_upgrade(current: Plan, feature_key: str | None = None) -> str:
+    """The code of the cheapest public plan above `current` that unlocks
+    `feature_key` (or any plan above it, for a quota).
+
+    Read from the catalogue rather than named in code, so renaming or adding
+    a package changes every upgrade prompt with no deploy. Falls back to the
+    dearest public plan, then to `FALLBACK_SUGGESTION` on an empty catalogue.
+    """
+    public = list(
+        Plan.objects.filter(is_public=True).order_by("price_monthly_cents", "sort_order", "id")
+    )
+    above = [plan for plan in public if plan.price_monthly_cents > current.price_monthly_cents]
+    for plan in above:
+        if feature_key is None or plan.feature(feature_key):
+            return plan.code
+    if public:
+        return public[-1].code
+    return FALLBACK_SUGGESTION
+
 
 @transaction.atomic
 def set_plan(workspace: Workspace, plan: Plan | None) -> None:

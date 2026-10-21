@@ -29,6 +29,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from ai.models import AITask
 from ai.providers.llm_text import get_text_provider
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ def motion_brief(*, motion: str, role: str, seconds: float, product: str = "") -
 def _rewrite(system: str, brief: str) -> Rephrased:
     fallback = Rephrased(text=brief, by=TEMPLATE)
     try:
-        result = get_text_provider().generate(system=system, prompt=brief, n=1)
+        result = get_text_provider(AITask.REPHRASE).generate(system=system, prompt=brief, n=1)
     except Exception:  # a model outage costs the rewrite, never the generation
         logger.warning("brief rephrase unavailable", exc_info=True)
         return fallback

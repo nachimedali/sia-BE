@@ -23,7 +23,7 @@ pytestmark = pytest.mark.django_db
 # -----------------------------------------------------------------------------
 def test_grant_task_grants_and_then_stops(workspace) -> None:
     assert tasks.grant_monthly_allowances() == 1
-    assert ledger.credit_balance(workspace) == 30
+    assert ledger.credit_balance(workspace) == 60  # Spark's monthly credits
     assert tasks.grant_monthly_allowances() == 0
 
 
@@ -35,7 +35,7 @@ def test_trial_expiry_task_downgrades(workspace, plans) -> None:
     assert tasks.expire_trials() == 1
 
     workspace.refresh_from_db()
-    assert workspace.organization.plan.code == "free"
+    assert workspace.organization.plan.code == "spark"
 
 
 def test_reconcile_task_is_quiet_when_the_ledgers_agree(workspace) -> None:
@@ -88,8 +88,11 @@ def test_a_plan_with_subscribers_cannot_be_deleted(site, workspace, plans) -> No
     unused = Plan.objects.create(code="legacy", display_name="Legacy")
 
     assert admin.has_delete_permission(HttpRequest(), obj=unused) is True
-    # `workspace` is on Free, which therefore has a subscriber.
-    assert admin.has_delete_permission(HttpRequest(), obj=plans["free"]) is False
+    # `workspace` is on Spark, which therefore has a subscriber.
+    assert admin.has_delete_permission(HttpRequest(), obj=plans["spark"]) is False
+    # And the default plan is never deletable, subscribers or not.
+    plans["spark"].organizations.update(plan=plans["free"])
+    assert admin.has_delete_permission(HttpRequest(), obj=plans["spark"]) is False
 
 
 def test_a_plan_referenced_only_by_a_subscription_cannot_be_deleted(site, workspace, plans) -> None:
