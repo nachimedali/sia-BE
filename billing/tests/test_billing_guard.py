@@ -59,11 +59,11 @@ def test_a_webhook_signed_with_the_public_fake_secret_is_refused(refusing, works
 
 
 def test_subscribing_is_refused(refusing, auth_client, workspace, plans) -> None:
-    plans["pro"].stripe_price_id_monthly = "price_pro_monthly"
-    plans["pro"].save()
+    plans["growth"].stripe_price_id_monthly = "price_growth_monthly"
+    plans["growth"].save()
 
     response = auth_client.post(
-        "/api/v1/billing/subscribe/", {"plan_code": "pro", "cycle": "monthly"}, format="json"
+        "/api/v1/billing/subscribe/", {"plan_code": "growth", "cycle": "monthly"}, format="json"
     )
 
     assert response.status_code == 503

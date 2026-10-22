@@ -70,20 +70,29 @@ def image_transport(monkeypatch: Any) -> list[httpx.Request]:
                 json={
                     "done": True,
                     "response": {
-                        "candidates": [
-                            {
-                                "content": {
-                                    "parts": [
-                                        {
-                                            "inline_data": {
-                                                "mime_type": "image/png",
-                                                "data": png_1x1,
+                        "inlinedResponses": {
+                            "inlinedResponses": [
+                                {
+                                    "metadata": {"key": "0"},
+                                    "response": {
+                                        "candidates": [
+                                            {
+                                                "content": {
+                                                    "parts": [
+                                                        {
+                                                            "inlineData": {
+                                                                "mimeType": "image/png",
+                                                                "data": png_1x1,
+                                                            }
+                                                        }
+                                                    ]
+                                                }
                                             }
-                                        }
-                                    ]
+                                        ]
+                                    },
                                 }
-                            }
-                        ]
+                            ]
+                        }
                     },
                 },
             )

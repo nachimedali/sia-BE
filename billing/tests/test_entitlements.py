@@ -128,16 +128,22 @@ def test_free_plan_is_refused_the_paid_features(workspace, plans) -> None:
         with pytest.raises(FeatureNotAvailable) as excinfo:
             entitlements.require_feature(feature)
         assert excinfo.value.status_code == 402
-        assert excinfo.value.upgrade["suggested_plan"] == "pro"
+        # The cheapest public plan that has the feature, read from the catalogue.
+        expected = "growth" if feature == "autopilot" else "essential"
+        assert excinfo.value.upgrade["suggested_plan"] == expected
 
 
 def test_advanced_only_features_suggest_advanced(workspace, plans) -> None:
-    """A Pro user told to upgrade to Pro would be a dead end."""
-    entitlements = entitlements_for(_on_plan(workspace, plans, "pro"))
+    """A user told to upgrade to a plan without the feature would be a dead
+    end: the suggestion is the cheapest public plan above theirs that has it."""
+    entitlements = entitlements_for(_on_plan(workspace, plans, "essential"))
 
     with pytest.raises(FeatureNotAvailable) as excinfo:
         entitlements.require_feature("approval_workflow")
-    assert excinfo.value.upgrade["suggested_plan"] == "advanced"
+    assert excinfo.value.upgrade["suggested_plan"] == "growth"
+    with pytest.raises(FeatureNotAvailable) as excinfo:
+        entitlements.require_feature("reply_to_comments")
+    assert excinfo.value.upgrade["suggested_plan"] == "scale"
 
 
 def test_check_quota_refuses_at_the_cap_not_past_it(workspace, plans) -> None:
@@ -207,7 +213,8 @@ def test_a_lapsed_unpaid_trial_resolves_free_without_waiting_for_the_task(worksp
 
     entitlements = entitlements_for(workspace)
 
-    assert entitlements.plan.code == "free"
+    # The default plan (Spark), not a row coded `free` by convention.
+    assert entitlements.plan.code == "spark"
     assert entitlements.feature("auto_publish") is False
     # The stored plan is untouched: the downgrade task owns that write.
     workspace.refresh_from_db()

@@ -67,7 +67,7 @@ def model(monkeypatch: pytest.MonkeyPatch) -> Model:
             ],
         }
     )
-    monkeypatch.setattr("ai.providers.llm_text.get_text_provider", lambda: scripted)
+    monkeypatch.setattr("ai.providers.llm_text.get_text_provider", lambda *_a, **_k: scripted)
     monkeypatch.setattr(
         "brand.services.product_imports.get_brand_inference", lambda: LLMBrandInference()
     )

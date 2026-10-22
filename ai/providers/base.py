@@ -12,6 +12,7 @@ identical either way.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -23,12 +24,24 @@ def unwrap_json_response(response: Any, *, label: str) -> dict[str, Any]:
     a `ProviderError` carrying the response body, otherwise the parsed JSON
     is returned as-is."""
     if response.status_code >= 400:
+        # `status` lets a caller tell a rate limit (retry later, never on a
+        # fallback model) from a failure (`ai.services.routing`).
         raise ProviderError(
             f"{label} returned {response.status_code}.",
-            detail={"body": response.text[:500]},
+            detail={"body": response.text[:500], "status": response.status_code},
         )
     result: dict[str, Any] = response.json()
     return result
+
+
+def image_url_part(image_bytes: bytes) -> dict[str, Any]:
+    """One image as an OpenAI-shaped `image_url` part with a `data:` URL — the
+    one place an image becomes one, shared by the text gateway (caption,
+    constraint check) and the video gateway (frames, references), so a new
+    image type is recognised by both or neither."""
+    encoded = base64.b64encode(image_bytes).decode()
+    mime = "image/jpeg" if image_bytes.startswith(b"\xff\xd8") else "image/png"
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
 
 
 @dataclass(frozen=True)
@@ -65,7 +78,9 @@ class TextProvider(Protocol):
         """
         ...
 
-    def classify_constraints(self, *, image_bytes: bytes, restrictions: list[str]) -> list[str]:
+    def classify_constraints(
+        self, *, image_bytes: bytes, restrictions: list[str], model: str | None = None
+    ) -> list[str]:
         """Which of `restrictions` this image violates — empty if none.
 
         design.md §5 describes the LLM provider's job as "text, labelling,
@@ -104,11 +119,15 @@ class ImageProvider(Protocol):
         batch: bool,
         model: str | None = None,
         style: dict[str, float] | None = None,
+        image_size: str | None = None,
     ) -> ImageGenerationResult:
         """`style` is a colour-grade hint (`chroma`, `cb`, `cr`) derived from
         the brief's light, mood, palette and intensity. A real provider takes
         its direction from the prompt and may ignore it; the fake uses it to
-        make its mock-up visibly reflect what was chosen."""
+        make its mock-up visibly reflect what was chosen.
+
+        `image_size` (`1K`/`2K`/`4K`) comes from the task's route; `None`
+        leaves the vendor's default."""
         ...
 
 
@@ -152,6 +171,8 @@ class VideoProvider(Protocol):
         aspect: str,
         duration_seconds: float,
         model: str | None = None,
+        resolution: str | None = None,
+        audio: bool | None = None,
     ) -> VideoResult: ...
 
     def animate(
@@ -163,6 +184,8 @@ class VideoProvider(Protocol):
         aspect: str,
         duration_seconds: float,
         model: str | None = None,
+        resolution: str | None = None,
+        audio: bool | None = None,
     ) -> VideoResult:
         """Animate one still into a clip (steps-plan S3).
 
@@ -170,6 +193,9 @@ class VideoProvider(Protocol):
         or `end` (it moves toward the still and lands on it) — the two
         image-to-video modes every current vendor offers. `prompt` is camera
         direction only; the product's look comes from the image.
+
+        `model`, `resolution` and `audio` come from the task's route
+        (`ai.services.routing`); `None` leaves the vendor's default.
         """
         ...
 

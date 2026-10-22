@@ -28,7 +28,7 @@ pytestmark = pytest.mark.django_db
 def priced_plans(plans):
     """Stripe price ids, which `seed_plans` deliberately leaves blank — they
     differ per Stripe account and are configuration, not seed data."""
-    for code in ("pro", "advanced"):
+    for code in ("pro", "advanced", "essential", "growth", "scale"):
         plan = plans[code]
         plan.stripe_price_id_monthly = f"price_{code}_monthly"
         plan.stripe_price_id_annual = f"price_{code}_annual"
@@ -73,7 +73,7 @@ def test_checkout_offers_the_trial_only_once(workspace, priced_plans) -> None:
     """§8.1 — one trial per workspace. Stripe enforces the same per billing
     identity, which is what catches a second workspace on one card."""
     subscriptions.start_checkout(
-        workspace, plan_code="pro", cycle="monthly", success_url="s", cancel_url="c"
+        workspace, plan_code="growth", cycle="monthly", success_url="s", cancel_url="c"
     )
     assert _fake_gateway.checkout_calls[-1]["trial_days"] == 7
 
@@ -81,22 +81,22 @@ def test_checkout_offers_the_trial_only_once(workspace, priced_plans) -> None:
     workspace.organization.save(update_fields=["trial_ends_at"])
 
     subscriptions.start_checkout(
-        workspace, plan_code="pro", cycle="monthly", success_url="s", cancel_url="c"
+        workspace, plan_code="growth", cycle="monthly", success_url="s", cancel_url="c"
     )
     assert _fake_gateway.checkout_calls[-1]["trial_days"] == 0
 
 
 def test_checkout_uses_the_annual_price_when_asked(workspace, priced_plans) -> None:
     subscriptions.start_checkout(
-        workspace, plan_code="pro", cycle="annual", success_url="s", cancel_url="c"
+        workspace, plan_code="growth", cycle="annual", success_url="s", cancel_url="c"
     )
-    assert _fake_gateway.checkout_calls[-1]["price_id"] == "price_pro_annual"
+    assert _fake_gateway.checkout_calls[-1]["price_id"] == "price_growth_annual"
 
 
-def test_free_cannot_be_checked_out(workspace, priced_plans) -> None:
+def test_the_default_plan_cannot_be_checked_out(workspace, priced_plans) -> None:
     with pytest.raises(OCCSError):
         subscriptions.start_checkout(
-            workspace, plan_code="free", cycle="monthly", success_url="s", cancel_url="c"
+            workspace, plan_code="spark", cycle="monthly", success_url="s", cancel_url="c"
         )
 
 
@@ -104,7 +104,7 @@ def test_a_plan_without_a_stripe_price_is_refused_as_configuration(workspace, pl
     """Better a clear 400 than a Checkout session Stripe rejects."""
     with pytest.raises(OCCSError) as excinfo:
         subscriptions.start_checkout(
-            workspace, plan_code="pro", cycle="monthly", success_url="s", cancel_url="c"
+            workspace, plan_code="growth", cycle="monthly", success_url="s", cancel_url="c"
         )
     assert excinfo.value.code == "plan_not_purchasable"
 
@@ -118,7 +118,7 @@ def test_a_second_subscription_is_refused(workspace, priced_plans) -> None:
     )
     with pytest.raises(StateConflict):
         subscriptions.start_checkout(
-            workspace, plan_code="advanced", cycle="monthly", success_url="s", cancel_url="c"
+            workspace, plan_code="scale", cycle="monthly", success_url="s", cancel_url="c"
         )
 
 
@@ -186,7 +186,7 @@ def test_subscription_deleted_downgrades_without_destroying_anything(
     )
 
     workspace.refresh_from_db()
-    assert workspace.organization.plan.code == "free"
+    assert workspace.organization.plan.code == "spark"
     # I10: the ledger only grew. Nothing was rewritten and nothing removed.
     assert CreditLedger.objects.filter(workspace=workspace).count() > history
 
@@ -315,7 +315,7 @@ def test_downgrade_marks_over_limit_and_paused_without_deleting(workspace, price
     subscriptions.downgrade_to_free(workspace, reason="test")
 
     workspace.refresh_from_db()
-    assert workspace.organization.plan.code == "free"
+    assert workspace.organization.plan.code == "spark"
 
     surviving_credits = set(
         CreditLedger.objects.filter(workspace=workspace).values_list("pk", flat=True)
@@ -327,8 +327,8 @@ def test_downgrade_marks_over_limit_and_paused_without_deleting(workspace, price
     assert video_rows <= surviving_videos
     # The spend that already happened stays spent.
     assert CreditLedger.objects.get(pk=spend.pk).delta == -20
-    # And the workspace is now on the Free allowance.
-    assert ledger.credit_balance(workspace) == 30
+    # And the workspace is now on the default plan's allowance (Spark).
+    assert ledger.credit_balance(workspace) == 60
 
 
 def test_downgrading_a_free_workspace_is_a_no_op(workspace) -> None:
@@ -364,7 +364,7 @@ def test_expire_lapsed_trials_downgrades_only_the_unconverted(
 
     workspace.refresh_from_db()
     converted.refresh_from_db()
-    assert workspace.organization.plan.code == "free"
+    assert workspace.organization.plan.code == "spark"
     assert converted.organization.plan.code == "pro"
 
 
@@ -384,13 +384,13 @@ def test_grant_is_idempotent_within_a_period(workspace) -> None:
 def test_grant_fires_again_in_the_next_period(workspace) -> None:
     with time_machine.travel("2026-08-04 02:15:00+00:00", tick=False):
         subscriptions.grant_due_period_allowances()
-        ledger.debit_credits(workspace, 10, quota=30)
-        assert ledger.credit_balance(workspace) == 20
+        ledger.debit_credits(workspace, 10, quota=60)
+        assert ledger.credit_balance(workspace) == 50
 
     with time_machine.travel("2026-09-05 02:15:00+00:00", tick=False):
         assert subscriptions.grant_due_period_allowances() == 1
         # Reset, not accumulated: credits do not roll over (§4.1).
-        assert ledger.credit_balance(workspace) == 30
+        assert ledger.credit_balance(workspace) == 60
 
 
 def test_free_period_is_anchored_on_signup_not_the_first_of_the_month(workspace) -> None:

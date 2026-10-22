@@ -163,7 +163,7 @@ class _Scripted:
 def provider(monkeypatch: pytest.MonkeyPatch) -> Any:
     def install(reply: str) -> _Scripted:
         scripted = _Scripted(reply)
-        monkeypatch.setattr(plan_service, "get_text_provider", lambda: scripted)
+        monkeypatch.setattr(plan_service, "get_text_provider", lambda *_a, **_k: scripted)
         return scripted
 
     return install

@@ -145,7 +145,9 @@ def test_older_matches_are_counted_never_returned(
     history = body["history"]
     assert history["days"] == 7
     assert history["older_matches"] == 2
-    assert history["next_plan"] == {"name": "Pro", "days": 90}
+    # Spark (the default plan) → Essential, the cheapest public plan that looks
+    # further back.
+    assert history["next_plan"] == {"name": "Essential", "days": 90}
 
 
 def test_a_longer_plan_searches_further_back(
@@ -161,7 +163,9 @@ def test_a_longer_plan_searches_further_back(
         "plan": "Pro",
         "days": 90,
         "older_matches": 0,
-        "next_plan": {"name": "Advanced", "days": 730},
+        # Pro is retired from the public list; the next public plan that looks
+        # further back than 90 days is Growth.
+        "next_plan": {"name": "Growth", "days": 365},
     }
 
 

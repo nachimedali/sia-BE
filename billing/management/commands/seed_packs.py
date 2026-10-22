@@ -20,7 +20,22 @@ from billing.models import Currency, Pack, PackKind, PackPrice
 
 PACKS: list[dict[str, Any]] = [
     {
+        # One credit sells for $0.10 since the 2026-10-21 packages
+        # (pricing.audit.md §8): task prices are `ceil(cost / 0.03)`, so this
+        # pack is what the credit is worth. It replaces `credits-500`.
+        "code": "credits-100",
+        "display_name": "100 credits",
+        "tagline": "Images, captions and video. Bought credits do not expire monthly.",
+        "kind": PackKind.CREDITS,
+        "units": 100,
+        "price_cents": 1000,
+        "sort_order": -1,
+    },
+    {
         "code": "credits-500",
+        # Retired: 500 credits for $10 valued a credit at $0.02, below what
+        # a video render costs. Kept for its purchase history.
+        "is_public": False,
         "display_name": "500 credits",
         "tagline": "Text and image generation. Bought credits do not expire monthly.",
         "kind": PackKind.CREDITS,

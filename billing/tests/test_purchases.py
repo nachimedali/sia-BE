@@ -67,14 +67,15 @@ def test_seed_packs_is_idempotent(db) -> None:
 
     call_command("seed_packs", verbosity=0)
     call_command("seed_packs", verbosity=0)
-    assert Pack.objects.count() == 2
+    # `credits-500` stays, off the public list, for its purchase history.
+    assert Pack.objects.count() == 3
 
 
 def test_pack_code_is_immutable_after_creation(packs) -> None:
     """Same rule as `Plan.code` (D13): it is what a fulfilment names."""
     from django.core.exceptions import ValidationError
 
-    pack = packs["credits-500"]
+    pack = packs["credits-100"]
     pack.code = "credits-501"
     with pytest.raises(ValidationError):
         pack.save()
@@ -111,13 +112,13 @@ def test_starting_a_purchase_credits_nothing(workspace, packs) -> None:
     before = ledger.credit_balance(workspace)
 
     session = purchases.start_purchase(
-        workspace, pack_code="credits-500", success_url="s", cancel_url="c"
+        workspace, pack_code="credits-100", success_url="s", cancel_url="c"
     )
 
     assert session.url
     assert ledger.credit_balance(workspace) == before
-    assert _fake_gateway.checkout_calls[-1]["price_id"] == "price_credits-500"
-    assert _fake_gateway.checkout_calls[-1]["metadata"] == {"pack_code": "credits-500"}
+    assert _fake_gateway.checkout_calls[-1]["price_id"] == "price_credits-100"
+    assert _fake_gateway.checkout_calls[-1]["metadata"] == {"pack_code": "credits-100"}
 
 
 def test_an_unknown_or_withdrawn_pack_is_refused(workspace, packs) -> None:
@@ -125,24 +126,24 @@ def test_an_unknown_or_withdrawn_pack_is_refused(workspace, packs) -> None:
         purchases.start_purchase(workspace, pack_code="nope", success_url="s", cancel_url="c")
     assert excinfo.value.code == "invalid_pack"
 
-    withdrawn = packs["credits-500"]
+    withdrawn = packs["credits-100"]
     withdrawn.is_public = False
     withdrawn.save()
 
     with pytest.raises(OCCSError):
         purchases.start_purchase(
-            workspace, pack_code="credits-500", success_url="s", cancel_url="c"
+            workspace, pack_code="credits-100", success_url="s", cancel_url="c"
         )
 
 
 def test_a_pack_without_a_stripe_price_is_refused_as_configuration(workspace, packs) -> None:
-    pack = packs["credits-500"]
+    pack = packs["credits-100"]
     pack.stripe_price_id = ""
     pack.save()
 
     with pytest.raises(OCCSError) as excinfo:
         purchases.start_purchase(
-            workspace, pack_code="credits-500", success_url="s", cancel_url="c"
+            workspace, pack_code="credits-100", success_url="s", cancel_url="c"
         )
     assert excinfo.value.code == "pack_not_purchasable"
 
@@ -154,7 +155,7 @@ def test_free_cannot_buy_video_because_it_has_no_way_to_spend_it(workspace, pack
         purchases.start_purchase(workspace, pack_code="videos-4", success_url="s", cancel_url="c")
 
     assert excinfo.value.status_code == 402
-    assert excinfo.value.upgrade["suggested_plan"] == "pro"
+    assert excinfo.value.upgrade["suggested_plan"] == "essential"
 
 
 def test_a_paid_plan_can_buy_video(pro_workspace, packs) -> None:
@@ -168,12 +169,12 @@ def test_a_paid_plan_can_buy_video(pro_workspace, packs) -> None:
 def test_a_paid_credit_pack_lands_on_the_ledger(workspace, packs) -> None:
     before = ledger.credit_balance(workspace)
 
-    assert webhooks.process_event(_paid_session(workspace, "credits-500")) is True
+    assert webhooks.process_event(_paid_session(workspace, "credits-100")) is True
 
-    assert ledger.credit_balance(workspace) == before + 500
+    assert ledger.credit_balance(workspace) == before + 100
     entry = CreditLedger.objects.filter(reason=CreditReason.PURCHASE).get()
-    assert entry.delta == 500
-    assert entry.balance_after == before + 500
+    assert entry.delta == 100
+    assert entry.balance_after == before + 100
 
 
 def test_a_paid_video_pack_records_what_a_unit_cost(pro_workspace, packs) -> None:
@@ -188,7 +189,7 @@ def test_a_paid_video_pack_records_what_a_unit_cost(pro_workspace, packs) -> Non
 def test_a_replayed_delivery_does_not_credit_twice(workspace, packs) -> None:
     """Exactly-once is the `StripeEvent` row (A37). Stripe retries on any
     non-2xx and can deliver the same event more than once regardless."""
-    event = _paid_session(workspace, "credits-500")
+    event = _paid_session(workspace, "credits-100")
 
     assert webhooks.process_event(event) is True
     once = ledger.credit_balance(workspace)
@@ -200,7 +201,7 @@ def test_a_replayed_delivery_does_not_credit_twice(workspace, packs) -> None:
 
 def test_an_unpaid_session_credits_nothing(workspace, packs) -> None:
     """A delayed payment method completes the session before the money clears."""
-    webhooks.process_event(_paid_session(workspace, "credits-500", payment_status="unpaid"))
+    webhooks.process_event(_paid_session(workspace, "credits-100", payment_status="unpaid"))
 
     assert not CreditLedger.objects.filter(reason=CreditReason.PURCHASE).exists()
 
@@ -267,14 +268,14 @@ def test_a_purchase_cannot_be_empty(workspace) -> None:
 # -----------------------------------------------------------------------------
 def test_purchase_requires_a_session(client, packs) -> None:
     response = client.post(
-        PURCHASE_URL, data=json.dumps({"pack_code": "credits-500"}), content_type="application/json"
+        PURCHASE_URL, data=json.dumps({"pack_code": "credits-100"}), content_type="application/json"
     )
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "not_authenticated"
 
 
 def test_purchase_returns_a_checkout_url(auth_client, workspace, packs) -> None:
-    response = auth_client.post(PURCHASE_URL, {"pack_code": "credits-500"}, format="json")
+    response = auth_client.post(PURCHASE_URL, {"pack_code": "credits-100"}, format="json")
 
     assert response.status_code == 200
     assert response.json()["checkout_url"].startswith("https://checkout.test/")
@@ -293,7 +294,10 @@ def test_a_402_carries_the_upgrade_payload(auth_client, workspace, packs) -> Non
     response = auth_client.post(PURCHASE_URL, {"pack_code": "videos-4"}, format="json")
 
     assert response.status_code == 402
-    assert response.json()["error"]["upgrade"] == {"suggested_plan": "pro", "cta": "/app/billing"}
+    assert response.json()["error"]["upgrade"] == {
+        "suggested_plan": "essential",
+        "cta": "/app/billing",
+    }
 
 
 def test_packs_are_listed_for_a_signed_in_workspace(auth_client, workspace, packs) -> None:
@@ -301,8 +305,8 @@ def test_packs_are_listed_for_a_signed_in_workspace(auth_client, workspace, pack
 
     assert response.status_code == 200
     codes = [row["code"] for row in response.json()]
-    assert codes == ["credits-500", "videos-4"]
-    assert response.json()[0]["units"] == 500
+    assert codes == ["credits-100", "videos-4"]
+    assert response.json()[0]["units"] == 100
 
 
 def test_withdrawn_packs_are_not_listed(auth_client, workspace, packs) -> None:
@@ -311,7 +315,7 @@ def test_withdrawn_packs_are_not_listed(auth_client, workspace, packs) -> None:
     pack.save()
 
     codes = [row["code"] for row in auth_client.get(PACKS_URL).json()]
-    assert codes == ["credits-500"]
+    assert codes == ["credits-100"]
 
 
 def test_packs_need_a_session(client, packs) -> None:

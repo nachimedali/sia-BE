@@ -61,7 +61,9 @@ LENGTHS = [
         icon=_CLOCK,
         mode="clip",
         seconds=5,
-        credits=6,
+        # One render at 1080p on Grok Imagine 1.5 Lite ($0.74 with the
+        # OpenRouter fee) at $0.10 a credit and ≤30% cost (pricing.audit.md §8).
+        credits=25,
         render_s=12,
         default=True,
     ),
@@ -72,7 +74,8 @@ LENGTHS = [
         icon=_CLOCK,
         mode="clip",
         seconds=10,
-        credits=10,
+        # $1.48 a render at 1080p on Grok Imagine 1.5 Lite (pricing.audit.md §8).
+        credits=50,
         render_s=18,
     ),
     _row(

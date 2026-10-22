@@ -89,7 +89,7 @@ def test_a_price_we_do_not_recognise_is_refused_rather_than_guessed(workspace, p
 
     assert not Subscription.objects.exists()
     workspace.refresh_from_db()
-    assert workspace.organization.plan.code == "free"
+    assert workspace.organization.plan.code == "spark"
 
 
 def test_a_subscription_with_no_line_items_is_refused(workspace, pro) -> None:
@@ -153,7 +153,7 @@ def test_an_unknown_stripe_status_does_not_entitle(workspace, pro) -> None:
     assert Subscription.objects.get(stripe_subscription_id="sub_1").status == (
         SubscriptionStatus.INCOMPLETE
     )
-    assert workspace.organization.plan.code == "free"
+    assert workspace.organization.plan.code == "spark"
 
 
 # -----------------------------------------------------------------------------

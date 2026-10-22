@@ -29,9 +29,9 @@ def test_plans_are_public_so_the_pricing_page_needs_no_session(plans) -> None:
     response = APIClient().get(PLANS_URL)
 
     assert response.status_code == 200
-    # L-4: the quota trial replaced free-forever on the public list; the Free
-    # row stays for the accounts that sit on it.
-    assert [row["code"] for row in response.json()] == ["trial", "pro", "advanced"]
+    # The 2026-10-21 packages; the legacy rows (Free, Trial, Pro, Advanced)
+    # stay for the accounts that sit on them, off the public list.
+    assert [row["code"] for row in response.json()] == ["spark", "essential", "growth", "scale"]
 
 
 def test_plan_payload_carries_the_quotas_the_pricing_page_renders(plans) -> None:
@@ -39,17 +39,21 @@ def test_plan_payload_carries_the_quotas_the_pricing_page_renders(plans) -> None
     admin edit changes both without a deploy."""
     body = {row["code"]: row for row in APIClient().get(PLANS_URL).json()}
 
-    assert body["pro"]["price_monthly_cents"] == plans["pro"].price_monthly_cents
-    assert body["pro"]["quotas"]["monthly_ai_credits"] == plans["pro"].monthly_ai_credits
-    assert body["pro"]["features"]["auto_publish"] is True
+    assert body["growth"]["price_monthly_cents"] == plans["growth"].price_monthly_cents
+    assert body["growth"]["quotas"]["monthly_ai_credits"] == plans["growth"].monthly_ai_credits
+    assert body["growth"]["features"]["auto_publish"] is True
 
 
 def test_non_public_plans_are_hidden(plans) -> None:
-    plan = plans["pro"]
+    plan = plans["growth"]
     plan.is_public = False
     plan.save()
 
-    assert [row["code"] for row in APIClient().get(PLANS_URL).json()] == ["trial", "advanced"]
+    assert [row["code"] for row in APIClient().get(PLANS_URL).json()] == [
+        "spark",
+        "essential",
+        "scale",
+    ]
 
 
 # -----------------------------------------------------------------------------
@@ -139,12 +143,13 @@ def test_video_ledger_reads(auth_client, workspace) -> None:
 # Subscribe / portal
 # -----------------------------------------------------------------------------
 def test_subscribe_returns_a_checkout_url(auth_client, workspace, plans) -> None:
-    plan = plans["pro"]
-    plan.stripe_price_id_monthly = "price_pro_monthly"
+    plan = plans["growth"]
+    plan.stripe_price_id_monthly = "price_growth_monthly"
     plan.save()
+    plan.prices.update(stripe_price_id_monthly="price_growth_monthly")
 
     response = auth_client.post(
-        SUBSCRIBE_URL, {"plan_code": "pro", "cycle": "monthly"}, format="json"
+        SUBSCRIBE_URL, {"plan_code": "growth", "cycle": "monthly"}, format="json"
     )
 
     assert response.status_code == 200

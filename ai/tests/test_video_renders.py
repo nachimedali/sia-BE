@@ -107,7 +107,7 @@ def test_the_catalogue_serves_every_video_control_with_its_prices(
     body = auth_client.get(CATALOGUE).json()
 
     assert [row["key"] for row in body["lengths"]] == ["clip-5", "clip-10", "reel-15", "reel-30"]
-    assert body["lengths"][0]["metadata"]["credits"] == 6
+    assert body["lengths"][0]["metadata"]["credits"] == 25
     assert {row["key"] for row in body["motions"]} >= {"push", "orbit", "light-sweep"}
     assert [row["key"] for row in body["aspects"]] == ["9-16", "4-5", "1-1"]
     assert "prompt_fragment" not in body["motions"][0]  # instruction to a model, not a tile
@@ -127,10 +127,10 @@ def test_a_clip_is_priced_from_its_length_and_motion(auth_client: Any, still: An
     plain = auth_client.post(ESTIMATE, clip(still), format="json").json()
     orbit = auth_client.post(ESTIMATE, clip(still, motion="orbit"), format="json").json()
 
-    assert plain["lines"] == [{"label": "5 s clip", "credits": 6}]
-    assert plain["credits"] == 6 and plain["render_s"] == 12
+    assert plain["lines"] == [{"label": "5 s clip", "credits": 25}]
+    assert plain["credits"] == 25 and plain["render_s"] == 12
     assert orbit["lines"][-1] == {"label": "Half orbit", "credits": 2}
-    assert orbit["credits"] == 8
+    assert orbit["credits"] == 27
     assert plain["estimate_id"] != orbit["estimate_id"]
     # The same request is the same estimate.
     again = auth_client.post(ESTIMATE, clip(still), format="json").json()
@@ -253,14 +253,14 @@ def test_a_confirmed_clip_renders_into_a_derived_video_and_is_charged_once(
     assert response.status_code == 202
     body = response.json()
     assert body["status"] == "SUCCEEDED" and body["phase"] == "DONE" and body["progress"] == 1
-    assert body["charged"] == body["credits"] == 6
+    assert body["charged"] == body["credits"] == 25
     assert body["stills"][0]["id"] == still.pk and body["stills"][0]["url"]
     output = body["output"]
     assert output["kind"] == "VIDEO" and output["derived_from"] == still.pk
     assert output["duration_ms"] == 5000 and (output["width"], output["height"]) == (1080, 1920)
-    assert balance(pro) == before - 6
+    assert balance(pro) == before - 25
     render = VideoRender.objects.get(pk=body["id"])
-    assert render.charge is not None and render.charge.delta == -6
+    assert render.charge is not None and render.charge.delta == -25
     assert CreditLedger.objects.filter(workspace=pro, note__startswith="video render").count() == 1
     # The provider was told how the camera moves — the motion row, rewritten
     # into one brief (the fake text model keeps the row's words).
@@ -318,7 +318,7 @@ def test_a_render_in_flight_holds_its_credits(auth_client: Any, pro: Any, still:
     assert response.status_code == 402
     error = response.json()["error"]
     assert error["code"] == "insufficient_credits"
-    assert error["detail"] == {"required": 6, "available": 4, "held": 96}
+    assert error["detail"] == {"required": 25, "available": 4, "held": 96}
     assert "held" in error["message"]
 
 
@@ -740,7 +740,7 @@ def scripted(monkeypatch: pytest.MonkeyPatch) -> ScriptedText:
     from ai.services import rephrase
 
     model = ScriptedText()
-    monkeypatch.setattr(rephrase, "get_text_provider", lambda: model)
+    monkeypatch.setattr(rephrase, "get_text_provider", lambda *_a, **_k: model)
     return model
 
 
@@ -803,7 +803,7 @@ def test_a_clip_tells_the_model_the_chosen_scene_light_and_cast(
 ) -> None:
     from ai.services import rephrase
 
-    monkeypatch.setattr(rephrase, "get_text_provider", lambda: None)
+    monkeypatch.setattr(rephrase, "get_text_provider", lambda *_a, **_k: None)
     creative = {
         "scene": "garden-terrace",
         "light": "golden-hour",
@@ -858,3 +858,61 @@ def test_an_unknown_or_non_visual_choice_is_a_400(
 
     assert response.status_code == 400
     assert "creative" in str(response.json()["error"])
+
+
+# --- the real video adapter behind the same flow (mocked transport, no network) ----
+def test_a_clip_renders_through_openrouter_on_the_packages_route(
+    auth_client: Any, pro: Any, still: Any, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """Route → adapter → length read from the file → one charge, with the
+    model that rendered it on the row. Text stays on its fake: only the video
+    port is real here, and its transport is mocked."""
+    import json
+    import struct
+
+    import httpx
+
+    from ai.models import AIModelRoute, AITask
+    from ai.providers import openrouter_video
+    from tests.httpx_transport import patch_httpx_transport
+
+    settings.USE_FAKE_AI_PROVIDERS = False
+    settings.USE_FAKE_TEXT_PROVIDER = True
+    settings.VIDEO_PROVIDER_API_KEY = "or-test-key"
+    monkeypatch.setattr(openrouter_video, "_sleep", lambda _s: None)
+    AIModelRoute.objects.create(
+        task=AITask.VIDEO_START,
+        provider="openrouter",
+        model="x-ai/grok-imagine-video-1.5-lite",
+        params={"resolution": "720p"},
+    )
+    mvhd_body = b"\x00" * 12 + struct.pack(">II", 1000, 5000) + b"\x00" * 80
+    mvhd = struct.pack(">I4s", 8 + len(mvhd_body), b"mvhd") + mvhd_body
+    mp4 = (
+        struct.pack(">I4s", 16, b"ftyp")
+        + b"isom\x00\x00\x02\x00"
+        + struct.pack(">I4s", 8 + len(mvhd), b"moov")
+        + mvhd
+    )
+    submitted: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            submitted.append(json.loads(request.content))
+            return httpx.Response(202, json={"id": "job_9", "status": "pending"})
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=mp4, headers={"content-type": "video/mp4"})
+        return httpx.Response(200, json={"id": "job_9", "status": "completed"})
+
+    patch_httpx_transport(monkeypatch, handler)
+    before = balance(pro)
+
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+
+    assert body["status"] == "SUCCEEDED", body
+    assert submitted[0]["model"] == "x-ai/grok-imagine-video-1.5-lite"
+    assert submitted[0]["resolution"] == "720p"
+    assert submitted[0]["frame_images"][0]["frame_type"] == "first_frame"
+    render = VideoRender.objects.get(pk=body["id"])
+    assert (render.provider, render.model) == ("openrouter", "x-ai/grok-imagine-video-1.5-lite")
+    assert balance(pro) == before - body["credits"]

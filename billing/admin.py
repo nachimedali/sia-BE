@@ -174,6 +174,9 @@ class PlanAdmin(ImmutableCodeAdmin):
                     # page's reply time.
                     "is_recommended",
                     "support_response",
+                    # The plan new organizations start on and lapsed
+                    # subscriptions return to; one at a time, and free.
+                    "is_default",
                 ),
                 "description": (
                     "`code` is the join key for Stripe mapping and analytics, so it is "
@@ -283,6 +286,9 @@ class PlanAdmin(ImmutableCodeAdmin):
         """
         if obj is None:
             return True
+        if obj.is_default:
+            # Registration and every downgrade land on it.
+            return False
         return not obj.organizations.exists() and not obj.subscriptions.exists()
 
     def get_fieldsets(self, request: HttpRequest, obj: Any = None) -> Any:

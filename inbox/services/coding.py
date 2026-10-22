@@ -15,6 +15,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from ai.models import AITask
 from ai.providers.llm_text import get_text_provider
 from analytics.models import AudienceComment
 from common.exceptions import ProviderError
@@ -113,7 +114,9 @@ def by_model(bodies: Sequence[str]) -> list[str | None]:
         f"{n + 1}. {' '.join(body.split())[:400]}" for n, body in enumerate(bodies)
     )
     try:
-        result = get_text_provider().generate(system=_PROMPT, prompt=numbered, n=1)
+        result = get_text_provider(AITask.INBOX_CODING).generate(
+            system=_PROMPT, prompt=numbered, n=1
+        )
         lines = [
             line.strip().lower().rstrip(".")
             for line in result.variants[0].body.splitlines()

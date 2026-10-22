@@ -116,13 +116,14 @@ _SYSTEMS: dict[str, str] = {
 
 
 def _write(workspace: Any, payload: dict[str, Any], *, tool: str) -> ToolResult:
+    from ai.models import AITask
     from ai.providers.llm_text import get_text_provider
 
     topic = str(payload.get("topic", "")).strip()
     if not topic:
         raise OCCSError("This tool needs a topic.", code="topic_required")
 
-    result = get_text_provider().generate(
+    result = get_text_provider(AITask.TOOLS, workspace=workspace).generate(
         system=_SYSTEMS[tool],
         prompt=f"Brand: {workspace.name}. Topic: {topic}",
         n=VARIANTS,

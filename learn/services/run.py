@@ -28,6 +28,7 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
+from ai.models import AITask
 from ai.providers.llm_text import get_text_provider
 from billing.services.entitlements import entitlements_for
 from learn.models import Digest, Finding
@@ -131,7 +132,9 @@ def run_learn(
 
     # Outside the transaction above: this is network I/O to the narration
     # provider, and a DB transaction has no business staying open across it.
-    text, source = narrate.narrate(payload, provider=provider or get_text_provider())
+    text, source = narrate.narrate(
+        payload, provider=provider or get_text_provider(AITask.DIGEST, workspace=workspace)
+    )
 
     with transaction.atomic():
         # `Digest` is append-only, so the narration lands through a queryset

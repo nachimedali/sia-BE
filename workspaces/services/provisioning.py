@@ -8,6 +8,7 @@ from django.db import transaction
 
 from accounts.models import User
 from billing.models import Plan
+from billing.services.plans import default_plan
 from workspaces.models import (
     ApprovalChain,
     Membership,
@@ -21,8 +22,6 @@ from workspaces.models import (
 from workspaces.services.approvals import DEFAULT_CHAIN_NAME
 
 logger = logging.getLogger(__name__)
-
-FREE_PLAN_CODE = "free"
 
 
 def default_workspace_name(email: str) -> str:
@@ -52,12 +51,17 @@ def provision_workspace(user: User, name: str | None = None) -> Workspace:
     """
     workspace_name = name or default_workspace_name(user.email)
 
-    free_plan = Plan.objects.filter(code=FREE_PLAN_CODE).first()
-    if free_plan is None:
+    # The plan marked default in admin (`Plan.is_default`) — Spark since the
+    # 2026-10-21 packages (pricing.plan.md D-2, closes X-43).
+    try:
+        free_plan: Plan | None = default_plan()
+    except RuntimeError:
+        free_plan = None
         # Not fatal — the account is still usable and Phase 3's grant task will
         # reconcile it — but it means seed_plans was never run.
         logger.error(
-            "Free plan missing; workspace provisioned without a plan", extra={"user_id": user.pk}
+            "Default plan missing; workspace provisioned without a plan",
+            extra={"user_id": user.pk},
         )
 
     organization = Organization.objects.create(

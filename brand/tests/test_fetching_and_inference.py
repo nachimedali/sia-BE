@@ -115,7 +115,7 @@ def test_the_llm_answer_is_parsed_from_a_fenced_block_then_validated(
         def generate(self, **_: Any) -> Any:
             return SimpleNamespace(variants=[SimpleNamespace(body=body)])
 
-    monkeypatch.setattr("ai.providers.llm_text.get_text_provider", lambda: Provider())
+    monkeypatch.setattr("ai.providers.llm_text.get_text_provider", lambda *_a, **_k: Provider())
 
     found = LLMBrandInference().infer(name="X", text=TEXT, categories=["Food"], products=[])
 
@@ -129,6 +129,6 @@ def test_a_provider_failure_leaves_the_inferred_sections_unknown(
         def generate(self, **_: Any) -> Any:
             raise RuntimeError("gateway down")
 
-    monkeypatch.setattr("ai.providers.llm_text.get_text_provider", lambda: Broken())
+    monkeypatch.setattr("ai.providers.llm_text.get_text_provider", lambda *_a, **_k: Broken())
 
     assert LLMBrandInference().infer(name="X", text=TEXT, categories=[], products=[]) == {}

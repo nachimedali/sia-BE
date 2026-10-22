@@ -528,17 +528,31 @@ LLM_BASE_URL = env("LLM_BASE_URL", default="https://integrate.api.nvidia.com/v1"
 LLM_API_KEY = env("LLM_API_KEY", default=env("NVIDIA_API_KEY", default=""))
 LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="meta/muse-glimmer-30b")
 LLM_TIMEOUT_SECONDS = env.int("LLM_TIMEOUT_SECONDS", default=30)
+# The gateway's per-account request budget, shared by every worker and brand
+# (`ai.providers.llm_text`). NVIDIA's hosted API allows about 40 a minute; 0
+# turns the shared bucket off. Vendor wiring, not a commercial number.
+LLM_RATE_LIMIT_PER_MINUTE = env.int("LLM_RATE_LIMIT_PER_MINUTE", default=40)
+LLM_RATE_LIMIT_MAX_WAIT_SECONDS = env.int("LLM_RATE_LIMIT_MAX_WAIT_SECONDS", default=30)
+LLM_RATE_LIMIT_RETRIES = env.int("LLM_RATE_LIMIT_RETRIES", default=2)
 
 IMAGE_PROVIDER = env("IMAGE_PROVIDER", default="nanobanana")
 IMAGE_PROVIDER_BASE_URL = env(
     "IMAGE_PROVIDER_BASE_URL", default="https://generativelanguage.googleapis.com/v1beta"
 )
 IMAGE_PROVIDER_API_KEY = env("IMAGE_PROVIDER_API_KEY", default="")
-IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-3.1-flash-image")
+IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-nano-banana-2.1")
 
-# No vendor is chosen yet (C-11 / P0-04). Empty means video generation reports
-# "no provider configured" rather than silently falling back to the fake.
+# Video runs through OpenRouter's video API (pricing.audit.md §5): one adapter,
+# every model by slug, the model per task and package an `AIModelRoute` row.
+# Empty key means video generation reports "no provider configured" rather
+# than silently falling back to the fake. Deliberately NOT read from
+# `OPENROUTER_API_KEY`: setting that key must not make a dev stack spend.
+VIDEO_PROVIDER = env("VIDEO_PROVIDER", default="openrouter")
+VIDEO_PROVIDER_BASE_URL = env("VIDEO_PROVIDER_BASE_URL", default="https://openrouter.ai/api/v1")
 VIDEO_PROVIDER_API_KEY = env("VIDEO_PROVIDER_API_KEY", default="")
+VIDEO_DEFAULT_MODEL = env("VIDEO_DEFAULT_MODEL", default="x-ai/grok-imagine-video-1.5-lite")
+VIDEO_POLL_INTERVAL_SECONDS = env.int("VIDEO_POLL_INTERVAL_SECONDS", default=10)
+VIDEO_POLL_TIMEOUT_SECONDS = env.int("VIDEO_POLL_TIMEOUT_SECONDS", default=600)
 
 # One fake switch per vendor (`ai.providers.switches`), each on until its key
 # is set: the NVIDIA key alone makes text real and leaves image and video on

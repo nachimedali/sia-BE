@@ -152,6 +152,8 @@ class FakeTextProvider:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.captions: list[dict[str, Any]] = []
+        #: The model each constraint check was routed to (`ai.services.routing`).
+        self.constraint_models: list[str | None] = []
 
     def generate(
         self, *, system: str, prompt: str, n: int, model: str | None = None
@@ -208,7 +210,7 @@ class FakeTextProvider:
         the content means a different image produces a different caption, which
         is the cheapest possible proof that the image was actually read.
         """
-        self.captions.append({"prompt": prompt, "image_bytes": image_bytes, "n": n})
+        self.captions.append({"prompt": prompt, "image_bytes": image_bytes, "n": n, "model": model})
         fingerprint = hashlib.sha256(image_bytes).hexdigest()[:8]
         variants = [
             TextVariant(
@@ -226,12 +228,16 @@ class FakeTextProvider:
             latency_ms=6,
         )
 
-    def classify_constraints(self, *, image_bytes: bytes, restrictions: list[str]) -> list[str]:
+    def classify_constraints(
+        self, *, image_bytes: bytes, restrictions: list[str], model: str | None = None
+    ) -> list[str]:
+        self.constraint_models.append(model)
         return [r for r in restrictions if FORCE_VIOLATION_SENTINEL in r.upper()]
 
     def clear(self) -> None:
         self.calls.clear()
         self.captions.clear()
+        self.constraint_models.clear()
 
 
 class FakeImageProvider:
@@ -248,6 +254,7 @@ class FakeImageProvider:
         batch: bool,
         model: str | None = None,
         style: dict[str, float] | None = None,
+        image_size: str | None = None,
     ) -> ImageGenerationResult:
         self.calls.append(
             {
@@ -256,6 +263,7 @@ class FakeImageProvider:
                 "aspect": aspect,
                 "batch": batch,
                 "model": model,
+                "image_size": image_size,
                 "style": style,
                 "reference_count": len(reference_images),
             }
@@ -349,6 +357,8 @@ class FakeVideoProvider:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        #: What each call was routed to: model, resolution, audio, role.
+        self.requests: list[dict[str, Any]] = []
 
     def generate(
         self,
@@ -358,8 +368,13 @@ class FakeVideoProvider:
         aspect: str,
         duration_seconds: float,
         model: str | None = None,
+        resolution: str | None = None,
+        audio: bool | None = None,
     ) -> VideoResult:
         self.calls.append(prompt)
+        self.requests.append(
+            {"role": "text", "model": model, "resolution": resolution, "audio": audio}
+        )
         # A minimal ISO-BMFF header, so anything sniffing the container sees
         # `mp4` rather than an empty file.
         header = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
@@ -381,8 +396,13 @@ class FakeVideoProvider:
         aspect: str,
         duration_seconds: float,
         model: str | None = None,
+        resolution: str | None = None,
+        audio: bool | None = None,
     ) -> VideoResult:
         self.calls.append(prompt)
+        self.requests.append(
+            {"role": role, "model": model, "resolution": resolution, "audio": audio}
+        )
         manifest = {
             "kind": "clip",
             "role": role,
@@ -402,6 +422,7 @@ class FakeVideoProvider:
 
     def clear(self) -> None:
         self.calls.clear()
+        self.requests.clear()
 
 
 def _fake_mp4(manifest: dict[str, Any]) -> bytes:

@@ -537,7 +537,7 @@ def _end_card(render: VideoRender) -> EndCard:
 
 
 def _render_clip(render: VideoRender) -> VideoResult:
-    provider = get_video_provider()
+    provider = get_video_provider(workspace=render.workspace)
     if provider is None:
         raise VideoUnavailableError
     assert render.source is not None

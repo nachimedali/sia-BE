@@ -94,7 +94,7 @@ def _studio_run(workspace: Any, user: Any, product: Any, brief: dict[str, Any] =
 
 
 def _script(monkeypatch: pytest.MonkeyPatch, model: Scripted) -> Scripted:
-    monkeypatch.setattr(rephrase, "get_text_provider", lambda: model)
+    monkeypatch.setattr(rephrase, "get_text_provider", lambda *_a, **_k: model)
     return model
 
 

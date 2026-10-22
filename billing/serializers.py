@@ -58,6 +58,9 @@ class PlanSerializer(serializers.ModelSerializer[Plan]):
             "trial_days",
             "sort_order",
             "is_recommended",
+            # The plan new accounts start on (`Plan.is_default`); the frontend
+            # reads it rather than naming a plan code.
+            "is_default",
             "support_response",
             "features",
             "quotas",
