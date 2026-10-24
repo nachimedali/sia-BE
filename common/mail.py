@@ -11,13 +11,21 @@ No mail is ever sent inline in a request/response cycle (implementation.md §4.3
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from email.mime.image import MIMEImage
 from email.utils import parseaddr
+from pathlib import Path
 from typing import Any, Protocol
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template import TemplateDoesNotExist
 from django.template.loader import get_template, render_to_string
+
+#: The logo travels inside every HTML email as an inline part, referenced by
+#: `cid:` — a URL would need a public `SITE_URL` (a dev or misconfigured one
+#: showed a broken image) and is blocked by clients that hide remote images.
+LOGO_CID = "composevision-logo"
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "email-logo.png"
 
 
 @dataclass(frozen=True)
@@ -47,14 +55,14 @@ def base_context() -> dict[str, str]:
     """Links every designed email's header and footer carry.
 
     All of them resolve against `SITE_URL`, so a wrong value shows up as a
-    wrong link in every email rather than in one. The logo is a PNG because
-    most mail clients will not render SVG.
+    wrong link in every email rather than in one. The logo is not a link: it is
+    the inline PNG part `LOGO_CID` (most mail clients will not render SVG).
     """
     site = getattr(settings, "SITE_URL", "").rstrip("/")
     support = parseaddr(getattr(settings, "DEFAULT_FROM_EMAIL", ""))[1]
     return {
         "site_url": site,
-        "logo_url": f"{site}/icon-192.png",
+        "logo_url": f"cid:{LOGO_CID}",
         "app_url": f"{site}/app",
         "help_url": f"{site}/",
         "about_url": f"{site}/",
@@ -65,38 +73,54 @@ def base_context() -> dict[str, str]:
     }
 
 
-def render(email: Email) -> tuple[str, str | None]:
-    """`<template>.txt`, plus `<template>.html` when a design exists.
+def render(email: Email) -> tuple[str, str]:
+    """`<template>.txt`, and `<template>.html` when a design exists — otherwise
+    the text inside the shared branded frame (`email/_layout.html`), so every
+    email carries the logo.
 
     Both senders call this, so a template name that does not resolve fails the
     fake exactly as it fails a real send — not only in production.
     """
-    context = {**base_context(), **email.context}
+    context = {**base_context(), "subject": email.subject, **email.context}
     text = render_to_string(f"email/{email.template}.txt", context)
     try:
         html = get_template(f"email/{email.template}.html")
     except TemplateDoesNotExist:
-        return text, None
+        return text, render_to_string("email/_layout.html", {**context, "body": text})
     return text, html.render(context)
+
+
+def _logo_part() -> MIMEImage:
+    part = MIMEImage(LOGO_PATH.read_bytes(), "png")
+    part.add_header("Content-ID", f"<{LOGO_CID}>")
+    part.add_header("Content-Disposition", "inline", filename="composevision.png")
+    return part
+
+
+class _RelatedEmail(EmailMultiAlternatives):
+    """multipart/related: the logo part belongs to the HTML, not a download."""
+
+    mixed_subtype = "related"
 
 
 class DjangoMailSender:
     """Sends the rendered email via the configured Django backend.
 
     The text part is always sent: it is what a client that blocks HTML shows,
-    and what the e2e mailbox reads links from.
+    and what the e2e mailbox reads links from. The HTML part always follows,
+    with the logo attached inline.
     """
 
     def send(self, email: Email) -> None:
         text, html = render(email)
-        message = EmailMultiAlternatives(
+        message = _RelatedEmail(
             subject=email.subject,
             body=text,
             from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@localhost"),
             to=[email.to],
         )
-        if html is not None:
-            message.attach_alternative(html, "text/html")
+        message.attach_alternative(html, "text/html")
+        message.attach(_logo_part())
         message.send(fail_silently=False)
 
 

@@ -7,9 +7,11 @@ how an invitation naming a template that does not exist shipped unnoticed.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+from django.conf import settings
 from django.core import mail
 from django.test import override_settings
 
@@ -52,17 +54,25 @@ def test_a_template_with_a_design_is_sent_as_text_and_html(sent: list[Any]) -> N
     assert "https://app.example.com/" in html
 
 
-def test_a_template_without_a_design_is_text_only(sent: list[Any]) -> None:
+def test_a_template_without_a_design_gets_the_branded_layout(sent: list[Any]) -> None:
+    """Every email carries the logo: a text-only template is wrapped in the
+    shared layout, its words unchanged and its links clickable."""
     DjangoMailSender().send(
         Email(
             to="ines@example.com",
             subject="Reset your password",
             template="reset_password",
-            context={"reset_url": "https://x/reset", "email": "ines@example.com"},
+            context={"reset_url": "https://x/reset?token=abc", "email": "ines@example.com"},
         )
     )
 
-    assert sent[0].alternatives == []
+    message = sent[0]
+    html, mimetype = message.alternatives[0]
+    assert mimetype == "text/html"
+    assert 'src="cid:composevision-logo"' in html
+    assert "Reset your password" in html
+    assert 'href="https://x/reset?token=abc"' in html
+    assert "https://x/reset?token=abc" in message.body
 
 
 @override_settings(DEFAULT_FROM_EMAIL="ComposeVision <hello@attractvision.com>")
@@ -139,3 +149,27 @@ def test_every_design_renders_without_leftover_tags(
     html = sent[0].alternatives[0][0]
     assert "{{" not in html and "{%" not in html
     assert context["workspace_name"] in html
+
+
+TEMPLATES = sorted(
+    path.stem for path in (Path(settings.BASE_DIR) / "templates" / "email").glob("*.txt")
+)
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+@override_settings(SITE_URL="http://localhost:3000")
+def test_every_email_embeds_the_logo_whatever_site_url_says(sent: list[Any], template: str) -> None:
+    """The logo travels inside the message (`cid:`), so it shows when
+    `SITE_URL` is wrong or private, and in clients that block remote images."""
+    DjangoMailSender().send(
+        Email(to="ines@example.com", subject="Subject line", template=template, context={})
+    )
+
+    message = sent[0]
+    html, _ = message.alternatives[0]
+    assert 'src="cid:composevision-logo"' in html
+    assert "icon-192.png" not in html
+    raw = message.message().as_string()
+    assert "multipart/related" in raw
+    assert "Content-ID: <composevision-logo>" in raw
+    assert "Content-Disposition: inline" in raw
