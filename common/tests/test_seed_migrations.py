@@ -31,6 +31,7 @@ SEEDS = [
     "billing.migrations.0018_seed_catalog",
     "billing.migrations.0021_plan_is_default",
     "billing.migrations.0022_packages_2026_10",
+    "billing.migrations.0023_spark_free_videos",
     "ai.migrations.0008_seed_catalog",
     "ai.migrations.0009_revise_reason",
     "ai.migrations.0011_catalog_v2",
@@ -38,6 +39,7 @@ SEEDS = [
     "ai.migrations.0017_italian_language",
     "ai.migrations.0021_seed_model_routes",
     "ai.migrations.0022_video_clip_credits",
+    "ai.migrations.0024_spark_wan_routes",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -110,6 +112,24 @@ def test_an_operators_edit_is_never_overwritten() -> None:
     assert cost.credits == 99
     clip.refresh_from_db()
     assert clip.metadata["credits"] == 9  # a retuned video price survives a re-run
+
+
+def test_spark_gets_four_free_wan_clips_and_an_edit_survives() -> None:
+    _run_all()
+    spark = Plan.objects.get(code="spark")
+    assert spark.features["video_generation"] is False
+    assert (spark.features["free_video_clips"], spark.features["free_video_max_seconds"]) == (4, 5)
+    for task in ("video_start", "video_end"):
+        route = AIModelRoute.objects.get(task=task, plan=spark)
+        assert route.model == "alibaba/wan-3.0" and route.fallback_model == ""
+        assert route.params["resolution"] == "720p"
+
+    Plan.objects.filter(pk=spark.pk).update(features={**spark.features, "free_video_clips": 2})
+    AIModelRoute.objects.filter(task="video_start", plan=spark).update(model="edited")
+    _run_all()
+
+    assert Plan.objects.get(pk=spark.pk).features["free_video_clips"] == 2
+    assert AIModelRoute.objects.get(task="video_start", plan=spark).model == "edited"
 
 
 def test_the_guard_keeps_the_suite_off_the_seed(settings) -> None:

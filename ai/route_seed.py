@@ -159,4 +159,17 @@ ROUTES: list[dict[str, Any]] = [
         params={"resolution": "720p", "audio": True},
         note="Essential renders at 720p.",
     ),
+    # Spark's four free clips: Wan only, 720p, and no fallback — a free render
+    # that fails is given back, never retried on a dearer model.
+    *(
+        _route(
+            task,
+            VIDEO,
+            WAN_3,
+            plan="spark",
+            params={"resolution": "720p", "audio": False},
+            note="Spark's free clips: Wan 3.0 at 720p, no fallback.",
+        )
+        for task in ("video_start", "video_end")
+    ),
 ]

@@ -14,7 +14,7 @@ from django.core.checks import CheckMessage, Error, Tags, Warning, register
 #: Fakes a deployment may keep for now, each with the reason it is not an error.
 #: Billing only in refusing form (F1); the report renderer writes the real
 #: computed numbers as JSON because no PDF engine ships yet (P6-05).
-TOLERATED = {"USE_FAKE_BILLING", "USE_FAKE_REPORT_RENDERER"}
+TOLERATED = {"USE_FAKE_BILLING", "USE_FAKE_REPORT_RENDERER", "USE_FAKE_CAPTCHA"}
 #: Owned by another app's deploy check (`social_providers.E003`), which also
 #: knows what its `None` (auto) means; one cause, one error.
 OWNED_ELSEWHERE = {"USE_FAKE_PLATFORM_ADAPTER"}
@@ -53,6 +53,17 @@ def check_no_fakes_in_deploy(app_configs: Any, **kwargs: Any) -> list[CheckMessa
             Warning(
                 "No PDF engine: report documents are written as JSON.",
                 id="common.W011",
+            )
+        )
+    if "USE_FAKE_CAPTCHA" in on:
+        messages.append(
+            Warning(
+                "No captcha: register, login, password reset and token pages accept any token.",
+                hint=(
+                    "Set TURNSTILE_SECRET_KEY here and NEXT_PUBLIC_TURNSTILE_SITE_KEY "
+                    "on the frontend."
+                ),
+                id="common.W012",
             )
         )
     return messages

@@ -76,6 +76,25 @@ def test_an_import_reads_the_site_into_five_sections(
     assert all("djerbaolive.tn" in u for u in web.fetched)
 
 
+def test_product_pages_are_read_even_when_the_navigation_fills_the_page_budget(
+    auth_client: Any, workspace: Any, web: Any
+) -> None:
+    """busyshop.fr links nine information pages from its home page, and its
+    products only from the shop page. The products must still be found."""
+    response = start(auth_client, "busyshop.fr")
+
+    assert response.status_code == 201, response.content
+    names = {row["name"] for row in response.json()["result"]["sections"]["products"]["items"]}
+    assert names == {
+        "Coffret découverte",
+        "Savon lavande",
+        "Savon argile",
+        "Savon miel",
+        "Savon avoine",
+    }
+    assert "https://busyshop.fr/product/savon-miel" in web.fetched
+
+
 def test_a_quote_shown_is_one_the_site_actually_wrote(
     auth_client: Any, workspace: Any, web: Any
 ) -> None:

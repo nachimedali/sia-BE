@@ -42,6 +42,7 @@ from collaboration.serializers import (
     ThreadSerializer,
     ThreadStatusRequestSerializer,
 )
+from common import captcha
 from common.exceptions import NotFoundError, StateConflict
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
@@ -373,6 +374,7 @@ class ReviewApproveView(_PublicReviewView):
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
+        captcha.require(request)
         link = self.decide_with(request, token)
 
         approvals.approve_as_guest(link.post, link=link)
@@ -393,6 +395,7 @@ class ReviewRequestChangesView(_PublicReviewView):
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
+        captcha.require(request)
         link = self.decide_with(request, token)
         payload = GuestRequestChangesSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
@@ -419,6 +422,7 @@ class ReviewCommentView(_PublicReviewView):
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
+        captcha.require(request)
         link = self.resolve(request, token)
         payload = GuestCommentRequestSerializer(data=request.data, context={"link": link})
         payload.is_valid(raise_exception=True)

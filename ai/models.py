@@ -762,6 +762,9 @@ class VideoRender(models.Model):
 
     estimate_id = models.CharField(max_length=32)
     credits = models.PositiveIntegerField()
+    #: Drawn on the plan's free allowance (`free_video_clips`) rather than on
+    #: credits; counted, while not FAILED, against the organization's lifetime.
+    free = models.BooleanField(default=False)
     lines = models.JSONField(default=list)
     render_s = models.PositiveIntegerField(default=0)
 

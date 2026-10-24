@@ -26,18 +26,19 @@ from ai.providers.base import (
     unwrap_json_response,
 )
 from ai.providers.switches import uses_fake
+from common.exceptions import ProviderError
 from common.ratelimit import TokenBucket
 
 logger = logging.getLogger(__name__)
 
 
-def _client() -> Any:
+def _client(timeout: float | None = None) -> Any:
     import httpx
 
     return httpx.Client(
         base_url=settings.LLM_BASE_URL,
         headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},
-        timeout=settings.LLM_TIMEOUT_SECONDS,
+        timeout=timeout or settings.LLM_TIMEOUT_SECONDS,
     )
 
 
@@ -94,17 +95,29 @@ def _post(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """One chat completion, inside the shared budget, retrying a 429 a bounded
     number of times. Any other failure is returned to the caller at once —
     a retry there is the routing layer's fallback, not this function's."""
+    import httpx
+
     attempts = 1 + int(settings.LLM_RATE_LIMIT_RETRIES)
     for attempt in range(attempts):
         _wait_for_slot()
-        response = client.post("/chat/completions", json=payload)
+        try:
+            response = client.post("/chat/completions", json=payload)
+        except httpx.TransportError as exc:
+            # A timeout or a dropped connection is a failed call like any other,
+            # so the route's fallback gets its one attempt.
+            raise ProviderError(
+                f"LLM provider unreachable: {type(exc).__name__}.",
+                detail={"reason": type(exc).__name__},
+            ) from exc
         if response.status_code != 429 or attempt == attempts - 1:
             return unwrap_json_response(response, label="LLM provider")
         _sleep(min(_retry_after(response), float(settings.LLM_RATE_LIMIT_MAX_WAIT_SECONDS)))
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-def _complete(*, messages: list[dict[str, Any]], model: str, n: int) -> TextGenerationResult:
+def _complete(
+    *, messages: list[dict[str, Any]], model: str, n: int, timeout: float | None = None
+) -> TextGenerationResult:
     """Chat-completion calls, looped with n=1 until n variants are generated
     (ensuring compatibility with providers enforcing n=1). Parsed into the shape
     every text-returning method on this provider needs."""
@@ -114,7 +127,7 @@ def _complete(*, messages: list[dict[str, Any]], model: str, n: int) -> TextGene
     tokens_out = 0
     target_n = max(1, n)
 
-    with _client() as client:
+    with _client(timeout) as client:
         while len(variants) < target_n:
             payload = _post(client, {"model": model, "n": 1, "messages": messages})
             choices = payload.get("choices", [])
@@ -138,6 +151,10 @@ def _complete(*, messages: list[dict[str, Any]], model: str, n: int) -> TextGene
 
 
 class LLMTextProvider:
+    def __init__(self, timeout: float | None = None) -> None:
+        #: Seconds to wait for an answer; `None` is `LLM_TIMEOUT_SECONDS`.
+        self.timeout = timeout
+
     def generate(
         self, *, system: str, prompt: str, n: int, model: str | None = None
     ) -> TextGenerationResult:
@@ -148,6 +165,7 @@ class LLMTextProvider:
             ],
             model=model or settings.LLM_DEFAULT_MODEL,
             n=n,
+            timeout=self.timeout,
         )
 
     def caption(
@@ -224,7 +242,7 @@ def get_text_provider(task: str | None = None, *, workspace: Any = None) -> Any:
 
         inner: Any = _fake_text_provider
     else:
-        inner = LLMTextProvider()
+        inner = LLMTextProvider(timeout=settings.LLM_TASK_TIMEOUT_SECONDS.get(str(task or "")))
     if task is None:
         return inner
     from ai.providers.routed import RoutedTextProvider

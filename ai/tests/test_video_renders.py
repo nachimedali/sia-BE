@@ -18,7 +18,7 @@ from ai.video_seed import VIDEO_CATALOG
 from billing.models import CreditLedger, FeatureFlag
 from billing.services import ledger
 from billing.services.flags import VIDEO_S3
-from common.exceptions import ProviderError, StateConflict
+from common.exceptions import FeatureNotAvailable, ProviderError, StateConflict
 from content.models import MediaKind, PostStatus
 from content.services.media import ingest_media
 from products.models import Product
@@ -223,6 +223,10 @@ def test_only_an_image_can_be_animated(auth_client: Any, pro: Any) -> None:
 def test_a_plan_without_video_hears_402_upgrade(
     auth_client: Any, workspace: Any, catalogue: None, make_png_upload: Any
 ) -> None:
+    # Spark carries a free allowance; with none, there is no video at all.
+    plan = workspace.organization.plan
+    plan.features = {**plan.features, "free_video_clips": 0}
+    plan.save()
     asset = ingest_media(workspace=workspace, upload=make_png_upload())
 
     response = auth_client.post(ESTIMATE, clip(asset), format="json")
@@ -916,3 +920,158 @@ def test_a_clip_renders_through_openrouter_on_the_packages_route(
     render = VideoRender.objects.get(pk=body["id"])
     assert (render.provider, render.model) == ("openrouter", "x-ai/grok-imagine-video-1.5-lite")
     assert balance(pro) == before - body["credits"]
+
+
+# --- the free allowance (Spark: 4 clips, lifetime, no credits) ---------------------------
+@pytest.fixture
+def spark(workspace: Any, catalogue: None) -> Any:
+    """A plan without `video_generation` but with a free allowance, as Spark is
+    seeded. No credits granted on top: a free clip must not spend any."""
+    plan = workspace.organization.plan
+    plan.features = {
+        **plan.features,
+        "video_generation": False,
+        "free_video_clips": 4,
+        "free_video_max_seconds": 5,
+    }
+    plan.save()
+    return workspace
+
+
+@pytest.fixture
+def spark_still(spark: Any, make_png_upload: Any) -> Any:
+    return ingest_media(workspace=spark, upload=make_png_upload("bottle.png", (600, 750)))
+
+
+def test_a_free_clip_is_quoted_at_zero_and_rendered_without_credits(
+    auth_client: Any, spark: Any, spark_still: Any
+) -> None:
+    before = balance(spark)
+    estimate = auth_client.post(ESTIMATE, clip(spark_still), format="json")
+    assert estimate.status_code == 200, estimate.json()
+    assert estimate.json()["credits"] == 0
+
+    response = auth_client.post(RENDERS, confirmed(auth_client, clip(spark_still)), format="json")
+
+    assert response.status_code == 202, response.json()
+    body = response.json()
+    assert body["status"] == "SUCCEEDED" and body["credits"] == 0
+    render = VideoRender.objects.get(pk=body["id"])
+    assert render.free is True
+    assert balance(spark) == before
+
+
+def test_the_free_allowance_is_a_hard_limit_of_four_per_organization(
+    auth_client: Any, spark: Any, spark_still: Any, user: Any
+) -> None:
+    for _ in range(4):
+        body = confirmed(auth_client, clip(spark_still, text=f"take {_}"))
+        assert auth_client.post(RENDERS, body, format="json").status_code == 202
+
+    estimate = auth_client.post(ESTIMATE, clip(spark_still), format="json")
+    assert estimate.status_code == 402
+    error = estimate.json()["error"]
+    assert error["code"] == "feature_not_available"
+    assert error["upgrade"]
+    assert error["detail"]["free_video_clips"] == 4
+
+    # Pooled at the organization (L-1): a second brand has no fresh four.
+    other = provision_extra_workspace(user=user, name="Second brand")
+    assert other.organization_id == spark.organization_id
+    with pytest.raises(FeatureNotAvailable):
+        video.require_video(other, "clip", seconds=5)
+
+
+def test_a_failed_free_clip_does_not_use_up_the_allowance(
+    auth_client: Any, spark: Any, spark_still: Any, monkeypatch: Any
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise ProviderError("down")
+
+    monkeypatch.setattr(_fake_video_provider, "animate", broken)
+    response = auth_client.post(RENDERS, confirmed(auth_client, clip(spark_still)), format="json")
+    assert response.json()["status"] == "FAILED"
+
+    assert video.free_clips_left(spark) == 4
+
+
+def test_a_free_clip_longer_than_the_allowance_hears_402(
+    auth_client: Any, spark: Any, spark_still: Any
+) -> None:
+    response = auth_client.post(ESTIMATE, clip(spark_still, length="clip-10"), format="json")
+
+    assert response.status_code == 402
+    assert response.json()["error"]["code"] == "feature_not_available"
+
+
+def test_the_free_allowance_does_not_cover_reels(
+    auth_client: Any, spark: Any, make_png_upload: Any
+) -> None:
+    shots = [
+        ingest_media(workspace=spark, upload=make_png_upload(f"s{i}.png", (600, 600 + i)))
+        for i in range(4)
+    ]
+
+    response = auth_client.post(ESTIMATE, reel(shots), format="json")
+
+    assert response.status_code == 402
+
+
+def test_a_paid_plan_never_draws_on_the_free_allowance(
+    auth_client: Any, pro: Any, still: Any
+) -> None:
+    response = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json")
+
+    render = VideoRender.objects.get(pk=response.json()["id"])
+    assert render.free is False and render.credits == 25
+
+
+def test_another_organizations_free_clips_never_count_here(
+    auth_client: Any, spark: Any, spark_still: Any, other_user: Any, make_png_upload: Any
+) -> None:
+    """The allowance is pooled per organization (L-1), never across tenants."""
+    other = provision_workspace(other_user, name="Rival")
+    other.organization.plan = spark.organization.plan
+    other.organization.save(update_fields=["plan"])
+    asset = ingest_media(workspace=other, upload=make_png_upload("rival.png"))
+    for _ in range(4):
+        VideoRender.objects.create(
+            workspace=other,
+            created_by=other_user,
+            mode="clip",
+            spec={},
+            source=asset,
+            estimate_id="est_x",
+            credits=0,
+            free=True,
+            status=VideoRenderStatus.SUCCEEDED,
+        )
+
+    assert video.free_clips_left(other) == 0
+    assert video.free_clips_left(spark) == 4
+    response = auth_client.post(ESTIMATE, clip(spark_still), format="json")
+    assert response.status_code == 200 and response.json()["credits"] == 0
+
+
+def test_another_organizations_still_is_a_404_on_the_free_path(
+    auth_client: Any, spark: Any, other_user: Any, make_png_upload: Any
+) -> None:
+    other = provision_workspace(other_user, name="Rival")
+    foreign = ingest_media(workspace=other, upload=make_png_upload("rival.png"))
+
+    response = auth_client.post(ESTIMATE, clip(foreign), format="json")
+
+    assert response.status_code == 404
+
+
+def test_a_sibling_brands_still_is_a_404_on_the_free_path(
+    auth_client: Any, spark: Any, user: Any, make_png_upload: Any
+) -> None:
+    sibling = provision_extra_workspace(user=user, name="Sibling brand")
+    foreign = ingest_media(workspace=sibling, upload=make_png_upload("sibling.png"))
+
+    response = auth_client.post(
+        ESTIMATE, clip(foreign), format="json", HTTP_X_WORKSPACE_ID=str(spark.pk)
+    )
+
+    assert response.status_code == 404

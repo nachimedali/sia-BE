@@ -48,6 +48,11 @@ from workspaces.services.provisioning import default_workspace_name
 #: contact and a few product pages; small enough to be polite and fast.
 MAX_PAGES = 10
 MAX_STYLESHEETS = 3
+#: Product pages read on top of `MAX_PAGES` when the site's feeds and the pages
+#: already read name fewer than `MIN_PRODUCTS` — their own budget, so a busy
+#: navigation cannot spend it on FAQ and collection pages first.
+MAX_PRODUCT_PAGES = 6
+MIN_PRODUCTS = 4
 #: Links worth reading, by what their path says they are.
 _INTERESTING = re.compile(
     r"/(about|a-propos|qui-sommes|our-story|story|notre-histoire|histoire|shop|boutique|store|products?|collections?|catalog|catalogue|contact|faq)(/|$|\.html)",
@@ -248,13 +253,23 @@ def run_import(run: BrandImport) -> BrandImport:
             )
         )
         on_pages = extract.products_from_pages(pages)
-        if not (shopify or woo or on_pages):
+        if len(extract.merge_products(shopify, woo, on_pages)) < MIN_PRODUCTS:
+            # Product links from every page read (a shop page lists them), not
+            # only the home page's.
+            seen = {page.url.rstrip("/") for page in pages}
             product_links = [
-                u for u in dict.fromkeys(links) if _PRODUCT_PATH.search(urlsplit(u).path)
+                u
+                for u in dict.fromkeys(
+                    href.split("#")[0]
+                    for page in pages
+                    for href, _ in page.anchors
+                    if _same_site(href, domain)
+                )
+                if _PRODUCT_PATH.search(urlsplit(u).path) and u.rstrip("/") not in seen
             ]
-            for url in product_links[: max(0, MAX_PAGES - len(pages))]:
+            for url in product_links[:MAX_PRODUCT_PAGES]:
                 fetched = _read(fetcher, url, read)
-                if fetched is not None and fetched.ok:
+                if fetched is not None and fetched.ok and "html" in fetched.content_type:
                     pages.append(extract.parse_page(fetched.url, fetched.text))
             on_pages = extract.products_from_pages(pages)
         products = extract.merge_products(shopify, woo, on_pages)

@@ -527,3 +527,42 @@ def test_every_image_refused_raises_the_vendors_status(monkeypatch) -> None:
             prompt="a mug", reference_images=[], aspect="1:1", n=2, batch=False
         )
     assert caught.value.payload["status"] == 429
+
+
+def test_a_timeout_is_a_provider_error_so_the_route_can_fall_back(monkeypatch, no_sleep) -> None:
+    """A slow model is a failed model: the routing layer's fallback only runs
+    on a `ProviderError`, so a raw `httpx` timeout used to skip it entirely."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    patch_httpx_transport(monkeypatch, handler)
+    with pytest.raises(ProviderError) as caught:
+        LLMTextProvider().generate(system="s", prompt="p", n=1, model="m")
+    assert caught.value.payload["reason"] == "ReadTimeout"
+
+
+@pytest.mark.django_db
+@override_settings(
+    USE_FAKE_AI_PROVIDERS=False,
+    USE_FAKE_TEXT_PROVIDER=False,
+    LLM_TIMEOUT_SECONDS=30,
+    LLM_TASK_TIMEOUT_SECONDS={"brand_import": 120},
+)
+def test_a_background_task_can_wait_longer_than_the_default(monkeypatch) -> None:
+    """The website import runs in a worker and reads ten pages, so a reasoning
+    model needs more than the 30 s an in-request call is held to."""
+    from ai.models import AITask
+    from ai.providers.llm_text import get_text_provider
+
+    waited: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        waited.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json=_chat())
+
+    patch_httpx_transport(monkeypatch, handler)
+    get_text_provider(AITask.BRAND_IMPORT).generate(system="s", prompt="p", n=1)
+    get_text_provider(AITask.TOOLS).generate(system="s", prompt="p", n=1)
+
+    assert waited == [120, 30]

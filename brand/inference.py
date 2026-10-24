@@ -17,12 +17,15 @@ Anything that fails a check is dropped, never repaired into something else.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from typing import Any, Protocol
 
 from ai.providers.switches import uses_fake
 from workspaces.models import BrandVoice, BusinessType
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM = (
     "You read a company's website text and describe the brand for a marketing tool. "
@@ -210,6 +213,7 @@ class LLMBrandInference:
                 system=_SYSTEM, prompt=prompt, n=1
             )
         except Exception:  # a provider failure leaves the inferred sections unknown
+            logger.warning("brand inference unavailable", exc_info=True)
             return {}
         body = result.variants[0].body if result.variants else ""
         return validate(_json_in(body), text=text, categories=categories)

@@ -523,11 +523,23 @@ POST_HEADS_UP_LEAD_MINUTES = env.int("POST_HEADS_UP_LEAD_MINUTES", default=120)
 # (D8). Same USE_FAKE_* shape as billing/storage: no keys configured means no
 # provider to fake around.
 # -----------------------------------------------------------------------------
+# Cloudflare Turnstile on the public forms (`common.captcha`). The site key is
+# the frontend's (NEXT_PUBLIC_TURNSTILE_SITE_KEY); without the secret the fake
+# passes every token, and `check --deploy` warns (common.W012).
+TURNSTILE_SECRET_KEY = env("TURNSTILE_SECRET_KEY", default="")
+USE_FAKE_CAPTCHA = env.bool("USE_FAKE_CAPTCHA", default=not TURNSTILE_SECRET_KEY)
+
 LLM_PROVIDER = env("LLM_PROVIDER", default="nvidia")
 LLM_BASE_URL = env("LLM_BASE_URL", default="https://integrate.api.nvidia.com/v1")
 LLM_API_KEY = env("LLM_API_KEY", default=env("NVIDIA_API_KEY", default=""))
 LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="meta/muse-glimmer-30b")
 LLM_TIMEOUT_SECONDS = env.int("LLM_TIMEOUT_SECONDS", default=30)
+# Background tasks that may wait longer than an in-request call, by `AITask`.
+# The website import sends ten pages of text to a reasoning model, which takes
+# 20-60 s on NVIDIA's hosted API; at 30 s every inferred section came back empty.
+LLM_TASK_TIMEOUT_SECONDS = {
+    "brand_import": env.int("LLM_BRAND_IMPORT_TIMEOUT_SECONDS", default=120),
+}
 # The gateway's per-account request budget, shared by every worker and brand
 # (`ai.providers.llm_text`). NVIDIA's hosted API allows about 40 a minute; 0
 # turns the shared bucket off. Vendor wiring, not a commercial number.
