@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>{{ subject }}</title>
+</head>
+{% comment %}
+The branded frame for every email without a design of its own (`common.mail.render`):
+the same header, logo and footer as the designed ones, around the plain-text body,
+escaped, with its links made clickable. The words are the `.txt` template's, unchanged.
+{% endcomment %}
+<body style="margin:0;padding:0;width:100%;background-color:#F4F2FB;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F4F2FB" style="width:100%;background-color:#F4F2FB;">
+<tr><td align="center" style="padding:32px 12px 40px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;border-collapse:separate;">
+<tr><td bgcolor="#2E2170" style="background-color:#2E2170;background-image:linear-gradient(125deg,#2E2170 0%,#4A36A0 55%,#23918E 100%);border-radius:28px 28px 0 0;padding:26px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td valign="middle" bgcolor="#FFFFFF" style="background-color:#FFFFFF;border-radius:16px;padding:8px 10px;"><img src="{{ logo_url }}" width="48" height="48" alt="ComposeVision" style="display:block;width:48px;height:48px;border:0;outline:none;text-decoration:none;"></td>
+<td valign="middle" style="padding:0 0 0 14px;"><p style="margin:0;font-family:'Cormorant Garamond',Georgia,'Times New Roman',serif;font-size:22px;font-weight:600;line-height:1;color:#FFFFFF;">ComposeVision</p><p style="margin:5px 0 0 0;font-family:'JetBrains Mono',Consolas,'Courier New',monospace;font-size:9px;letter-spacing:1.5px;color:#8FD0CC;">SOCIAL CONTENT OPS</p></td>
+</tr></table>
+{% if subject %}<h1 style="margin:22px 0 0 0;font-family:'Cormorant Garamond',Georgia,'Times New Roman',serif;font-size:30px;font-weight:500;line-height:1.15;color:#FFFFFF;">{{ subject }}</h1>{% endif %}
+</td></tr>
+<tr><td bgcolor="#FFFFFF" style="background-color:#FFFFFF;border:1px solid #ECE8F8;border-top:0;border-radius:0 0 28px 28px;padding:30px 30px 30px 30px;">
+<p style="margin:0;font-family:'Manrope','Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#4B456E;word-break:break-word;">{{ body|urlize|linebreaksbr }}</p>
+</td></tr>
+<tr><td align="center" style="padding:26px 30px 8px 30px;">
+<p style="margin:0 0 10px 0;font-family:'Manrope','Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#6E6990;"><a href="{{ help_url }}" target="_blank" style="color:#6E6990;text-decoration:underline;">Help centre</a> &nbsp;·&nbsp; <a href="{{ security_url }}" target="_blank" style="color:#6E6990;text-decoration:underline;">Security</a></p>
+<p style="margin:0;font-family:'JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:1.5px;color:#8D89A8;">COMPOSEVISION · TUNIS, TUNISIA</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
