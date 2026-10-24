@@ -295,6 +295,9 @@ PACKAGES: list[dict[str, Any]] = [
             "approval_chain_depth": 1,
             "api_access": False,
             "video_generation": False,
+            # Four 5-second clips per organization, ever, free (`ai.services.video`).
+            "free_video_clips": 4,
+            "free_video_max_seconds": 5,
             "autopilot": False,
             "autopilot_auto_approve": False,
             "auto_publish": False,

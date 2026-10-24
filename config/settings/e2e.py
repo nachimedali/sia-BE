@@ -56,3 +56,7 @@ PLAYBOOK_SAMPLE_IMAGE_BASE = f"{SITE_URL}/playbook-sample/"
 # Playwright never reaches a social provider, whatever keys the local `.env`
 # holds: publishing and capture run on the fakes.
 USE_FAKE_PLATFORM_ADAPTER = True
+
+# Playwright cannot solve a real Turnstile check: the captcha runs on its fake,
+# and the frontend server it boots draws no widget (`playwright.config.ts`).
+USE_FAKE_CAPTCHA = True

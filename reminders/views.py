@@ -25,6 +25,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common import captcha
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.throttling import IPTokenBucketThrottle
@@ -95,6 +96,7 @@ class ReminderConfirmView(APIView):
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
+        captcha.require(request)
         reminder = services.confirm(_resolve_or_404(token))
         return Response(ReminderPacketSerializer(reminder).data)
 
@@ -111,6 +113,7 @@ class ReminderSnoozeView(APIView):
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
+        captcha.require(request)
         reminder = _resolve_or_404(token)
         payload = ReminderSnoozeRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
@@ -130,5 +133,6 @@ class ReminderSkipView(APIView):
         auth=[],
     )
     def post(self, request: Request, token: str) -> Response:
+        captcha.require(request)
         reminder = services.skip(_resolve_or_404(token))
         return Response(ReminderPacketSerializer(reminder).data)

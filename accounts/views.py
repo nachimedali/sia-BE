@@ -36,6 +36,7 @@ from accounts.serializers import (
 )
 from accounts.services import auth as auth_service
 from accounts.services import self_service
+from common import captcha
 from common.exceptions import NotFoundError, OCCSError
 from common.throttling import (
     LoginThrottle,
@@ -68,6 +69,7 @@ class RegisterView(APIView):
         auth=[],
     )
     def post(self, request: Request) -> Response:
+        captcha.require(request)
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -168,6 +170,7 @@ class PasswordResetRequestView(APIView):
         auth=[],
     )
     def post(self, request: Request) -> Response:
+        captcha.require(request)
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -363,3 +366,7 @@ class ThrottledTokenObtainPairView(TokenObtainPairView):
     """
 
     throttle_classes: list[Any] = [LoginThrottle]
+
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        captcha.require(request)
+        return super().post(request, *args, **kwargs)

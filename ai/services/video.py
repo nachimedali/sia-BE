@@ -64,12 +64,19 @@ from ai.services.creative import VIDEO_KINDS
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import STUDIO_REPHRASE, flag_enabled
-from common.exceptions import InsufficientCredits, OCCSError, ProviderError, StateConflict
+from billing.services.plans import suggest_upgrade
+from common.exceptions import (
+    FeatureNotAvailable,
+    InsufficientCredits,
+    OCCSError,
+    ProviderError,
+    StateConflict,
+)
 from content.models import MediaAsset, MediaKind, MediaSource, Post, PostSource
 from content.services.media import ingest_media
 from content.services.posts import create_post, update_post
 from products.models import Product
-from workspaces.models import Workspace
+from workspaces.models import Organization, Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -341,9 +348,17 @@ class Quote:
         }
 
 
-def quote(spec: Spec) -> Quote:
+def quote(spec: Spec, *, free: bool = False) -> Quote:
     """The priced breakdown. Free lines are left out — "Slow push-in · 0 cr"
-    is noise — but every row is still read, so a missing price is an error."""
+    is noise — but every row is still read, so a missing price is an error.
+
+    `free` is a clip on the plan's free allowance: one line, at nothing."""
+    if free:
+        credits_of(spec.length)
+        free_lines = [(f"{spec.length.label} {spec.mode} · free", 0)]
+        render_s = int(spec.length.metadata.get("render_s", 0))
+        digest = hashlib.sha256(json.dumps([free_lines, 0]).encode()).hexdigest()[:10]
+        return Quote(lines=free_lines, credits=0, render_s=render_s, estimate_id=f"est_{digest}")
     lines: list[tuple[str, int]] = [(f"{spec.length.label} {spec.mode}", credits_of(spec.length))]
 
     def add(label: str, row: CreativeOption, times: int = 1) -> None:
@@ -371,18 +386,63 @@ def quote(spec: Spec) -> Quote:
     return Quote(lines=lines, credits=credits, render_s=render_s, estimate_id=f"est_{digest}")
 
 
-def require_video(workspace: Workspace, mode: str) -> None:
+def free_clips_left(workspace: Workspace) -> int:
+    """What is left of the plan's free allowance, pooled across the
+    organization (L-1) and never reset. A failed render gives its clip back.
+    A query, every time (rule 5)."""
+    allowance = int(entitlements_for(workspace).feature("free_video_clips") or 0)
+    used = (
+        VideoRender.objects.filter(workspace__organization_id=workspace.organization_id, free=True)
+        .exclude(status=VideoRenderStatus.FAILED)
+        .count()
+    )
+    return max(0, allowance - used)
+
+
+def require_video(workspace: Workspace, mode: str, *, seconds: int | None = None) -> bool:
     """Entitlement first, availability second — a Free workspace must hear
-    "upgrade", not "no vendor configured", which would be true and useless."""
-    entitlements_for(workspace).require_feature("video_generation")
+    "upgrade", not "no vendor configured", which would be true and useless.
+
+    True when the render is on the free allowance: no `video_generation`, a
+    clip, no longer than `free_video_max_seconds` (when `seconds` is known),
+    and clips left. Anything else on such a plan is the plan's 402."""
+    entitlements = entitlements_for(workspace)
+    free = False
+    if not entitlements.feature("video_generation"):
+        allowance = int(entitlements.feature("free_video_clips") or 0)
+        longest = int(entitlements.feature("free_video_max_seconds") or 0)
+        if (
+            mode != VideoMode.CLIP
+            or not allowance
+            or (seconds is not None and seconds > longest)
+            or free_clips_left(workspace) <= 0
+        ):
+            message = (
+                f"Your {allowance} free videos are used. Upgrade to make more."
+                if allowance and mode == VideoMode.CLIP and free_clips_left(workspace) <= 0
+                else "Your plan does not include video generation."
+            )
+            raise FeatureNotAvailable(
+                message,
+                detail={
+                    "feature": "video_generation",
+                    "plan": entitlements.plan.code,
+                    "free_video_clips": allowance,
+                    "free_video_max_seconds": longest,
+                },
+                suggested_plan=suggest_upgrade(entitlements.plan, "video_generation"),
+            )
+        free = True
     port = get_video_provider() if mode == VideoMode.CLIP else get_video_composer()
     if port is None:
         raise VideoUnavailableError(detail={"mode": mode})
+    return free
 
 
 def estimate(workspace: Workspace, data: dict[str, Any]) -> Quote:
     require_video(workspace, data["mode"])
-    return quote(parse(workspace, data))
+    spec = parse(workspace, data)
+    return quote(spec, free=require_video(workspace, spec.mode, seconds=spec.seconds))
 
 
 def held_credits(workspace: Workspace) -> int:
@@ -413,7 +473,8 @@ def start_render(
     """
     require_video(workspace, data["mode"])
     spec = parse(workspace, data)
-    priced = quote(spec)
+    free = require_video(workspace, spec.mode, seconds=spec.seconds)
+    priced = quote(spec, free=free)
     if priced.estimate_id != estimate_id:
         raise EstimateChangedError(detail={"estimate": priced.as_dict()})
     if retry_of is not None and retry_of.status != VideoRenderStatus.FAILED:
@@ -434,6 +495,13 @@ def start_render(
         # The same lock every spend takes: two confirmations racing for the
         # last free credits serialise here, and the second sees the first's hold.
         Workspace.objects.select_for_update().filter(pk=workspace.pk).exists()
+        if free:
+            # The allowance is the organization's: two brands racing for the
+            # last free clip serialise on the organization row, and the
+            # second hears the 402.
+            Organization.objects.select_for_update().filter(pk=workspace.organization_id).exists()
+            if free_clips_left(workspace) <= 0:
+                require_video(workspace, spec.mode, seconds=spec.seconds)
         if post is not None:
             # **Animating twice never charges twice.** The same clip of the same
             # still for the same post, already rendering or rendered, is that
@@ -462,6 +530,7 @@ def start_render(
             source=spec.source or spec.shots[0].media,
             estimate_id=priced.estimate_id,
             credits=priced.credits,
+            free=free,
             lines=priced.line_rows(),
             render_s=priced.render_s,
             retry_of=retry_of,

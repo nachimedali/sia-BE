@@ -53,6 +53,9 @@ USE_FAKE_PLATFORM_ADAPTER = True
 # from the environment itself (`social_providers/tests/test_live.py`).
 SOCIALAPI_API_KEY = ""
 SOCIALAPI_WEBHOOK_SECRET = ""
+# Nor a Turnstile secret: the captcha runs on its fake (`common.captcha`).
+TURNSTILE_SECRET_KEY = ""
+USE_FAKE_CAPTCHA = True
 USE_FAKE_TREND_VENDORS = True
 USE_FAKE_PLAYBOOK_COLLECTORS = True
 USE_FAKE_REFERENCE_IMAGES = True

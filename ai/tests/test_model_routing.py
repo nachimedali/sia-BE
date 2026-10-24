@@ -324,7 +324,7 @@ class _Flaky:
 
 def test_the_fallback_answers_once_when_the_primary_fails(monkeypatch) -> None:
     flaky = _Flaky("gone-model")
-    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda: flaky)
+    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda **_: flaky)
     monkeypatch.setattr(settings, "USE_FAKE_AI_PROVIDERS", False)
     _route(AITask.DIGEST, "gone-model", fallback_model="spare-model")
 
@@ -337,7 +337,7 @@ def test_the_fallback_answers_once_when_the_primary_fails(monkeypatch) -> None:
 def test_a_rate_limit_is_never_retried_on_the_fallback(monkeypatch) -> None:
     """Same gateway, same account: a 429 on one model is a 429 on the other."""
     flaky = _Flaky("busy-model", status=429)
-    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda: flaky)
+    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda **_: flaky)
     monkeypatch.setattr(settings, "USE_FAKE_AI_PROVIDERS", False)
     _route(AITask.DIGEST, "busy-model", fallback_model="spare-model")
 
@@ -348,7 +348,7 @@ def test_a_rate_limit_is_never_retried_on_the_fallback(monkeypatch) -> None:
 
 def test_without_a_fallback_the_failure_surfaces(monkeypatch) -> None:
     flaky = _Flaky("gone-model")
-    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda: flaky)
+    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda **_: flaky)
     monkeypatch.setattr(settings, "USE_FAKE_AI_PROVIDERS", False)
     _route(AITask.DIGEST, "gone-model")
 
@@ -369,7 +369,7 @@ def test_a_generation_records_the_fallback_that_answered(
     workspace, user, monkeypatch, generation_costs
 ) -> None:
     flaky = _Flaky("gone-model")
-    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda: flaky)
+    monkeypatch.setattr("ai.providers.llm_text.LLMTextProvider", lambda **_: flaky)
     monkeypatch.setattr(settings, "USE_FAKE_AI_PROVIDERS", False)
     monkeypatch.setattr(settings, "USE_FAKE_TEXT_PROVIDER", False)
     _route(AITask.STUDIO_TEXT, "gone-model", fallback_model="spare-model")

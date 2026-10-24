@@ -46,6 +46,11 @@ FEATURE_KEYS = frozenset(
         "approval_chain_depth",
         "api_access",
         "video_generation",
+        # A free plan's video taste (Spark): this many clips per organization,
+        # ever, at no credits, none longer than `free_video_max_seconds`. Only
+        # read where `video_generation` is off; a paid plan never draws on it.
+        "free_video_clips",
+        "free_video_max_seconds",
         "autopilot",
         "autopilot_auto_approve",
         "auto_publish",
