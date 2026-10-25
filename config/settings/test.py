@@ -45,6 +45,7 @@ RATELIMIT_REDIS_URL = _test_redis_url
 # test depends on an external service being reachable or on test-mode keys
 # existing. A temp dir per session keeps upload tests off the working tree.
 USE_FAKE_MAIL = True
+SENTRY_DSN = ""  # the suite never reports
 USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True

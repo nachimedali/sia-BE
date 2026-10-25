@@ -11,6 +11,8 @@ self-contained:
 
 from __future__ import annotations
 
+import os
+
 from .dev import *  # noqa: F403
 from .dev import BASE_DIR, DATABASES
 
@@ -29,8 +31,9 @@ EMAIL_FILE_PATH.mkdir(exist_ok=True)
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
-# The frontend the emailed links must point at.
-SITE_URL = "http://127.0.0.1:3100"
+# The frontend the emailed links must point at; Playwright passes its port
+# (`E2E_PORT`), so the suite can run beside another app holding 3100.
+SITE_URL = os.environ.get("E2E_SITE_URL", "http://127.0.0.1:3100")
 
 # Playwright drives every worker from 127.0.0.1, so the per-IP auth limits would
 # throttle the suite itself. The limiter is covered by its own backend tests
@@ -60,3 +63,4 @@ USE_FAKE_PLATFORM_ADAPTER = True
 # Playwright cannot solve a real Turnstile check: the captcha runs on its fake,
 # and the frontend server it boots draws no widget (`playwright.config.ts`).
 USE_FAKE_CAPTCHA = True
+SENTRY_DSN = ""  # Playwright failures are expected, not incidents

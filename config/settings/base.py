@@ -276,6 +276,18 @@ SPECTACULAR_SETTINGS = {
         # next time anything else adds a `status`.
         "ReportScheduleEnum": "analytics.models.ReportSchedule",
         "ReportRunStatusEnum": "analytics.models.ReportRunStatus",
+        # The remaining hash-named collisions (remaining_10 item 6.3): a client
+        # imported "RoleD9cEnum", a name that moves when any choice set moves.
+        "CampaignProgressStateEnum": ["no_goal", "not_started", "not_enough_data", "measured"],
+        "RuleKindEnum": "taste.models.RuleKind",
+        "ImportStatusEnum": "brand.models.ImportStatus",
+        "BulkStatusEnum": "planning.models.BulkStatus",
+        "CampaignStatusEnum": "planning.models.CampaignStatus",
+        "VerdictEnum": "taste.models.Verdict",
+        "GenerationModeEnum": "ai.models.GenerationMode",
+        "VideoModeEnum": "ai.models.VideoMode",
+        "FrameRoleEnum": ["start", "end"],
+        "RoleEnum": "workspaces.models.Role",
     },
 }
 
@@ -759,3 +771,11 @@ SEED_CATALOG_ON_MIGRATE = env.bool("SEED_CATALOG_ON_MIGRATE", default=True)
 # sites from `brand/fixtures/sites/` so a fresh checkout needs no network; set
 # False to crawl real websites (the crawler only reads public addresses).
 USE_FAKE_SITE_FETCHER = env.bool("USE_FAKE_SITE_FETCHER", default=True)
+
+# Error reporting (F14, `common/observability.py`). Blank DSN = off, which is
+# what a fresh checkout and the test settings get.
+SENTRY_DSN = env("SENTRY_DSN", default="")
+SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="development" if DEBUG else "production")
+SENTRY_RELEASE = env("SENTRY_RELEASE", default="")
+SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=1.0)
+SENTRY_PROFILE_SESSION_SAMPLE_RATE = env.float("SENTRY_PROFILE_SESSION_SAMPLE_RATE", default=1.0)

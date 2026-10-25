@@ -124,6 +124,7 @@ class VideoRenderListView(APIView):
         return [p() for p in (_WRITE if self.request.method == "POST" else _READ)]
 
     @extend_schema(
+        operation_id="ai_video_renders_list",
         responses={200: VideoRenderListSerializer},
         summary="The render queue",
         description="The newest renders (hidden ones left out), with the credit balance and "

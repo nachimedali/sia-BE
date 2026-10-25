@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any
 
 from billing.services import trial
 from billing.services.entitlements import entitlements_for
-from billing.services.flags import COLLABORATION_V2, flag_enabled
 from common.exceptions import StateConflict
 from content.models import (
     SLOTTED_STATUSES,
@@ -49,11 +48,9 @@ if TYPE_CHECKING:
 def _gate_approval(post: Post, *, actor: User) -> Post:
     """Apply the workspace's chain, and return the post ready to schedule.
 
-    **Flag off is pre-phase behaviour, not an error** (Part 3): before Phase 2
-    a workspace that had not switched approval on scheduled straight from
-    `DRAFT` with no record, and with `COLLABORATION_V2` off it still does. A
-    blocking chain is honoured either way, because that is the behaviour the
-    old `requires_approval=True` already had.
+    `COLLABORATION_V2` does not reach this gate: Part 7 rule 13 admits no flag
+    that schedules a post with nobody's approval on record, so the one place
+    Part 3's "flag off is pre-phase behaviour" gives way is here.
     """
     if post.status == PostStatus.APPROVED:
         return post
@@ -63,9 +60,6 @@ def _gate_approval(post: Post, *, actor: User) -> Post:
             "This workspace requires approval before a post can be scheduled.",
             detail={"post": post.pk, "status": post.status},
         )
-
-    if not flag_enabled(post.workspace.organization, COLLABORATION_V2):
-        return post
 
     return approvals.approve_implicitly(post, actor=actor)
 

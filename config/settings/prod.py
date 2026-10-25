@@ -29,8 +29,6 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")
 
-SENTRY_DSN = env("SENTRY_DSN", default="")
-
 # --- fakes cannot run here (P0-37, Part 7 rule 17) ---------------------------
 #
 # `base.py` defaults `USE_FAKE_PLATFORM_ADAPTER` to "on when no API key is

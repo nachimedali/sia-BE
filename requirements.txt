@@ -17,7 +17,7 @@ pillow
 django-storages[s3]
 
 structlog
-sentry-sdk
+sentry-sdk>=2.68  # logs API
 django-cors-headers
 # RFC 5545 recurrence expansion (P1-10). Present transitively via celery
 # and botocore, but an undeclared transitive dependency is one a version

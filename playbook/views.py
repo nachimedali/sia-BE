@@ -42,6 +42,7 @@ class PlaybookWallView(APIView):
     permission_classes = _READ
 
     @extend_schema(
+        operation_id="playbook_posts_list",
         parameters=[
             OpenApiParameter("category", str, description="Root category slugs, comma-separated."),
             OpenApiParameter(
