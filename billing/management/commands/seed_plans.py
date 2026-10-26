@@ -14,6 +14,12 @@ from django.db import transaction
 
 from billing.models import Currency, Plan, PlanPrice
 
+#: Whole pages a plan may open (2026-10-26, owner): Spark is locked out of
+#: campaigns, refrains (templates and recurrence) and the analytics page; every
+#: other plan, legacy rows included, keeps them. Absent reads as "not in the
+#: plan", so each plan states them.
+_PAGES_INCLUDED: dict[str, Any] = {"campaigns": True, "templates": True, "analytics": True}
+
 # Values are the §4.1 matrix verbatim. This module and the migrations are the
 # only places these numbers may appear (I8 / implementation.md §4.2).
 PLANS: list[dict[str, Any]] = [
@@ -60,6 +66,7 @@ PLANS: list[dict[str, Any]] = [
         "included_views": 2,
         "price_per_workspace_cents": 0,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": False,
             "repurposing": False,
             "playbook": False,
@@ -110,6 +117,7 @@ PLANS: list[dict[str, Any]] = [
         "max_labels": 10,
         "included_views": 3,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": False,
             "repurposing": False,
             "playbook": False,
@@ -164,6 +172,7 @@ PLANS: list[dict[str, Any]] = [
         "max_products": 10,
         "trial_days": 7,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": True,
             "repurposing": True,
             "playbook": True,
@@ -216,6 +225,7 @@ PLANS: list[dict[str, Any]] = [
         "max_products": -1,
         "trial_days": 7,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": True,
             "repurposing": True,
             "playbook": True,
@@ -253,6 +263,7 @@ PLANS: list[dict[str, Any]] = [
 # flag on, renders debit video units instead, and `included_videos` is the
 # monthly allowance (4 / 9 / 17, `avatar_upgrade/cost_analysis.md`).
 _PAID_FEATURES: dict[str, Any] = {
+    **_PAGES_INCLUDED,
     "trend_engine": True,
     "repurposing": True,
     "playbook": True,
@@ -289,6 +300,10 @@ PACKAGES: list[dict[str, Any]] = [
         "max_labels": 5,
         "included_views": 2,
         "features": {
+            # Spark: the free package opens none of the paid pages.
+            "campaigns": False,
+            "templates": False,
+            "analytics": False,
             "trend_engine": False,
             "repurposing": False,
             "playbook": False,

@@ -59,6 +59,11 @@ FEATURE_KEYS = frozenset(
         # L-4a: replying to an audience comment from inside the app. Reading is
         # free from the provider; the gate is commercial, not technical.
         "reply_to_comments",
+        # Whole pages (2026-10-26, owner): campaigns, refrains (templates and
+        # recurrence rules) and the analytics page. Off on Spark.
+        "campaigns",
+        "templates",
+        "analytics",
         # S17 ad templates and avatars (`avatar_upgrade/analysis.md` §3). Three
         # template tiers, each a boolean: product and effects, a person on
         # screen, a person who speaks.

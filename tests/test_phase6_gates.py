@@ -39,6 +39,7 @@ from analytics.models import (
     ReportSchedule,
 )
 from analytics.services import reporting, schedules
+from billing.models import Plan
 from billing.services.entitlements import entitlements_for
 from common.exceptions import PaymentRequired
 from content.models import Platform, PostStatus, PostTarget
@@ -93,6 +94,10 @@ class TestTheHorizonRefusal:
     ) -> None:
         """402, not 400: the caller's request is well-formed and their plan is
         what refuses it, so the envelope carries somewhere to go."""
+        # The legacy free row keeps seven days and opens the page; Spark would
+        # be refused at the page (`analytics`) before the horizon is reached.
+        workspace.organization.plan = Plan.objects.get(code="free")
+        workspace.organization.save(update_fields=["plan"])
         report = _report(workspace, user)
         ends_at = timezone.now()
 

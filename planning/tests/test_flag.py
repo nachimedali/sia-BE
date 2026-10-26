@@ -39,7 +39,9 @@ def test_bulk_operations_are_404_with_the_flag_off(auth_client: Any, flag_off: N
     assert auth_client.get("/api/v1/bulk-operations/").status_code == 404
 
 
-def test_the_same_collections_answer_with_the_flag_on(auth_client: Any, workspace: Any) -> None:
+def test_the_same_collections_answer_with_the_flag_on(
+    auth_client: Any, paid_workspace: Any
+) -> None:
     # The control. Without it the test above would pass against a router that
     # never registered these routes at all, which is a different bug wearing
     # the same 404.

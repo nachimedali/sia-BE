@@ -43,6 +43,12 @@ from workspaces.services.provisioning import provision_extra_workspace, provisio
 
 pytestmark = pytest.mark.django_db
 
+
+@pytest.fixture(autouse=True)
+def _paid(paid_workspace: Any) -> None:
+    """Campaigns are off on Spark, the default plan (2026-10-26)."""
+
+
 URL = "/api/v1/campaigns/"
 
 

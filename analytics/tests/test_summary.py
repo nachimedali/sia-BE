@@ -348,7 +348,13 @@ def test_an_unknown_window_is_a_400(auth_client: Any, paid_workspace: Any) -> No
     assert auth_client.get(URL, {"window": "week"}).status_code == 400
 
 
-def test_free_reads_its_own_short_window(auth_client: Any, workspace: Any) -> None:
+def test_a_short_plan_reads_its_own_short_window(
+    auth_client: Any, workspace: Any, plans: dict[str, Any]
+) -> None:
+    # The legacy free row: seven days of history, and the page itself.
+    workspace.organization.plan = plans["free"]
+    workspace.organization.save(update_fields=["plan"])
+
     body = auth_client.get(URL).json()
 
     assert body["window"] == 7

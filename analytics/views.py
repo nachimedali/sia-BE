@@ -13,6 +13,11 @@ and Advanced 730; a Free workspace therefore sees a real but short window rather
 than a 402 — reading your own numbers is not a paid feature, keeping two years of
 them is.
 
+Since 2026-10-26 (owner) the analytics *page* is a plan feature, `analytics`,
+off on Spark: summary, best times, demographics, competitors and reports answer
+402 there. Overview, posts, sentiment and comments stay open on every plan,
+because home, the post page and the inbox read them.
+
 Repurposing *is* a paid feature (§4.1), so those three endpoints carry
 `HasFeature("repurposing")` — the shared factory, not an inline check.
 """
@@ -81,6 +86,9 @@ from workspaces.models import Permission, Workspace
 from workspaces.permissions import HasPermission
 
 REPURPOSE_FEATURE = "repurposing"
+#: The analytics page itself (2026-10-26): off on Spark. Overview, posts,
+#: sentiment and comments stay open — home, the post page and the inbox read them.
+ANALYTICS_FEATURE = "analytics"
 
 #: How many comments the feed returns. Not `DefaultPagination`: this is a
 #: fixed-size recent-activity strip on the analytics page, not a browsable
@@ -128,6 +136,8 @@ class AnalyticsOverviewView(_AnalyticsView):
 
 
 class AnalyticsSummaryView(_AnalyticsView):
+    permission_classes: list[Any] = [IsAuthenticated, HasFeature(ANALYTICS_FEATURE)]
+
     @extend_schema(
         parameters=[
             OpenApiParameter(
@@ -161,6 +171,8 @@ class AnalyticsPostsView(_AnalyticsView):
 
 
 class AnalyticsBestTimesView(_AnalyticsView):
+    permission_classes: list[Any] = [IsAuthenticated, HasFeature(ANALYTICS_FEATURE)]
+
     @extend_schema(
         responses={200: BestTimeSerializer(many=True)},
         summary="Engagement by weekday and hour",
@@ -369,7 +381,12 @@ def _report_permissions(action: str) -> list[Any]:
     needed = Permission.ANALYZE if read else Permission.EDIT
     return [
         permission()
-        for permission in (IsAuthenticated, HasFlag(ANALYTICS_V6), HasPermission(needed))
+        for permission in (
+            IsAuthenticated,
+            HasFlag(ANALYTICS_V6),
+            HasPermission(needed),
+            HasFeature(ANALYTICS_FEATURE),
+        )
     ]
 
 
@@ -444,6 +461,7 @@ class _RunScopedView(APIView):
         IsAuthenticated,
         HasFlag(ANALYTICS_V6),
         HasPermission(Permission.ANALYZE),
+        HasFeature(ANALYTICS_FEATURE),
     ]
 
     def run_or_404(self, request: Request, pk: int) -> ReportRun:
@@ -567,6 +585,7 @@ class AudienceDemographicsView(_AnalyticsView):
         IsAuthenticated,
         HasFlag(ANALYTICS_V6),
         HasPermission(Permission.ANALYZE),
+        HasFeature(ANALYTICS_FEATURE),
     ]
 
     @extend_schema(
@@ -598,6 +617,7 @@ class _CompetitorView(_AnalyticsView):
         IsAuthenticated,
         HasFlag(ANALYTICS_V6),
         HasPermission(Permission.ANALYZE),
+        HasFeature(ANALYTICS_FEATURE),
     ]
 
 
