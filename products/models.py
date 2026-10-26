@@ -40,6 +40,18 @@ class CaptionLength(models.TextChoices):
     STORY = "story", "Story"
 
 
+class OfferKind(models.TextChoices):
+    """What the product is, for the Studio's ad templates (S17): an app hides
+    the "in hand" formats, a physical product hides the app demos. Blank means
+    every template fits — the honest default for a product nobody typed yet."""
+
+    PHYSICAL = "physical", "Physical product"
+    BEAUTY = "beauty", "Beauty or wearable"
+    APP = "app", "App or software"
+    SERVICE = "service", "Service"
+    SPACE = "space", "Place or space"
+
+
 class ApprovalMode(models.TextChoices):
     """Who this product's posts are meant to be signed off by. A *preference*
     the review queue reads; the workspace's approval chain (C-02) is what
@@ -109,6 +121,7 @@ class Product(models.Model):
     # (`taste.services.profiles.constraints_for`). Typed columns for scalars,
     # validated JSON for lists; every list that names a catalog row holds the
     # row's *key* (`products.brief`), so renaming a label rewrites nothing.
+    offer_kind = models.CharField(max_length=10, choices=OfferKind.choices, blank=True)
     sku = models.CharField(max_length=64, blank=True)
     price = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
     price_currency = models.CharField(max_length=3, default="TND")

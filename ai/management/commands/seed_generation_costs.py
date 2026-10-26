@@ -51,6 +51,9 @@ GENERATION_COSTS: list[dict[str, Any]] = [
     _row(GenerationKind.IMAGE, "", 3),
     _row(GenerationKind.IMAGE, GenerationMode.REVISION, 1),
     _row(GenerationKind.IMAGE, "", 9, provider=IMAGE_PROVIDER, model=PREMIUM_IMAGE_MODEL),
+    # S17: a batch of four avatar portraits and their reference angles, seven
+    # images at about $0.05 — `ceil(0.35 / 0.03)` at $0.10 a credit.
+    _row(GenerationKind.IMAGE, GenerationMode.AVATAR, 12),
 ]
 
 

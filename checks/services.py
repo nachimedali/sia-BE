@@ -69,6 +69,7 @@ LABELS = {
     "logo": "Logo",
     "policy": "Platform policy",
     "video": "Video",
+    "disclosure": "AI label",
 }
 
 
@@ -634,6 +635,27 @@ def _check_video(videos: list[MediaAsset], logo: bytes | None) -> list[dict[str,
 # -----------------------------------------------------------------------------
 # Running and reading
 # -----------------------------------------------------------------------------
+def _check_disclosure(post: Post, media: list[MediaAsset]) -> list[dict[str, Any]]:
+    """S17: a picture or video with a person the model drew must say so in the
+    caption. Nothing to report on a post without one."""
+    from ai.services import disclosure
+
+    if not any(disclosure.shows_drawn_person(asset) for asset in media):
+        return []
+    if disclosure.has_disclosure(post.master_body):
+        return [
+            _result("disclosure", CheckStatus.PASS, "The caption says the person is AI-generated.")
+        ]
+    return [
+        _result(
+            "disclosure",
+            CheckStatus.BLOCK,
+            "A person in this post was drawn by AI. Keep “AI-generated” in the caption.",
+            rewrite=disclosure.with_disclosure(post.master_body, [disclosure.AI_GENERATED]),
+        )
+    ]
+
+
 def _verdict(results: list[dict[str, Any]]) -> tuple[str, dict[str, int]]:
     counts = dict.fromkeys(CheckStatus.values, 0)
     for result in results:
@@ -671,6 +693,7 @@ def run_checks(post: Post, *, actor: User | None = None, run: CheckRun | None = 
         *logo,
         *_check_policy(post, formats),
         *_check_video(videos, logo_bytes),
+        *_check_disclosure(post, media),
     ]
     verdict, counts = _verdict(results)
     if run is None:

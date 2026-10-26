@@ -137,7 +137,15 @@ class VideoRenderListView(APIView):
             .exclude(review=VideoReview.HIDDEN)
             .select_related("source", "output")[:LIST_LIMIT]
         )
-        remaining = entitlements_for(workspace).credits_remaining()
+        entitlements = entitlements_for(workspace)
+        remaining = entitlements.credits_remaining()
+        units = None
+        if video.paid_in_units(workspace):
+            left = entitlements.video_units_remaining()
+            units = {
+                "balance": None if left == UNLIMITED else left,
+                "held": video.held_units(workspace),
+            }
         return Response(
             {
                 "renders": VideoRenderSerializer(
@@ -147,6 +155,7 @@ class VideoRenderListView(APIView):
                     "balance": None if remaining == UNLIMITED else remaining,
                     "held": video.held_credits(workspace),
                 },
+                "units": units,
             }
         )
 

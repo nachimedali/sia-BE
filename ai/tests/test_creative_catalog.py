@@ -8,6 +8,7 @@ import re
 import pytest
 from django.core.exceptions import ValidationError
 
+from ai.ad_template_seed import AD_TEMPLATE_CATALOG
 from ai.creative_seed import CATALOG, SEED_VERSION
 from ai.models import CreativeKind, CreativeOption
 from ai.plan_seed import PLAN_CATALOG
@@ -27,9 +28,10 @@ def keys(kind: str) -> set[str]:
 
 
 def test_every_kind_is_seeded_and_every_kind_seeded_exists() -> None:
-    seeded = {**CATALOG, **VIDEO_CATALOG, **PLAN_CATALOG}
+    seeded = {**CATALOG, **VIDEO_CATALOG, **PLAN_CATALOG, **AD_TEMPLATE_CATALOG}
     assert not set(CATALOG) & set(VIDEO_CATALOG)
     assert not set(PLAN_CATALOG) & (set(CATALOG) | set(VIDEO_CATALOG))
+    assert not set(AD_TEMPLATE_CATALOG) & (set(CATALOG) | set(VIDEO_CATALOG) | set(PLAN_CATALOG))
     assert set(seeded) == {kind.value for kind in CreativeKind}
     assert all(seeded[kind] for kind in seeded)
 
@@ -179,12 +181,13 @@ def test_video_lengths_name_their_mode_seconds_and_render_time() -> None:
         assert meta["seconds"] > 0 and meta["render_s"] > 0, row["key"]
         if meta["mode"] == "reel":
             assert 1 <= meta["min_shots"] <= meta["max_shots"], row["key"]
-    # S3: clips are 5 or 10 seconds; reels are a vertical master.
+    # S3: clips are 5 or 10 seconds, and S17's templates add 15; reels are a
+    # vertical master.
     assert {
         r["metadata"]["seconds"]
         for r in VIDEO_CATALOG["video_length"]
         if r["metadata"]["mode"] == "clip"
-    } == {5, 10}
+    } == {5, 10, 15}
     assert any(r["metadata"]["aspect"] == "9:16" for r in VIDEO_CATALOG["video_aspect"])
 
 

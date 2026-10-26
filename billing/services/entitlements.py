@@ -237,6 +237,15 @@ class Entitlements:
             return UNLIMITED
         return ledger.included_video_balance(self.workspace)
 
+    def int_feature(self, key: str, default: int = 0) -> int:
+        """An integer feature (a limit or a count), or `default` when the plan
+        does not set one. A boolean is not a number here — `True` must never
+        read as a limit of 1."""
+        value = self.feature(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return default
+        return value
+
     def analytics_horizon_days(self) -> int:
         """How far back this plan keeps measurement (§4.1: 7 / 90 / 730).
 
@@ -382,14 +391,22 @@ class Entitlements:
                 purchase=self._purchase_options(PackKind.CREDITS),
             )
 
-    def require_video_units(self, amount: int) -> None:
+    def require_video_units(self, amount: int, *, held: int = 0) -> None:
+        """`held` is units promised to renders in flight (S17), the same
+        contract as `require_credits`: computed by the caller, never cached."""
         if self.quota("included_videos") == UNLIMITED:
             return
-        available = self.video_units_remaining()
+        available = self.video_units_remaining() - held
         if available < amount:
             raise InsufficientVideoUnits(
-                f"This needs {amount} video unit(s); {available} remaining.",
-                detail={"required": amount, "available": available},
+                f"This needs {amount} video{'s' if amount != 1 else ''}; "
+                f"{max(available, 0)} left"
+                + (f" ({held} held by renders in progress)." if held else "."),
+                detail={
+                    "required": amount,
+                    "available": max(available, 0),
+                    **({"held": held} if held else {}),
+                },
                 suggested_plan=self._suggested_plan(),
                 purchase=self._purchase_options(PackKind.VIDEO),
             )

@@ -59,6 +59,20 @@ FEATURE_KEYS = frozenset(
         # L-4a: replying to an audience comment from inside the app. Reading is
         # free from the provider; the gate is commercial, not technical.
         "reply_to_comments",
+        # S17 ad templates and avatars (`avatar_upgrade/analysis.md` §3). Three
+        # template tiers, each a boolean: product and effects, a person on
+        # screen, a person who speaks.
+        "ad_templates",
+        "ad_templates_people",
+        "ad_templates_talking",
+        # Integers: active avatars per brand, portrait batches per organization
+        # per month, model re-rolls per ad, product photos sent per render.
+        "max_avatars",
+        "avatar_drafts_monthly",
+        "ad_rerolls",
+        "max_references",
+        # An avatar of a real person, with recorded consent.
+        "real_avatars",
     }
 )
 

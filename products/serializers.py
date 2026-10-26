@@ -82,6 +82,7 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
             "hashtags_style",
             "emoji_style",
             "ctas",
+            "offer_kind",
             "sku",
             "price",
             "price_currency",

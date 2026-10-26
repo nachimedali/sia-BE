@@ -173,6 +173,10 @@ class GenerateRequestSerializer(serializers.Serializer[Any]):
     brand_assets = serializers.ListField(
         child=serializers.DictField(), required=False, default=list
     )
+    #: S17: a brand avatar to put in the picture (image mode's Avatar chip).
+    #: Resolved by the view — usable, in the plan, consent standing — and sent
+    #: as the server-only `person` asset; the still is labelled AI-generated.
+    avatar = serializers.IntegerField(required=False, allow_null=True, default=None)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

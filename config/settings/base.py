@@ -588,6 +588,18 @@ USE_FAKE_VIDEO_PROVIDER = env.bool("USE_FAKE_VIDEO_PROVIDER", default=not VIDEO_
 # The pre-publish OCR and policy checks (S4) have no vendor yet.
 USE_FAKE_CHECKS_PROVIDER = env.bool("USE_FAKE_CHECKS_PROVIDER", default=True)
 
+# S17 look-alike check on invented avatars: AWS Rekognition celebrity
+# recognition (`ai.providers.likeness`). No key means the check reports "not
+# checked" in production; the fake runs until a key is set.
+LIKENESS_AWS_ACCESS_KEY_ID = env("LIKENESS_AWS_ACCESS_KEY_ID", default="")
+LIKENESS_AWS_SECRET_ACCESS_KEY = env("LIKENESS_AWS_SECRET_ACCESS_KEY", default="")
+LIKENESS_AWS_REGION = env("LIKENESS_AWS_REGION", default="eu-west-1")
+USE_FAKE_LIKENESS_PROVIDER = env.bool(
+    "USE_FAKE_LIKENESS_PROVIDER", default=not LIKENESS_AWS_ACCESS_KEY_ID
+)
+#: The fake's answer: true makes every portrait "look like a known person".
+FAKE_LIKENESS_MATCH = env.bool("FAKE_LIKENESS_MATCH", default=False)
+
 # Embeddings share the LLM gateway (`LLM_BASE_URL`/`LLM_API_KEY`) and the same
 # fake switch — one vendor relationship, three endpoints. Changing the model
 # changes the vector width, which is a schema fact: see

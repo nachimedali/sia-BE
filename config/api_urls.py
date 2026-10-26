@@ -30,6 +30,7 @@ from accounts.views import (
     VerifyCodeView,
     VerifyEmailView,
 )
+from ai.ad_template_views import AdTemplateGalleryView, AdTemplateKeyframeView
 from ai.video_views import (
     VideoCatalogueView,
     VideoEstimateView,
@@ -82,6 +83,14 @@ from billing.views import (
     StripeWebhookView,
     SubscribeView,
     VideoLedgerView,
+)
+from brand.avatar_views import (
+    AvatarArchiveView,
+    AvatarDraftDetailView,
+    AvatarDraftListView,
+    AvatarHouseView,
+    AvatarListView,
+    AvatarRevokeView,
 )
 from brand.views import (
     BrandCoreView,
@@ -290,6 +299,19 @@ urlpatterns = [
         "brand/imports/<int:pk>/apply/", BrandImportApplyView.as_view(), name="brand-import-apply"
     ),
     path("brand/core/", BrandCoreView.as_view(), name="brand-core"),
+    # --- avatars (S17); `{pk}` resolved inside the workspace, so 404 elsewhere ---
+    path("brand/avatars/", AvatarListView.as_view(), name="brand-avatars"),
+    path("brand/avatars/drafts/", AvatarDraftListView.as_view(), name="brand-avatar-drafts"),
+    path(
+        "brand/avatars/drafts/<int:pk>/",
+        AvatarDraftDetailView.as_view(),
+        name="brand-avatar-draft",
+    ),
+    path("brand/avatars/<int:pk>/house/", AvatarHouseView.as_view(), name="brand-avatar-house"),
+    path(
+        "brand/avatars/<int:pk>/archive/", AvatarArchiveView.as_view(), name="brand-avatar-archive"
+    ),
+    path("brand/avatars/<int:pk>/revoke/", AvatarRevokeView.as_view(), name="brand-avatar-revoke"),
     path("brand/product-imports/", ProductImportListView.as_view(), name="product-imports"),
     path(
         "brand/product-imports/<int:pk>/",
@@ -501,6 +523,13 @@ urlpatterns = [
     path("ai/video/renders/", VideoRenderListView.as_view(), name="ai-video-renders"),
     path("ai/video/renders/send/", VideoRenderSendView.as_view(), name="ai-video-send"),
     path("ai/video/renders/<int:pk>/", VideoRenderDetailView.as_view(), name="ai-video-render"),
+    # --- ad templates (S17) ---
+    path("ai/ad-templates/", AdTemplateGalleryView.as_view(), name="ai-ad-templates"),
+    path(
+        "ai/ad-templates/keyframe/",
+        AdTemplateKeyframeView.as_view(),
+        name="ai-ad-template-keyframe",
+    ),
     # --- guest review: sharing a post with someone who has no account ---
     # `{pk}` is resolved through a workspace-filtered queryset inside the view,
     # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the

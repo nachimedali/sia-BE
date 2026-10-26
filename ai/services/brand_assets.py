@@ -43,10 +43,25 @@ ROLES: dict[str, str] = {
     "other": "Image {n} is a brand reference to include as it is shown.",
 }
 
+#: Roles only the server attaches. `person` is an avatar's portrait (S17): it
+#: is added by `ai.services.ad_templates` and the generate view after the
+#: avatar has been checked — usable, in the plan, consent standing — so a
+#: client can never name any picture a person and skip those checks.
+SERVER_ROLES: dict[str, str] = {
+    "person": (
+        "Image {n} is the person in the scene. Keep this exact face, hair, skin tone and "
+        "build; do not change who they are. They are an invented or consenting brand "
+        "presenter, not a public figure."
+    ),
+}
+
 
 class InvalidBrandAssetError(OCCSError):
     default_code = "invalid_brand_asset"
     default_detail = "This picture cannot be used as a brand asset."
+
+
+ALL_ROLES = {**ROLES, **SERVER_ROLES}
 
 
 def clean(raw: Any) -> list[dict[str, Any]]:
@@ -122,7 +137,7 @@ def rule_lines(assets: list[dict[str, Any]], *, first: int) -> list[str]:
     picture the provider receives before them."""
     lines = []
     for offset, item in enumerate(assets):
-        line = ROLES[item["role"]].format(n=first + offset)
+        line = ALL_ROLES[item["role"]].format(n=first + offset)
         if item["note"]:
             line = f"{line} Instruction: {item['note']}"
         lines.append(line)

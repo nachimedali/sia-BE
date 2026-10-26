@@ -44,6 +44,9 @@ class GenerationMode(models.TextChoices):
     CAPTION = "CAPTION", "Caption"
     #: Post ideas grounded in the workspace's own top-percentile posts (P1-13).
     SUGGEST = "SUGGEST", "Suggest"
+    #: A batch of avatar portraits (S17). Not a `Generation` — `brand.AvatarDraft`
+    #: is the record — but priced by a `GenerationCost` row like everything else.
+    AVATAR = "AVATAR", "Avatar portraits"
 
 
 class GenerationStatus(models.TextChoices):
@@ -400,6 +403,7 @@ class AITask(models.TextChoices):
     IMAGE_AUTOPILOT = "image_autopilot", "Autopilot images"
     VIDEO_START = "video_start", "Video from a first frame, and text-to-video"
     VIDEO_END = "video_end", "Video landing on a last frame"
+    AVATAR_PORTRAIT = "avatar_portrait", "Avatar portraits and reference angles"
 
 
 class AIKind(models.TextChoices):
@@ -415,6 +419,7 @@ TASK_KINDS: dict[str, str] = {
     AITask.IMAGE_AUTOPILOT: AIKind.IMAGE,
     AITask.VIDEO_START: AIKind.VIDEO,
     AITask.VIDEO_END: AIKind.VIDEO,
+    AITask.AVATAR_PORTRAIT: AIKind.IMAGE,
 }
 
 
@@ -615,6 +620,11 @@ class CreativeKind(models.TextChoices):
     # A campaign plan's price lines (steps-plan S5, `planning/plan_seed.py`).
     # `metadata.credits` on each row, so the price is an admin edit.
     PLAN_PRICE = "plan_price", "Campaign plan price"
+    # S17 (`ai/ad_template_seed.py`): the Studio's video templates, and the
+    # traits a new avatar is described with. A template's metadata is
+    # validated on save (`ai.services.ad_templates.validate_metadata`).
+    AD_TEMPLATE = "ad_template", "Video ad template"
+    AVATAR_TRAIT = "avatar_trait", "Avatar trait"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
@@ -684,6 +694,13 @@ class CreativeOption(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind}/{self.key}"
+
+    def clean(self) -> None:
+        super().clean()
+        if self.kind == CreativeKind.AD_TEMPLATE:
+            from ai.services.ad_templates import validate_metadata
+
+            validate_metadata(self.metadata)
 
 
 # -----------------------------------------------------------------------------
@@ -762,6 +779,10 @@ class VideoRender(models.Model):
 
     estimate_id = models.CharField(max_length=32)
     credits = models.PositiveIntegerField()
+    #: S17: the price in video units, when the render is paid from the video
+    #: allowance (`ad_templates_s17` on). Held like `credits` while in flight;
+    #: 0 on a render paid in credits or on the free allowance.
+    units = models.PositiveIntegerField(default=0)
     #: Drawn on the plan's free allowance (`free_video_clips`) rather than on
     #: credits; counted, while not FAILED, against the organization's lifetime.
     free = models.BooleanField(default=False)
@@ -805,6 +826,35 @@ class VideoRender(models.Model):
     retry_of = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="retries"
     )
+    #: The unit debit this render was paid with, when it was paid in units.
+    unit_charge = models.OneToOneField(
+        "billing.VideoLedger",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="video_render",
+    )
+    #: S17: the ad template's key (also in `spec`), the person on screen, and
+    #: the first frame made for it when none was picked — rendered by this
+    #: render's own task before the motion, and paid in credits on pass.
+    template = models.CharField(max_length=40, blank=True)
+    avatar = models.ForeignKey(
+        "brand.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="video_renders",
+    )
+    keyframe = models.ForeignKey(
+        "ai.Generation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="video_renders",
+    )
+    #: Labels carried to publishing, never editable: `ai_generated` whenever a
+    #: person is on screen.
+    labels = models.JSONField(default=list, blank=True)
 
     provider = models.CharField(max_length=64, blank=True)
     model = models.CharField(max_length=64, blank=True)

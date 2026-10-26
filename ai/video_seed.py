@@ -7,7 +7,8 @@ a motion, a style, a music bed and the per-shot and caption surcharges are
 (Part 7 rule 10). `ai/migrations/0012_video_catalog` seeds it with
 `get_or_create`, so an edited row is never overwritten.
 
-* `video_length` — what is being made and for how long. `metadata.mode` is
+* `video_length` — what is being made and for how long. `units` is its price
+  in video units when the S17 flag pays video from the allowance; `metadata.mode` is
   `clip` (one still, animated) or `reel` (several shots, cut together);
   `render_s` is the honest wait a render of it takes; a reel row carries the
   shot range it accepts.
@@ -64,6 +65,7 @@ LENGTHS = [
         # One render at 1080p on Grok Imagine 1.5 Lite ($0.74 with the
         # OpenRouter fee) at $0.10 a credit and ≤30% cost (pricing.audit.md §8).
         credits=25,
+        units=1,
         render_s=12,
         default=True,
     ),
@@ -76,7 +78,21 @@ LENGTHS = [
         seconds=10,
         # $1.48 a render at 1080p on Grok Imagine 1.5 Lite (pricing.audit.md §8).
         credits=50,
+        units=1,
         render_s=18,
+    ),
+    _row(
+        "clip-15",
+        "15 s",
+        description="Full ad",
+        icon=_CLOCK,
+        mode="clip",
+        seconds=15,
+        # $2.22 a render at 1080p on Grok Imagine 1.5 Lite (pricing.audit.md §8),
+        # priced like clip-10. S17's templates render at this length.
+        credits=75,
+        units=2,
+        render_s=24,
     ),
     _row(
         "reel-15",
@@ -86,6 +102,7 @@ LENGTHS = [
         mode="reel",
         seconds=15,
         credits=12,
+        units=2,
         render_s=20,
         min_shots=3,
         max_shots=5,
@@ -99,6 +116,7 @@ LENGTHS = [
         mode="reel",
         seconds=30,
         credits=20,
+        units=3,
         render_s=26,
         min_shots=3,
         max_shots=5,

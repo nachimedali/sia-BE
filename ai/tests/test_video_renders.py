@@ -106,7 +106,13 @@ def test_the_catalogue_serves_every_video_control_with_its_prices(
 ) -> None:
     body = auth_client.get(CATALOGUE).json()
 
-    assert [row["key"] for row in body["lengths"]] == ["clip-5", "clip-10", "reel-15", "reel-30"]
+    assert [row["key"] for row in body["lengths"]] == [
+        "clip-5",
+        "clip-10",
+        "clip-15",
+        "reel-15",
+        "reel-30",
+    ]
     assert body["lengths"][0]["metadata"]["credits"] == 25
     assert {row["key"] for row in body["motions"]} >= {"push", "orbit", "light-sweep"}
     assert [row["key"] for row in body["aspects"]] == ["9-16", "4-5", "1-1"]

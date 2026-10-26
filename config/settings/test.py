@@ -70,6 +70,7 @@ USE_FAKE_TEXT_PROVIDER = False
 USE_FAKE_IMAGE_PROVIDER = False
 USE_FAKE_VIDEO_PROVIDER = False
 USE_FAKE_CHECKS_PROVIDER = False
+USE_FAKE_LIKENESS_PROVIDER = False
 # The shared LLM request bucket is off in the suite; its own tests turn it on.
 LLM_RATE_LIMIT_PER_MINUTE = 0
 # A local `.env` video key must never reach a test.

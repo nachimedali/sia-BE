@@ -15,7 +15,7 @@ from typing import Literal
 
 from django.conf import settings
 
-Port = Literal["TEXT", "IMAGE", "VIDEO", "CHECKS"]
+Port = Literal["TEXT", "IMAGE", "VIDEO", "CHECKS", "LIKENESS"]
 
 
 def uses_fake(port: Port) -> bool:

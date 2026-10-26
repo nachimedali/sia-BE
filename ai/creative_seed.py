@@ -727,6 +727,8 @@ LANGUAGES = [
         "copywriter would, not as a translation.",
         code="fr",
         name="French",
+        # Words a second a script is read at (S17 script fit).
+        wps=2.4,
         default=True,
     ),
     _opt(
@@ -738,6 +740,8 @@ LANGUAGES = [
         "copywriter would, not as a translation.",
         code="en",
         name="English",
+        # Words a second a script is read at (S17 script fit).
+        wps=2.6,
     ),
     _opt(
         "it",
@@ -748,6 +752,8 @@ LANGUAGES = [
         "copywriter would, not as a translation.",
         code="it",
         name="Italian",
+        # Words a second a script is read at (S17 script fit).
+        wps=2.5,
     ),
 ]
 
@@ -1292,6 +1298,9 @@ SHOT_TAGS = [
         ("in-use", "In use"),
         ("lifestyle", "Lifestyle"),
         ("range", "Range / set"),
+        # S17: a screenshot of an app, which the app-demo templates put on the
+        # phone in the frame.
+        ("screen", "App screen"),
     )
 ]
 

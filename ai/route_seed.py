@@ -159,6 +159,16 @@ ROUTES: list[dict[str, Any]] = [
         params={"resolution": "720p", "audio": True},
         note="Essential renders at 720p.",
     ),
+    # S17: avatar portraits and their reference angles. 1K is enough for a
+    # face the image model is then given as a reference.
+    _route(
+        "avatar_portrait",
+        IMAGE,
+        NANO_BANANA_21,
+        fallback=NANO_BANANA_2,
+        params={"image_size": "1K"},
+        note="Avatar portraits and angles, 1K.",
+    ),
     # Spark's four free clips: Wan only, 720p, and no fallback — a free render
     # that fails is given back, never retried on a dearer model.
     *(
