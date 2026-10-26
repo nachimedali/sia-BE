@@ -17,7 +17,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 
-from billing.permissions import HasFlag
+from billing.permissions import HasFeature, HasFlag
 from billing.services.flags import CAMPAIGN_BRIEF_S5, PLANNING_V3
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
@@ -52,6 +52,9 @@ from planning.services import views as view_service
 from workspaces.models import Permission
 from workspaces.permissions import HasPermission
 
+#: The campaigns page (2026-10-26, owner): off on Spark.
+CAMPAIGNS_FEATURE = "campaigns"
+
 
 def _view_or_edit_permissions(action: str) -> list[Any]:
     """Read with `view`, write with `edit` — called from every planning
@@ -81,8 +84,8 @@ def _view_or_edit_permissions(action: str) -> list[Any]:
 class CampaignViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Campaign]):
     """Themes and sprints (P3-04).
 
-    **Not gated by plan as a feature** — planning is how the product is used —
-    but the *number* of campaigns is a quota, checked in the service so a task
+    Gated by plan as a page (`campaigns`, off on Spark since 2026-10-26, owner),
+    and the *number* of campaigns is a quota, checked in the service so a task
     or a later endpoint inherits it.
     """
 
@@ -100,6 +103,8 @@ class CampaignViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Campai
         permissions = _view_or_edit_permissions("retrieve" if read else self.action)
         if self.action in self.S5_ACTIONS:
             permissions.append(HasFlag(CAMPAIGN_BRIEF_S5)())
+        # Last, so a flag that is off still answers 404 before any 402.
+        permissions.append(HasFeature(CAMPAIGNS_FEATURE)())
         return permissions
 
     def get_queryset(self) -> Any:

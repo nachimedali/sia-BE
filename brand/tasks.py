@@ -23,3 +23,18 @@ def run_product_import(import_id: int) -> None:
     run = ProductImport.objects.filter(pk=import_id, status=ImportStatus.QUEUED).first()
     if run is not None:
         read_product_page(run)
+
+
+@shared_task
+def run_avatar_draft(draft_id: int) -> None:
+    """Four portraits for a new avatar (S17). On `ai_q` with the rest of brand."""
+    from brand.services.avatars import run_draft
+
+    run_draft(draft_id)
+
+
+@shared_task
+def run_avatar_angles(avatar_id: int) -> None:
+    from brand.services.avatars import run_angles
+
+    run_angles(avatar_id)

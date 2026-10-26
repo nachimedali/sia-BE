@@ -14,6 +14,12 @@ from django.db import transaction
 
 from billing.models import Currency, Plan, PlanPrice
 
+#: Whole pages a plan may open (2026-10-26, owner): Spark is locked out of
+#: campaigns, refrains (templates and recurrence) and the analytics page; every
+#: other plan, legacy rows included, keeps them. Absent reads as "not in the
+#: plan", so each plan states them.
+_PAGES_INCLUDED: dict[str, Any] = {"campaigns": True, "templates": True, "analytics": True}
+
 # Values are the §4.1 matrix verbatim. This module and the migrations are the
 # only places these numbers may appear (I8 / implementation.md §4.2).
 PLANS: list[dict[str, Any]] = [
@@ -60,6 +66,7 @@ PLANS: list[dict[str, Any]] = [
         "included_views": 2,
         "price_per_workspace_cents": 0,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": False,
             "repurposing": False,
             "playbook": False,
@@ -110,6 +117,7 @@ PLANS: list[dict[str, Any]] = [
         "max_labels": 10,
         "included_views": 3,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": False,
             "repurposing": False,
             "playbook": False,
@@ -164,6 +172,7 @@ PLANS: list[dict[str, Any]] = [
         "max_products": 10,
         "trial_days": 7,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": True,
             "repurposing": True,
             "playbook": True,
@@ -216,6 +225,7 @@ PLANS: list[dict[str, Any]] = [
         "max_products": -1,
         "trial_days": 7,
         "features": {
+            **_PAGES_INCLUDED,
             "trend_engine": True,
             "repurposing": True,
             "playbook": True,
@@ -249,9 +259,11 @@ PLANS: list[dict[str, Any]] = [
 # `ceil(cost / (0.10 * 0.3))` credits, so AI cost stays under 30% of what a
 # credit sells for. Monthly credits are sized to each package's cadence
 # (1, 3, 6 and 12 posts a week, from the GooseWorks calendar rules) and cover
-# its videos — a clip render debits credits (`ai.services.video`), which is why
-# `included_videos` is 0 here: those units have no consumer since S3.
+# its videos — a clip render debits credits (`ai.services.video`). With the S17
+# flag on, renders debit video units instead, and `included_videos` is the
+# monthly allowance (4 / 9 / 17, `avatar_upgrade/cost_analysis.md`).
 _PAID_FEATURES: dict[str, Any] = {
+    **_PAGES_INCLUDED,
     "trend_engine": True,
     "repurposing": True,
     "playbook": True,
@@ -288,6 +300,10 @@ PACKAGES: list[dict[str, Any]] = [
         "max_labels": 5,
         "included_views": 2,
         "features": {
+            # Spark: the free package opens none of the paid pages.
+            "campaigns": False,
+            "templates": False,
+            "analytics": False,
             "trend_engine": False,
             "repurposing": False,
             "playbook": False,
@@ -304,6 +320,14 @@ PACKAGES: list[dict[str, Any]] = [
             "analytics_history_days": 7,
             "credits_rollover": False,
             "reply_to_comments": False,
+            "ad_templates": True,
+            "ad_templates_people": False,
+            "ad_templates_talking": False,
+            "max_avatars": 0,
+            "avatar_drafts_monthly": 0,
+            "ad_rerolls": 1,
+            "max_references": 1,
+            "real_avatars": False,
         },
         "comment_capture_interval_minutes": 1440,
         "reaction_detail": "TOTAL",
@@ -318,7 +342,7 @@ PACKAGES: list[dict[str, Any]] = [
         "price_per_workspace_cents": 4900,
         "sort_order": 11,
         "monthly_ai_credits": 500,
-        "included_videos": 0,
+        "included_videos": 4,
         "max_social_accounts": 3,
         "max_autopublish_posts": 60,
         "max_scheduled_posts": 100,
@@ -341,6 +365,14 @@ PACKAGES: list[dict[str, Any]] = [
             "autopilot": False,
             "analytics_history_days": 90,
             "reply_to_comments": False,
+            "ad_templates": True,
+            "ad_templates_people": True,
+            "ad_templates_talking": False,
+            "max_avatars": 1,
+            "avatar_drafts_monthly": 2,
+            "ad_rerolls": 3,
+            "max_references": 2,
+            "real_avatars": False,
         },
         "comment_capture_interval_minutes": 1440,
         "reaction_detail": "TOTAL",
@@ -356,7 +388,7 @@ PACKAGES: list[dict[str, Any]] = [
         "price_per_workspace_cents": 9900,
         "sort_order": 12,
         "monthly_ai_credits": 1100,
-        "included_videos": 0,
+        "included_videos": 9,
         "max_social_accounts": 5,
         "max_autopublish_posts": 150,
         "max_scheduled_posts": 300,
@@ -379,6 +411,14 @@ PACKAGES: list[dict[str, Any]] = [
             "autopilot": True,
             "analytics_history_days": 365,
             "reply_to_comments": False,
+            "ad_templates": True,
+            "ad_templates_people": True,
+            "ad_templates_talking": True,
+            "max_avatars": 3,
+            "avatar_drafts_monthly": 6,
+            "ad_rerolls": 5,
+            "max_references": 4,
+            "real_avatars": False,
         },
         "comment_capture_interval_minutes": 360,
         "reaction_detail": "PER_TYPE",
@@ -393,7 +433,7 @@ PACKAGES: list[dict[str, Any]] = [
         "price_per_workspace_cents": 24900,
         "sort_order": 13,
         "monthly_ai_credits": 2200,
-        "included_videos": 0,
+        "included_videos": 17,
         "max_social_accounts": 10,
         "max_autopublish_posts": 500,
         "max_scheduled_posts": -1,
@@ -416,6 +456,14 @@ PACKAGES: list[dict[str, Any]] = [
             "autopilot": True,
             "analytics_history_days": 730,
             "reply_to_comments": True,
+            "ad_templates": True,
+            "ad_templates_people": True,
+            "ad_templates_talking": True,
+            "max_avatars": 10,
+            "avatar_drafts_monthly": 20,
+            "ad_rerolls": 10,
+            "max_references": 6,
+            "real_avatars": True,
         },
         # `0` is webhook-driven (L-4a), as on Advanced.
         "comment_capture_interval_minutes": 0,

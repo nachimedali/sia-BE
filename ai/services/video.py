@@ -30,6 +30,16 @@ longer `RUNNING` and stops. That is S3's gate: debited once, and only on pass.
 
 **Nothing publishes from here.** `send` makes ordinary draft posts through
 `create_post`; scheduling and approval are the post's own path (L-2).
+
+**S17 — templates and video units** (`ad_templates_s17`). A clip may name an ad
+template (`ai.services.ad_templates`): its motion comes from the template, its
+first frame is the still the person picked or one this render makes first
+(`keyframe`, an image generation paid in credits on pass), and an avatar puts a
+person on screen — labelled AI-generated through to publishing. With the flag
+on, every render that is not on the free allowance is priced in **video
+units** (`metadata.units` of its length or template) and paid from
+`VideoLedger`: held while in flight (`held_units`), debited once on pass. With
+the flag off, nothing here changes.
 """
 
 from __future__ import annotations
@@ -58,8 +68,8 @@ from ai.models import (
 )
 from ai.providers.base import CaptionCue, EndCard, ReelShot, VideoResult
 from ai.providers.video import get_video_composer, get_video_provider
+from ai.services import ad_templates, disclosure, quality, rephrase
 from ai.services import creative as creative_service
-from ai.services import quality, rephrase
 from ai.services.creative import VIDEO_KINDS
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
@@ -68,6 +78,7 @@ from billing.services.plans import suggest_upgrade
 from common.exceptions import (
     FeatureNotAvailable,
     InsufficientCredits,
+    InsufficientVideoUnits,
     OCCSError,
     ProviderError,
     StateConflict,
@@ -142,6 +153,15 @@ def catalogue_version(rows: dict[str, list[CreativeOption]]) -> str:
     return max(stamps).isoformat() if stamps else ""
 
 
+def units_of(row: CreativeOption) -> int:
+    value = (row.metadata or {}).get("units")
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise VideoPriceNotConfiguredError(
+            detail={"kind": row.kind, "key": row.key, "price": "units"}
+        )
+    return value
+
+
 def credits_of(row: CreativeOption) -> int:
     value = (row.metadata or {}).get("credits")
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -180,6 +200,10 @@ class Spec:
     cta: CreativeOption | None = None
     extras: dict[str, CreativeOption] = field(default_factory=dict)
     creative: dict[str, Any] = field(default_factory=dict)
+    # S17: an ad template, the person on screen and where it is set.
+    template: CreativeOption | None = None
+    avatar: Any = None
+    location: str = ""
 
     @property
     def seconds(self) -> int:
@@ -197,7 +221,15 @@ class Spec:
             "aspect": self.aspect.key,
             "language": self.language,
         }
-        if self.mode == VideoMode.CLIP:
+        if self.template is not None:
+            out |= {
+                "template": self.template.key,
+                "source": self.source.pk if self.source else None,
+                "avatar": self.avatar.pk if self.avatar else None,
+                "location": self.location,
+                "role": "start",
+            }
+        elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
             out |= {"source": self.source.pk, "motion": self.motion.key, "role": self.role}
         else:
@@ -270,6 +302,9 @@ def parse(workspace: Workspace, data: dict[str, Any]) -> Spec:
         "creative": data.get("creative") or {},
     }
 
+    if data.get("template"):
+        return _parse_template(workspace, data, common, language=language)
+
     if mode == VideoMode.CLIP:
         aspect = _pick(CreativeKind.VIDEO_ASPECT, data.get("aspect"), "aspect")
         motion = _pick(CreativeKind.MOTION, data.get("motion"), "motion")
@@ -285,14 +320,7 @@ def parse(workspace: Workspace, data: dict[str, Any]) -> Spec:
             role=data.get("role") or "start",
         )
 
-    aspect = CreativeOption.objects.filter(
-        kind=CreativeKind.VIDEO_ASPECT, is_active=True, metadata__aspect=REEL_ASPECT
-    ).first()
-    if aspect is None:
-        raise VideoPriceNotConfiguredError(
-            "The 9:16 frame is missing from the video catalogue.",
-            detail={"kind": CreativeKind.VIDEO_ASPECT, "aspect": REEL_ASPECT},
-        )
+    aspect = _vertical()
     shots_in = data.get("shots") or []
     low = int(length.metadata.get("min_shots", 1))
     high = int(length.metadata.get("max_shots", low))
@@ -326,6 +354,57 @@ def parse(workspace: Workspace, data: dict[str, Any]) -> Spec:
     )
 
 
+def _vertical() -> CreativeOption:
+    aspect = CreativeOption.objects.filter(
+        kind=CreativeKind.VIDEO_ASPECT, is_active=True, metadata__aspect=REEL_ASPECT
+    ).first()
+    if aspect is None:
+        raise VideoPriceNotConfiguredError(
+            "The 9:16 frame is missing from the video catalogue.",
+            detail={"kind": CreativeKind.VIDEO_ASPECT, "aspect": REEL_ASPECT},
+        )
+    return aspect
+
+
+def _parse_template(
+    workspace: Workspace, data: dict[str, Any], common: dict[str, Any], *, language: str
+) -> Spec:
+    """A clip made from an ad template: always 9:16, always opening on its
+    first frame, the motion the template's own. The template, the avatar and
+    the plan are checked here, so the estimate already says why it cannot be
+    made rather than the render failing later."""
+    ad_templates.require_on(workspace)
+    if data["mode"] != VideoMode.CLIP:
+        raise ValidationError({"mode": "A template renders as a clip."})
+    product = common["product"]
+    row, avatar = ad_templates.resolve_with_avatar(
+        workspace,
+        data["template"],
+        product=product,
+        avatar_id=data.get("avatar"),
+        language=language,
+    )
+    length = common["length"]
+    ad_templates.length_units(row, length.key)
+    location = str(data.get("location") or "")
+    ad_templates.keyframe_prompt(row, product=product, location=location)  # 400 on a bad location
+    source = _media(workspace, data["source"]) if data.get("source") is not None else None
+    assert product is not None
+    return Spec(
+        **{
+            **common,
+            "text": common["text"] or ad_templates.script_text(row, data.get("script"), product),
+        },
+        aspect=_vertical(),
+        language=language,
+        source=source,
+        role="start",
+        template=row,
+        avatar=avatar,
+        location=location,
+    )
+
+
 # -----------------------------------------------------------------------------
 # Pricing
 # -----------------------------------------------------------------------------
@@ -335,30 +414,99 @@ class Quote:
     credits: int
     render_s: int
     estimate_id: str
+    #: S17: the price in video units; 0 when priced in credits or free. When
+    #: set, `credits` is 0 and each line's figure is units.
+    units: int = 0
+    #: Credits the first frame will cost when the render makes its own.
+    keyframe_credits: int = 0
+
+    @property
+    def currency(self) -> str:
+        return "units" if self.units else "credits"
 
     def line_rows(self) -> list[dict[str, Any]]:
-        return [{"label": label, "credits": amount} for label, amount in self.lines]
+        key = "units" if self.units else "credits"
+        return [
+            {"label": label, "credits": 0 if self.units else amount, key: amount}
+            for label, amount in self.lines
+        ]
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "lines": self.line_rows(),
             "credits": self.credits,
+            "units": self.units,
+            "currency": self.currency,
+            "keyframe_credits": self.keyframe_credits,
             "render_s": self.render_s,
             "estimate_id": self.estimate_id,
         }
 
 
-def quote(spec: Spec, *, free: bool = False) -> Quote:
+def _keyframe_credits(spec: Spec) -> int:
+    if spec.template is None or spec.source is not None:
+        return 0
+    from ai.services.costing import resolve_cost
+
+    return resolve_cost(kind="IMAGE", mode="PRODUCT")
+
+
+def _digest(*parts: Any) -> str:
+    return "est_" + hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:10]
+
+
+def quote(spec: Spec, *, free: bool = False, units: bool = False) -> Quote:
     """The priced breakdown. Free lines are left out — "Slow push-in · 0 cr"
     is noise — but every row is still read, so a missing price is an error.
 
-    `free` is a clip on the plan's free allowance: one line, at nothing."""
+    `free` is a clip on the plan's free allowance: one line, at nothing.
+    `units` prices the render in video units (S17): one line, the weight of
+    the template's length or of the length row — surcharges are part of it."""
+    keyframe = _keyframe_credits(spec)
+    if spec.template is not None:
+        label = f"{spec.length.label} · {spec.template.label}"
+        render_s = int(spec.length.metadata.get("render_s", 0)) + (8 if keyframe else 0)
+        if free:
+            free_line = [(f"{label} · free", 0)]
+            return Quote(
+                lines=free_line,
+                credits=0,
+                render_s=render_s,
+                estimate_id=_digest(free_line, 0, keyframe),
+                keyframe_credits=keyframe,
+            )
+        # A template only exists with the S17 flag on, so it is always paid
+        # in units when it is not free.
+        weight = ad_templates.length_units(spec.template, spec.length.key)
+        template_line = [(label, weight)]
+        return Quote(
+            lines=template_line,
+            credits=0,
+            units=weight,
+            render_s=render_s,
+            estimate_id=_digest(template_line, "u", weight, keyframe),
+            keyframe_credits=keyframe,
+        )
+    if units and not free:
+        weight = units_of(spec.length)
+        unit_line = [(f"{spec.length.label} {spec.mode}", weight)]
+        render_s = int(spec.length.metadata.get("render_s", 0)) + (
+            len(spec.shots) if spec.mode == VideoMode.REEL else 0
+        )
+        return Quote(
+            lines=unit_line,
+            credits=0,
+            units=weight,
+            render_s=render_s,
+            estimate_id=_digest(unit_line, "u", weight),
+        )
     if free:
         credits_of(spec.length)
         free_lines = [(f"{spec.length.label} {spec.mode} · free", 0)]
         render_s = int(spec.length.metadata.get("render_s", 0))
-        digest = hashlib.sha256(json.dumps([free_lines, 0]).encode()).hexdigest()[:10]
-        return Quote(lines=free_lines, credits=0, render_s=render_s, estimate_id=f"est_{digest}")
+        return Quote(
+            lines=free_lines, credits=0, render_s=render_s, estimate_id=_digest(free_lines, 0)
+        )
     lines: list[tuple[str, int]] = [(f"{spec.length.label} {spec.mode}", credits_of(spec.length))]
 
     def add(label: str, row: CreativeOption, times: int = 1) -> None:
@@ -382,8 +530,9 @@ def quote(spec: Spec, *, free: bool = False) -> Quote:
         render_s = int(spec.length.metadata.get("render_s", 0)) + len(spec.shots)
 
     credits = sum(amount for _label, amount in lines)
-    digest = hashlib.sha256(json.dumps([lines, credits]).encode()).hexdigest()[:10]
-    return Quote(lines=lines, credits=credits, render_s=render_s, estimate_id=f"est_{digest}")
+    return Quote(
+        lines=lines, credits=credits, render_s=render_s, estimate_id=_digest(lines, credits)
+    )
 
 
 def free_clips_left(workspace: Workspace) -> int:
@@ -439,18 +588,36 @@ def require_video(workspace: Workspace, mode: str, *, seconds: int | None = None
     return free
 
 
+def paid_in_units(workspace: Workspace) -> bool:
+    """S17: with the flag on, video is paid from the video allowance."""
+    return ad_templates.is_on(workspace)
+
+
 def estimate(workspace: Workspace, data: dict[str, Any]) -> Quote:
     require_video(workspace, data["mode"])
     spec = parse(workspace, data)
-    return quote(spec, free=require_video(workspace, spec.mode, seconds=spec.seconds))
+    return quote(
+        spec,
+        free=require_video(workspace, spec.mode, seconds=spec.seconds),
+        units=paid_in_units(workspace),
+    )
+
+
+def _held(workspace: Workspace, field_name: str) -> int:
+    """What renders in flight have been promised, in credits or video units.
+    A query, every time (rule 5)."""
+    total = VideoRender.objects.filter(workspace=workspace, status__in=ACTIVE).aggregate(
+        total=Sum(field_name)
+    )["total"]
+    return int(total or 0)
 
 
 def held_credits(workspace: Workspace) -> int:
-    """Credits promised to renders in flight. A query, every time (rule 5)."""
-    total = VideoRender.objects.filter(workspace=workspace, status__in=ACTIVE).aggregate(
-        total=Sum("credits")
-    )["total"]
-    return int(total or 0)
+    return _held(workspace, "credits")
+
+
+def held_units(workspace: Workspace) -> int:
+    return _held(workspace, "units")
 
 
 # -----------------------------------------------------------------------------
@@ -474,7 +641,7 @@ def start_render(
     require_video(workspace, data["mode"])
     spec = parse(workspace, data)
     free = require_video(workspace, spec.mode, seconds=spec.seconds)
-    priced = quote(spec, free=free)
+    priced = quote(spec, free=free, units=paid_in_units(workspace))
     if priced.estimate_id != estimate_id:
         raise EstimateChangedError(detail={"estimate": priced.as_dict()})
     if retry_of is not None and retry_of.status != VideoRenderStatus.FAILED:
@@ -519,7 +686,25 @@ def start_render(
             )
             if existing is not None:
                 return existing
-        entitlements.require_credits(priced.credits, held=held_credits(workspace))
+        if priced.units:
+            entitlements.require_video_units(priced.units, held=held_units(workspace))
+        else:
+            entitlements.require_credits(priced.credits, held=held_credits(workspace))
+        keyframe = None
+        if priced.keyframe_credits:
+            # The first frame is paid in credits, on pass, by its own
+            # generation — preflighted here so a render is never queued
+            # toward a frame the balance cannot buy.
+            entitlements.require_credits(priced.keyframe_credits, held=held_credits(workspace))
+            assert spec.template is not None and spec.product is not None
+            keyframe = ad_templates.create_keyframe(
+                workspace,
+                user=user,
+                row=spec.template,
+                product=spec.product,
+                avatar=spec.avatar,
+                location=spec.location,
+            )
         render = VideoRender.objects.create(
             workspace=workspace,
             created_by=user,
@@ -527,14 +712,19 @@ def start_render(
             mode=spec.mode,
             spec=spec.stored(),
             text=spec.text,
-            source=spec.source or spec.shots[0].media,
+            source=spec.source or (spec.shots[0].media if spec.shots else None),
             estimate_id=priced.estimate_id,
             credits=priced.credits,
+            units=priced.units,
             free=free,
             lines=priced.line_rows(),
             render_s=priced.render_s,
             retry_of=retry_of,
             post=post,
+            template=spec.template.key if spec.template else "",
+            avatar=spec.avatar,
+            keyframe=keyframe,
+            labels=disclosure.labels_for(spec.avatar),
         )
         if retry_of is not None:
             retry_of.review = VideoReview.RETRIED
@@ -610,14 +800,27 @@ def _render_clip(render: VideoRender) -> VideoResult:
     if provider is None:
         raise VideoUnavailableError
     assert render.source is not None
-    motion = CreativeOption.objects.filter(
-        kind=CreativeKind.MOTION, key=render.spec["motion"]
-    ).first()
+    template = (
+        CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=render.template).first()
+        if render.template
+        else None
+    )
+    motion = (
+        None
+        if template
+        else CreativeOption.objects.filter(
+            kind=CreativeKind.MOTION, key=render.spec["motion"]
+        ).first()
+    )
     aspect = CreativeOption.objects.filter(
         kind=CreativeKind.VIDEO_ASPECT, key=render.spec["aspect"]
     ).first()
     image = _bytes(render.source)
-    prompt = motion.prompt_fragment if motion else ""
+    prompt = (
+        ad_templates.motion_prompt(template)
+        if template
+        else (motion.prompt_fragment if motion else "")
+    )
     if prompt:
         # The scene, light, camera, cast and mood the person chose, in the same
         # words the still was made with (`creative.look_lines`).
@@ -721,6 +924,11 @@ def run_render(render_id: int) -> VideoRender:
         render.phase, render.progress = PHASES[0]
         render.save(update_fields=["status", "started_at", "phase", "progress", "updated_at"])
 
+    if render.source_id is None and render.keyframe_id is not None:
+        failed = _make_keyframe(render)
+        if failed is not None:
+            return failed
+
     started = time.monotonic()
     try:
         result = _render_clip(render) if render.mode == VideoMode.CLIP else _render_reel(render)
@@ -761,14 +969,21 @@ def run_render(render_id: int) -> VideoRender:
             locked = VideoRender.objects.select_for_update().get(pk=render.pk)
             if locked.status != VideoRenderStatus.RUNNING:
                 return locked
-            entry = ledger.debit_credits(
-                render.workspace,
-                render.credits,
-                quota=entitlements.quota("monthly_ai_credits"),
-                note=f"video render {render.pk}",
-            )
+            if render.units:
+                locked.unit_charge = ledger.debit_video_units(
+                    render.workspace,
+                    render.units,
+                    quota=entitlements.quota("included_videos"),
+                    note=f"video render {render.pk}",
+                )
+            else:
+                locked.charge = ledger.debit_credits(
+                    render.workspace,
+                    render.credits,
+                    quota=entitlements.quota("monthly_ai_credits"),
+                    note=f"video render {render.pk}",
+                )
             locked.output = _persist(locked, result)
-            locked.charge = entry
             locked.status = VideoRenderStatus.SUCCEEDED
             locked.phase = "DONE"
             locked.progress = 1.0
@@ -786,6 +1001,46 @@ def run_render(render_id: int) -> VideoRender:
             "insufficient_credits",
             "There were not enough credits left when the render finished. Nothing was taken.",
         )
+    except InsufficientVideoUnits:
+        return _fail(
+            render,
+            "insufficient_video_units",
+            "There were not enough videos left when the render finished. Nothing was taken.",
+        )
+
+
+def _make_keyframe(render: VideoRender) -> VideoRender | None:
+    """The template's first frame, made by this render's task: the image
+    pipeline's own run (gate, debit on pass), inline because this task is
+    already the worker's. `None` when it is ready; the failed render when not."""
+    from ai.models import GenerationStatus
+    from ai.services.pipeline import run_generation
+
+    generation = render.keyframe
+    assert generation is not None
+    try:
+        generation = run_generation(generation, n=1)
+    except ProviderError:
+        logger.warning("render %s: keyframe provider error", render.pk, exc_info=True)
+        # Not left PENDING: nothing will run it again.
+        generation.status = GenerationStatus.FAILED
+        generation.error_detail = {"reason": "provider_error"}
+        generation.save(update_fields=["status", "error_detail", "updated_at"])
+    variant = (
+        generation.variants.filter(media_asset__isnull=False).order_by("id").first()
+        if generation.status == GenerationStatus.SUCCEEDED
+        else None
+    )
+    if variant is None:
+        return _fail(
+            render,
+            "keyframe_failed",
+            "The first frame could not be made. No videos or credits were taken.",
+        )
+    render.source = variant.media_asset
+    render.spec = {**render.spec, "source": variant.media_asset_id}
+    render.save(update_fields=["source", "spec", "updated_at"])
+    return None
 
 
 # -----------------------------------------------------------------------------
@@ -840,7 +1095,11 @@ def send(
             post = create_post(
                 workspace=workspace,
                 author=user,
-                master_body=render.text,
+                # A person on screen is labelled through to publishing; the
+                # pre-publish checks refuse a caption that loses the label.
+                master_body=disclosure.with_disclosure(
+                    render.text, render.labels, language=render.spec.get("language", "")
+                ),
                 category=workspace.category,
                 media_assets=[render.output],
             )

@@ -23,7 +23,7 @@ from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
 from ai.serializers import GenerationSerializer
-from billing.permissions import HasFlag
+from billing.permissions import HasFeature, HasFlag
 from billing.services.flags import CHECKS_S4, CONTENT_MODEL_V2, flag_enabled
 from checks import queries as check_queries
 from common.exceptions import OCCSError
@@ -97,6 +97,9 @@ from workspaces.serializers import (
     ApprovalNoteRequestSerializer,
 )
 from workspaces.services import approvals
+
+#: Refrains — templates and their recurrence rules (2026-10-26, owner): off on Spark.
+TEMPLATES_FEATURE = "templates"
 
 #: **No plan gate on the approval endpoints any more** (C-02, P2-04). Approval
 #: is required on every plan, so a `HasFeature` in front of `submit`/`approve`
@@ -951,7 +954,11 @@ class PostTemplateViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Po
     template edit never reaches posts already made from it."""
 
     serializer_class = PostTemplateSerializer
-    permission_classes: list[Any] = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]
+    permission_classes: list[Any] = [
+        IsAuthenticated,
+        HasFlag(CONTENT_MODEL_V2),
+        HasFeature(TEMPLATES_FEATURE),
+    ]
     pagination_class = DefaultPagination
     queryset = PostTemplate.objects.select_related("created_by").prefetch_related(
         Prefetch(
@@ -988,7 +995,11 @@ class RecurrenceRuleViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[
     `delivery_mode` and `scheduled_at`."""
 
     serializer_class = RecurrenceRuleSerializer
-    permission_classes: list[Any] = [IsAuthenticated, HasFlag(CONTENT_MODEL_V2)]
+    permission_classes: list[Any] = [
+        IsAuthenticated,
+        HasFlag(CONTENT_MODEL_V2),
+        HasFeature(TEMPLATES_FEATURE),
+    ]
     pagination_class = DefaultPagination
     queryset = RecurrenceRule.objects.select_related("source").prefetch_related(
         Prefetch(

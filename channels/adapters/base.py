@@ -275,6 +275,12 @@ class PlatformAdapter(Protocol):
 
     def disconnect(self, *, provider_account_id: str) -> None: ...
 
+    def account_present(self, *, profile_id: str, provider_account_id: str) -> bool:
+        """Whether the provider still holds the account — the "Check status"
+        read. False means it was removed at the vendor or on the platform;
+        a provider that cannot answer raises `PlatformError`."""
+        ...
+
     def list_remote_options(
         self, *, platform: str, provider_account_id: str, source: str
     ) -> list[dict[str, Any]]:

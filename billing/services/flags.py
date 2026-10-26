@@ -172,6 +172,15 @@ TRANSACTIONAL_EMAIL = "transactional_email"
 #: they are — a flag hides a feature, it does not delete a picture.
 PLAYBOOK_V1 = "playbook_v1"
 
+#: S17 — ad templates and brand avatars (`ads_templates.md`,
+#: `avatar_upgrade/analysis.md`): the Studio's template gallery, the keyframe,
+#: avatars and their library, per-plan reference caps, and **video paid in
+#: video units** instead of credits. Off restores pre-step behaviour exactly:
+#: the template and avatar endpoints answer 404, every render is priced and
+#: debited in credits, and product photos are sent uncapped as before. This
+#: flag gates a price change, and the app is deployed, so it ships off.
+AD_TEMPLATES_S17 = "ad_templates_s17"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
@@ -196,6 +205,9 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     # consent flow independently refuses until a `ConsentPolicy` is published,
     # so even a flag flipped early collects nothing.
     COHORT_V8: False,
+    # Off: shipped after the first deploy, and it moves video from credits to
+    # video units. Promoted by a FeatureFlag row, deliberately.
+    AD_TEMPLATES_S17: False,
     # Off until trendgen serves them; see the declarations above.
     TRENDGEN_FEED: False,
     TRENDGEN_GENERATION: False,

@@ -45,6 +45,7 @@ RATELIMIT_REDIS_URL = _test_redis_url
 # test depends on an external service being reachable or on test-mode keys
 # existing. A temp dir per session keeps upload tests off the working tree.
 USE_FAKE_MAIL = True
+SENTRY_DSN = ""  # the suite never reports
 USE_FAKE_BILLING = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True
@@ -69,6 +70,7 @@ USE_FAKE_TEXT_PROVIDER = False
 USE_FAKE_IMAGE_PROVIDER = False
 USE_FAKE_VIDEO_PROVIDER = False
 USE_FAKE_CHECKS_PROVIDER = False
+USE_FAKE_LIKENESS_PROVIDER = False
 # The shared LLM request bucket is off in the suite; its own tests turn it on.
 LLM_RATE_LIMIT_PER_MINUTE = 0
 # A local `.env` video key must never reach a test.

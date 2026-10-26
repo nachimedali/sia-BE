@@ -172,12 +172,12 @@ def test_auto_publish_is_reachable_only_from_approved(
 # -----------------------------------------------------------------------------
 # Part 3 — flag off is pre-phase behaviour, not an error
 # -----------------------------------------------------------------------------
-def test_with_the_flag_off_an_open_chain_records_nothing(
+def test_with_the_flag_off_scheduling_still_records_the_approval(
     workspace: Any, user: Any, organization: Any
 ) -> None:
-    """Before Phase 2 a workspace that had not switched approval on scheduled
-    straight from `DRAFT` with no record. That is what off restores — a working
-    prior behaviour, not an error."""
+    """Part 7 rule 13 outranks Part 3 here: no flag skips the human (remaining_10
+    item 1). Off used to restore the pre-phase "no record" scheduling, which left
+    a committed post with nobody's name on it."""
     FeatureFlag.objects.create(organization=organization, key=COLLABORATION_V2, enabled=False)
     post = create_post(workspace=workspace, author=user, master_body="Pre-phase")
 
@@ -189,7 +189,51 @@ def test_with_the_flag_off_an_open_chain_records_nothing(
     )
 
     assert post.status == PostStatus.REMINDER_ARMED
-    assert _approve_rows(post) == 0
+    assert _approve_rows(post) == 1
+
+
+def test_only_schedule_post_moves_a_post_to_a_committed_state() -> None:
+    """Every path to `SCHEDULED`/`REMINDER_ARMED` (endpoint, calendar drag, bulk,
+    auto-schedule on approval, variants, autopilot, repurpose) goes through
+    `schedule_post`, so the approval it records covers them all. Fails on any
+    other module that assigns or writes one of those statuses."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    committed = {"SCHEDULED", "REMINDER_ARMED"}
+
+    def is_committed(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr in committed
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "PostStatus"
+        )
+
+    offenders = []
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith(".venv/") or "/tests/" in rel or "/migrations/" in rel:
+            continue
+        if rel == "scheduling/services.py" or rel.startswith("tests/"):
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            assigns = (
+                isinstance(node, ast.Assign)
+                and is_committed(node.value)
+                and any(isinstance(t, ast.Attribute) and t.attr == "status" for t in node.targets)
+            )
+            writes = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"update", "create", "update_or_create", "get_or_create"}
+                and any(k.arg == "status" and is_committed(k.value) for k in node.keywords)
+            )
+            if assigns or writes:
+                offenders.append(f"{rel}:{getattr(node, 'lineno', '?')}")
+
+    assert offenders == []
 
 
 def test_a_blocking_chain_is_honoured_with_the_flag_off_too(

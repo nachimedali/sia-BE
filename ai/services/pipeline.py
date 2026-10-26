@@ -68,7 +68,7 @@ from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
-from ai.services import brand_assets, prompting, quality, references, rephrase
+from ai.services import ad_templates, brand_assets, prompting, quality, references, rephrase
 from ai.services import creative as creative_service
 from ai.services import hashtags as hashtag_service
 from ai.services.costing import resolve_pricing
@@ -344,11 +344,15 @@ def _ensure_captionable(workspace: Workspace, asset: MediaAsset | None) -> None:
         )
 
 
-def _reference_image_bytes(product: Product | None) -> list[bytes]:
+def _reference_image_bytes(product: Product | None, *, cap: int | None = None) -> list[bytes]:
+    """The product's photos, in order, up to `cap` — the plan's
+    `max_references` (S17) when that flag is on, so the same photos reach the
+    model and the gate. `None` sends every photo, as before."""
     if product is None:
         return []
+    photos = product.reference_images.all()
     contents = []
-    for asset in product.reference_images.all():
+    for asset in photos[:cap] if cap is not None else photos:
         with asset.file.open("rb") as handle:
             contents.append(handle.read())
     return contents
@@ -658,7 +662,9 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
     # every caller that never opted in.
     cost = pricing.credits * generation.paid_slots
     reference_images = (
-        _reference_image_bytes(generation.product)
+        _reference_image_bytes(
+            generation.product, cap=ad_templates.references_cap(workspace, entitlements)
+        )
         if generation.kind == GenerationKind.IMAGE
         else []
     )

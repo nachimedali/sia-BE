@@ -8,3 +8,6 @@ class CommonConfig(AppConfig):
     def ready(self) -> None:
         # Registers the deploy checks. Not a signal (rule 7).
         from common import checks  # noqa: F401
+        from common.observability import init_sentry
+
+        init_sentry()

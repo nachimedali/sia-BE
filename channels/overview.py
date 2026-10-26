@@ -10,7 +10,8 @@ draw the page:
   only when a snapshot from a week ago exists (otherwise null: "no sync this
   week", never 0), the last time anything was captured, and what depends on
   the account: posts scheduled through it, posts awaiting approval for its
-  platform, posts published through it in 30 days;
+  platform, posts published through it in 30 days and in all, and the
+  latest of them;
 * **the pooled cap** — accounts count against the organization (L-1), so the
   meter shows every workspace's share;
 * **what a platform shares** — the selected provider's capability rows, the
@@ -93,6 +94,7 @@ def account_cards(workspace: Workspace, *, now: dt.datetime | None = None) -> li
                 "id",
                 filter=Q(state=PostTargetState.PENDING, post__status=PostStatus.SCHEDULED),
             ),
+            published_total=Count("id", filter=Q(state=PostTargetState.PUBLISHED)),
             published_30d=Count(
                 "id",
                 filter=Q(
@@ -101,6 +103,17 @@ def account_cards(workspace: Workspace, *, now: dt.datetime | None = None) -> li
                 ),
             ),
         )
+    }
+    last_published = {
+        row["social_account"]: (row["published_at"], row["post"])
+        for row in PostTarget.objects.filter(
+            social_account_id__in=ids,
+            state=PostTargetState.PUBLISHED,
+            published_at__isnull=False,
+        )
+        .order_by("social_account", "-published_at")
+        .distinct("social_account")
+        .values("social_account", "published_at", "post")
     }
     last_metric = dict(
         PostMetric.objects.filter(post_target__social_account_id__in=ids)
@@ -133,6 +146,7 @@ def account_cards(workspace: Workspace, *, now: dt.datetime | None = None) -> li
             state = "syncing"
         count, change = follower_counts[account.pk]
         stats: dict[str, Any] = dict(target_stats.get(account.pk) or {})
+        published_at, published_post = last_published.get(account.pk, (None, None))
         cards.append(
             {
                 "account": account,
@@ -144,6 +158,9 @@ def account_cards(workspace: Workspace, *, now: dt.datetime | None = None) -> li
                 "scheduled": stats.get("scheduled", 0),
                 "awaiting_approval": awaiting.get(account.platform, 0),
                 "published_30d": stats.get("published_30d", 0),
+                "published_total": stats.get("published_total", 0),
+                "last_published_at": published_at,
+                "last_published_post": published_post,
             }
         )
     return cards

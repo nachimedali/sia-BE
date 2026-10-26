@@ -33,6 +33,7 @@ from django.db import transaction
 
 from accounts.models import User
 from ai.models import Generation, GenerationStatus, GenerationVariant
+from ai.services import disclosure
 from ai.services.costing import resolve_pricing, unlock_price
 from billing.models import CreditReason
 from billing.services import ledger
@@ -252,7 +253,12 @@ def commit(
         post = create_post(
             workspace=generation.workspace,
             author=actor,
-            master_body=post_body(variant),
+            # S17: a still made with an avatar carries the AI-generated label.
+            master_body=disclosure.with_disclosure(
+                post_body(variant),
+                disclosure.labels_for(generation.creative.get("avatar")),
+                language=str(generation.creative.get("language") or ""),
+            ),
             category=generation.category,
             media_assets=[variant.media_asset] if variant.media_asset else [],
         )

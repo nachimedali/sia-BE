@@ -178,3 +178,126 @@ class ProductImport(models.Model):
 
     def __str__(self) -> str:
         return f"{self.url} ({self.status})"
+
+
+# -----------------------------------------------------------------------------
+# Avatars (S17, `ads_templates.md`, `avatar_upgrade/analysis.md`)
+# -----------------------------------------------------------------------------
+class AvatarKind(models.TextChoices):
+    #: Invented from text traits; passes the look-alike check before it is saved.
+    SYNTHETIC = "SYNTHETIC", "Invented"
+    #: A real person, usable only while their recorded consent stands.
+    REAL = "REAL", "Real person"
+
+
+class Likeness(models.TextChoices):
+    CLEAR = "CLEAR", "Clear"
+    MATCH = "MATCH", "Looks like a known person"
+    #: No look-alike vendor is configured. Said plainly, never shown as clear.
+    UNCHECKED = "UNCHECKED", "Not checked"
+
+
+class Avatar(models.Model):
+    """A person the brand puts in its images and videos.
+
+    **Never edited.** A new face is a new avatar, so every render keeps the
+    media it was made with and history stays true. Only the house-face pin, the
+    archive stamp and the consent stamps change, each written by
+    `brand.services.avatars` with an `AuditLog` row where it matters.
+
+    Limits (`max_avatars`) are counted, never cached: the oldest active
+    avatars up to the plan's number are usable, newer ones are locked after a
+    downgrade (402 `avatar_over_limit`), and nothing is deleted.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="avatars"
+    )
+    name = models.CharField(max_length=80)
+    kind = models.CharField(max_length=10, choices=AvatarKind.choices)
+    #: The face every render is held to. Its file is never changed.
+    portrait = models.ForeignKey(
+        "content.MediaAsset", on_delete=models.PROTECT, related_name="avatar_portraits"
+    )
+    #: Reference angles (media ids): made after an invented avatar is saved, or
+    #: the further photos of a real person.
+    angles = models.JSONField(default=list, blank=True)
+    #: `avatar_trait` keys by group (`archetype`, `age`, `look`, `style`,
+    #: `energy`) and a free note — what the portraits were drawn from.
+    traits = models.JSONField(default=dict, blank=True)
+    #: Content languages this person speaks (L-6: en, fr, it).
+    languages = models.JSONField(default=list, blank=True)
+    is_house = models.BooleanField(default=False)
+    likeness = models.CharField(max_length=10, choices=Likeness.choices, default=Likeness.UNCHECKED)
+    likeness_provider = models.CharField(max_length=40, blank=True)
+
+    # --- consent, REAL only -----------------------------------------------
+    #: The person's full name as it appears on the consent, and the date they
+    #: signed. Recorded by an admin of the workspace.
+    consent_signed_by = models.CharField(max_length=120, blank=True)
+    consent_signed_on = models.DateField(null=True, blank=True)
+    consent_recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    consent_recorded_at = models.DateTimeField(null=True, blank=True)
+    #: Withdrawal: stamped once, never cleared. The avatar leaves every future
+    #: render; renders already made stay where they are.
+    consent_revoked_at = models.DateTimeField(null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["created_at", "id"]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["workspace", "archived_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.kind})"
+
+
+class DraftStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    READY = "READY", "Ready"
+    FAILED = "FAILED", "Failed"
+
+
+class AvatarDraft(models.Model):
+    """One batch of portraits drawn from traits, to pick a new avatar from.
+
+    Counted per **organization** per calendar month against
+    `avatar_drafts_monthly` (a failed batch does not count), and paid in
+    credits on success only — the `GenerationCost` row `(IMAGE, AVATAR)`.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="avatar_drafts"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    traits = models.JSONField(default=dict, blank=True)
+    prompt = models.TextField(blank=True)
+    status = models.CharField(max_length=8, choices=DraftStatus.choices, default=DraftStatus.QUEUED)
+    #: `[{"media": id, "likeness": "CLEAR" | "MATCH" | "UNCHECKED"}]`
+    portraits = models.JSONField(default=list, blank=True)
+    credits = models.PositiveIntegerField(default=0)
+    charge = models.OneToOneField(
+        "billing.CreditLedger",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="avatar_draft",
+    )
+    error = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"avatar draft {self.pk} ({self.status})"

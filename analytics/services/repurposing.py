@@ -173,17 +173,23 @@ def accept(candidate: RepurposeCandidate, *, author_id: int) -> Post:
     quality gate enforces, which is where that check already lives. What this
     function owns is the link: a post that knows what it came from.
     """
+    from accounts.models import User
+    from content.services.posts import create_post
+
     origin = candidate.post
-    reissue = Post.objects.create(
+    # The editor's path, so revision 1 and the ordered media with their alt
+    # text come out exactly as for a draft written by hand.
+    reissue = create_post(
         workspace=origin.workspace,
-        author_id=author_id,
+        author=User.objects.get(pk=author_id),
         master_body=origin.master_body,
-        status=PostStatus.DRAFT,
-        source=origin.source,
         category=origin.category,
-        product=origin.product,
+        media_assets=origin.ordered_media(),
+        alt_texts={a.media_asset_id: a.alt_text for a in origin.ordered_attachments()},
     )
-    reissue.media_assets.set(origin.media_assets.all())
+    # Not content fields (posts.py): the services that own them write them.
+    reissue.source, reissue.product = origin.source, origin.product
+    reissue.save(update_fields=["source", "product", "updated_at"])
 
     candidate.reissued_post = reissue
     candidate.save(update_fields=["reissued_post", "updated_at"])

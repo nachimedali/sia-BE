@@ -36,6 +36,12 @@ from workspaces.services.provisioning import provision_workspace
 
 pytestmark = pytest.mark.django_db
 
+
+@pytest.fixture(autouse=True)
+def _paid(paid_workspace: Any) -> None:
+    """Refrains are off on Spark, the default plan (2026-10-26)."""
+
+
 RULES_URL = "/api/v1/recurrence-rules/"
 PARIS = ZoneInfo("Europe/Paris")
 

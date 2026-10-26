@@ -28,6 +28,14 @@ class VideoCatalogueSerializer(serializers.Serializer[Any]):
     version = serializers.CharField()
 
 
+class AdScriptSerializer(serializers.Serializer[Any]):
+    """The words of an ad, edited by hand (never a model call, never counted)."""
+
+    hook = serializers.CharField(max_length=400, allow_blank=True, required=False, default="")
+    body = serializers.CharField(max_length=400, allow_blank=True, required=False, default="")
+    cta = serializers.CharField(max_length=400, allow_blank=True, required=False, default="")
+
+
 class VideoShotSerializer(serializers.Serializer[Any]):
     media = serializers.IntegerField()
     text = serializers.CharField(
@@ -61,6 +69,13 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
     #: The Studio's look controls (scene, light, camera, cast, vibe, palette,
     #: moods, keep-out), by key, for a clip or a reel alike.
     creative = serializers.JSONField(required=False, default=dict)
+    # S17 — an ad template clip: the template, the person on screen, where it
+    # is set and the words it carries. `source`, when given, is the first frame
+    # the person picked; without it the render makes its own.
+    template = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    avatar = serializers.IntegerField(required=False, allow_null=True, default=None)
+    location = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    script = AdScriptSerializer(required=False, allow_null=True, default=None)
 
     def validate_creative(self, value: Any) -> dict[str, Any]:
         return creative_service.video_look(value)
@@ -80,11 +95,18 @@ class VideoRenderCreateSerializer(VideoRequestSerializer):
 class VideoEstimateLineSerializer(serializers.Serializer[Any]):
     label = serializers.CharField()  # type: ignore[assignment]
     credits = serializers.IntegerField()
+    #: S17: present when the render is priced in video units.
+    units = serializers.IntegerField(required=False)
 
 
 class VideoEstimateSerializer(serializers.Serializer[Any]):
     lines = VideoEstimateLineSerializer(many=True)
     credits = serializers.IntegerField()
+    #: S17: the price in video units (0 when priced in credits or free).
+    units = serializers.IntegerField()
+    currency = serializers.ChoiceField(choices=["credits", "units"])
+    #: Credits the template's first frame will cost, when the render makes it.
+    keyframe_credits = serializers.IntegerField()
     render_s = serializers.IntegerField()
     estimate_id = serializers.CharField()
 
@@ -105,6 +127,8 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
     #: What the ledger actually took: the price once it passed, 0 before and
     #: on failure. The hold is `credits` while the render is in flight.
     charged = serializers.SerializerMethodField()
+    #: Units the video ledger took (S17); 0 before, on failure, and in credits.
+    charged_units = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoRender
@@ -117,6 +141,12 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
             "review",
             "credits",
             "charged",
+            "units",
+            "charged_units",
+            "template",
+            "avatar",
+            "keyframe",
+            "labels",
             "lines",
             "render_s",
             "spec",
@@ -168,6 +198,9 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
     def get_charged(self, obj: VideoRender) -> int:
         return obj.credits if obj.charge_id is not None else 0
 
+    def get_charged_units(self, obj: VideoRender) -> int:
+        return obj.units if obj.unit_charge_id is not None else 0
+
 
 class VideoCreditsSerializer(serializers.Serializer[Any]):
     #: The ledger balance — null on an unlimited plan, never a made-up number.
@@ -175,9 +208,17 @@ class VideoCreditsSerializer(serializers.Serializer[Any]):
     held = serializers.IntegerField()
 
 
+class VideoUnitsSerializer(serializers.Serializer[Any]):
+    #: The video ledger balance — null on an unlimited plan.
+    balance = serializers.IntegerField(allow_null=True)
+    held = serializers.IntegerField()
+
+
 class VideoRenderListSerializer(serializers.Serializer[Any]):
     renders = VideoRenderSerializer(many=True)
     credits = VideoCreditsSerializer()
+    #: S17: present with the flag on, when video is paid in units.
+    units = VideoUnitsSerializer(required=False, allow_null=True)
 
 
 class VideoReviewSerializer(serializers.Serializer[Any]):

@@ -130,20 +130,9 @@ def _post_removed(data: dict[str, Any]) -> Outcome:
 
 # --- accounts ----------------------------------------------------------------------------
 def _set_state(accounts: list[SocialAccount], status: str, reason: str) -> int:
-    """Moves each account to `status` and tells its admins — only on a change,
-    so a retried delivery never notifies twice."""
-    from notifications.services import account_event
+    from channels.services import set_account_status
 
-    changed = 0
-    for account in accounts:
-        if account.status == status:
-            continue
-        account.status = status
-        account.reconnect_reason = reason[:280]
-        account.save(update_fields=["status", "reconnect_reason", "updated_at"])
-        account_event(account, reason=reason)
-        changed += 1
-    return changed
+    return sum(set_account_status(account, status, reason) for account in accounts)
 
 
 def _account_disconnected(data: dict[str, Any]) -> Outcome:

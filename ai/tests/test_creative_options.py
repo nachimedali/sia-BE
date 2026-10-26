@@ -108,7 +108,7 @@ FULL = {
 # -----------------------------------------------------------------------------
 def test_the_seed_covers_every_control_and_is_idempotent(seeded: None) -> None:
     kinds = set(CreativeOption.objects.values_list("kind", flat=True))
-    assert kinds == ALL_KINDS | VIDEO_KINDS
+    assert kinds == ALL_KINDS | VIDEO_KINDS | {"ad_template", "avatar_trait"}
 
     before = CreativeOption.objects.count()
     call_command("seed_creative_options", verbosity=0)
@@ -136,9 +136,10 @@ def test_every_row_has_text_and_an_icon_to_draw(seeded: None) -> None:
     """The brief asks for icons *and* text on every control."""
     bare = [
         f"{row.kind}/{row.key}"
-        # Quick tags and regeneration reasons are text chips by design.
+        # Quick tags, regeneration reasons and avatar traits are text chips
+        # by design.
         for row in CreativeOption.objects.exclude(
-            kind__in=[CreativeKind.QUICK_TAG, CreativeKind.REVISE_REASON]
+            kind__in=[CreativeKind.QUICK_TAG, CreativeKind.REVISE_REASON, CreativeKind.AVATAR_TRAIT]
         ).exclude(kind__in=PRODUCT_FORM_KINDS | VIDEO_KINDS)
         if not row.label or not row.icon_paths
     ]

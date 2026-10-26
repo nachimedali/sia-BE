@@ -81,9 +81,15 @@ VIDEO_KINDS = frozenset(
 )
 
 
-#: Kinds that are not Studio controls: the Motion step's own catalogue and a
-#: campaign plan's price lines (steps-plan S5), each read by its own service.
-SERVED_ELSEWHERE = VIDEO_KINDS | {CreativeKind.PLAN_PRICE}
+#: Kinds that are not Studio controls: the Motion step's own catalogue, a
+#: campaign plan's price lines (steps-plan S5), and S17's ad templates and
+#: avatar traits (the template gallery and the avatar library), each read by
+#: its own service.
+SERVED_ELSEWHERE = VIDEO_KINDS | {
+    CreativeKind.PLAN_PRICE,
+    CreativeKind.AD_TEMPLATE,
+    CreativeKind.AVATAR_TRAIT,
+}
 
 
 def catalog() -> dict[str, list[CreativeOption]]:

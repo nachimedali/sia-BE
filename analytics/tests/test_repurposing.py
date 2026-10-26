@@ -222,3 +222,32 @@ def test_accepting_opens_a_draft_that_knows_its_origin(
     # The link is what makes the 0.8 cap applicable at generation time.
     assert candidate.post.repurposed_from.first() is None
     assert reissue.repurposed_from.first() == candidate
+
+
+def test_an_accepted_reissue_is_made_like_an_editor_draft(
+    paid_workspace: Any, user: Any, social_account: Any, make_png_upload: Any
+) -> None:
+    """Through `create_post`, not a bare `Post.objects.create` (remaining_10
+    item 6.1): revision 1 is recorded, and the origin's media keep their slide
+    order and alt text."""
+    from content.models import PostMediaAttachment, PostRevision
+    from content.services.media import ingest_media
+
+    _population(paid_workspace, user, social_account)
+    repurposing.scan_all()
+    candidate = RepurposeCandidate.objects.get()
+    origin = candidate.post
+    assets = [ingest_media(workspace=paid_workspace, upload=make_png_upload()) for _ in range(2)]
+    for order, asset in enumerate(reversed(assets)):
+        PostMediaAttachment.objects.create(
+            post=origin, media_asset=asset, order=order, alt_text=f"alt {asset.pk}"
+        )
+
+    reissue = repurposing.accept(candidate, author_id=user.pk)
+
+    assert PostRevision.objects.filter(post=reissue, reason="created").count() == 1
+    assert reissue.ordered_media() == origin.ordered_media()
+    assert [a.alt_text for a in reissue.ordered_attachments()] == [
+        a.alt_text for a in origin.ordered_attachments()
+    ]
+    assert (reissue.source, reissue.product_id) == (origin.source, origin.product_id)

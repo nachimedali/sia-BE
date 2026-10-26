@@ -13,6 +13,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandParser
 from django.db import transaction
 
+from ai.ad_template_seed import AD_TEMPLATE_CATALOG
 from ai.creative_seed import CATALOG
 from ai.models import CreativeOption
 from ai.video_seed import VIDEO_CATALOG
@@ -31,7 +32,7 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
         created = updated = 0
-        for kind, rows in {**CATALOG, **VIDEO_CATALOG}.items():
+        for kind, rows in {**CATALOG, **VIDEO_CATALOG, **AD_TEMPLATE_CATALOG}.items():
             for position, spec in enumerate(rows):
                 defaults = {**spec, "sort_order": position * 10, "is_active": True}
                 key = defaults.pop("key")

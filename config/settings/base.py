@@ -276,6 +276,18 @@ SPECTACULAR_SETTINGS = {
         # next time anything else adds a `status`.
         "ReportScheduleEnum": "analytics.models.ReportSchedule",
         "ReportRunStatusEnum": "analytics.models.ReportRunStatus",
+        # The remaining hash-named collisions (remaining_10 item 6.3): a client
+        # imported "RoleD9cEnum", a name that moves when any choice set moves.
+        "CampaignProgressStateEnum": ["no_goal", "not_started", "not_enough_data", "measured"],
+        "RuleKindEnum": "taste.models.RuleKind",
+        "ImportStatusEnum": "brand.models.ImportStatus",
+        "BulkStatusEnum": "planning.models.BulkStatus",
+        "CampaignStatusEnum": "planning.models.CampaignStatus",
+        "VerdictEnum": "taste.models.Verdict",
+        "GenerationModeEnum": "ai.models.GenerationMode",
+        "VideoModeEnum": "ai.models.VideoMode",
+        "FrameRoleEnum": ["start", "end"],
+        "RoleEnum": "workspaces.models.Role",
     },
 }
 
@@ -576,6 +588,18 @@ USE_FAKE_VIDEO_PROVIDER = env.bool("USE_FAKE_VIDEO_PROVIDER", default=not VIDEO_
 # The pre-publish OCR and policy checks (S4) have no vendor yet.
 USE_FAKE_CHECKS_PROVIDER = env.bool("USE_FAKE_CHECKS_PROVIDER", default=True)
 
+# S17 look-alike check on invented avatars: AWS Rekognition celebrity
+# recognition (`ai.providers.likeness`). No key means the check reports "not
+# checked" in production; the fake runs until a key is set.
+LIKENESS_AWS_ACCESS_KEY_ID = env("LIKENESS_AWS_ACCESS_KEY_ID", default="")
+LIKENESS_AWS_SECRET_ACCESS_KEY = env("LIKENESS_AWS_SECRET_ACCESS_KEY", default="")
+LIKENESS_AWS_REGION = env("LIKENESS_AWS_REGION", default="eu-west-1")
+USE_FAKE_LIKENESS_PROVIDER = env.bool(
+    "USE_FAKE_LIKENESS_PROVIDER", default=not LIKENESS_AWS_ACCESS_KEY_ID
+)
+#: The fake's answer: true makes every portrait "look like a known person".
+FAKE_LIKENESS_MATCH = env.bool("FAKE_LIKENESS_MATCH", default=False)
+
 # Embeddings share the LLM gateway (`LLM_BASE_URL`/`LLM_API_KEY`) and the same
 # fake switch — one vendor relationship, three endpoints. Changing the model
 # changes the vector width, which is a schema fact: see
@@ -759,3 +783,11 @@ SEED_CATALOG_ON_MIGRATE = env.bool("SEED_CATALOG_ON_MIGRATE", default=True)
 # sites from `brand/fixtures/sites/` so a fresh checkout needs no network; set
 # False to crawl real websites (the crawler only reads public addresses).
 USE_FAKE_SITE_FETCHER = env.bool("USE_FAKE_SITE_FETCHER", default=True)
+
+# Error reporting (F14, `common/observability.py`). Blank DSN = off, which is
+# what a fresh checkout and the test settings get.
+SENTRY_DSN = env("SENTRY_DSN", default="")
+SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="development" if DEBUG else "production")
+SENTRY_RELEASE = env("SENTRY_RELEASE", default="")
+SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=1.0)
+SENTRY_PROFILE_SESSION_SAMPLE_RATE = env.float("SENTRY_PROFILE_SESSION_SAMPLE_RATE", default=1.0)

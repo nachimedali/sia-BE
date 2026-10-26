@@ -73,6 +73,16 @@ class GenerateView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        assets = list(data["brand_assets"])
+        person: dict[str, Any] = {}
+        if data.get("avatar") is not None:
+            from ai.services import ad_templates
+            from brand.services import avatars
+
+            ad_templates.require_on(workspace)
+            avatar = avatars.resolve_for_render(workspace, data["avatar"])
+            assets.append({"media": avatar.portrait_id, "role": "person", "note": ""})
+            person = {"avatar": avatar.pk}
         generation = create_generation(
             workspace=workspace,
             user=authenticated_user(request),
@@ -86,7 +96,8 @@ class GenerateView(APIView):
             scene=data["scene"],
             creative={
                 **(data.get("creative") or {}),
-                **({"assets": data["brand_assets"]} if data["brand_assets"] else {}),
+                **({"assets": assets} if assets else {}),
+                **person,
             },
             is_batch=data["is_batch"],
             source_media=data.get("source_media"),

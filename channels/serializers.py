@@ -49,6 +49,18 @@ class AccountCardSerializer(serializers.Serializer[dict[str, Any]]):
     scheduled = serializers.IntegerField()
     awaiting_approval = serializers.IntegerField()
     published_30d = serializers.IntegerField()
+    published_total = serializers.IntegerField()
+    last_published_at = serializers.DateTimeField(allow_null=True)
+    last_published_post = serializers.IntegerField(allow_null=True)
+
+
+class AccountCheckSerializer(serializers.Serializer[dict[str, Any]]):
+    """The answer to "Check status": whether the provider still holds the
+    account (null when it was not asked), and the card as it now stands."""
+
+    present = serializers.BooleanField(allow_null=True)
+    checked_at = serializers.DateTimeField()
+    card = AccountCardSerializer()
 
 
 class CapShareSerializer(serializers.Serializer[dict[str, Any]]):
