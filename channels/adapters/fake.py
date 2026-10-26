@@ -64,6 +64,9 @@ class FakePlatformAdapter:
         self.discarded: list[str] = []
         self.released_media: list[str] = []
         self.media_in_use: set[str] = set()
+        #: Accounts the "provider" no longer holds, and every presence read.
+        self.missing: set[str] = set()
+        self.presence_checks: list[str] = []
 
     # --- connect ---------------------------------------------------------
     def ensure_profile(self, *, name: str, existing_profile_id: str = "") -> str:
@@ -258,6 +261,10 @@ class FakePlatformAdapter:
     def disconnect(self, *, provider_account_id: str) -> None:
         self.disconnected.append(provider_account_id)
 
+    def account_present(self, *, profile_id: str, provider_account_id: str) -> bool:
+        self.presence_checks.append(provider_account_id)
+        return provider_account_id not in self.missing
+
     # --- test helpers ----------------------------------------------------
     def clear(self) -> None:
         self.profiles.clear()
@@ -274,6 +281,8 @@ class FakePlatformAdapter:
         self.discarded.clear()
         self.released_media.clear()
         self.media_in_use.clear()
+        self.missing.clear()
+        self.presence_checks.clear()
 
     def queue_failure(
         self,

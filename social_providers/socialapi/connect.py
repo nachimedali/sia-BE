@@ -321,6 +321,15 @@ class SocialAPIConnectAdapter:
                 return
             raise to_platform_error(error) from error
 
+    def account_present(self, *, profile_id: str, provider_account_id: str) -> bool:
+        """Looked up in the brand's account list (there is no single-account
+        read). A background read: it never spends publishing's reservation."""
+        try:
+            listing = self.client.get("/accounts", params={"brand_id": profile_id}).data or {}
+        except SocialAPIError as error:
+            raise to_platform_error(error) from error
+        return any(str(row.get("id")) == provider_account_id for row in rows(listing))
+
     def list_remote_options(
         self, *, platform: str, provider_account_id: str, source: str
     ) -> list[dict[str, Any]]:

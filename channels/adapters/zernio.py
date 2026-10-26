@@ -364,6 +364,14 @@ class ZernioAdapter:
             for row in payload.get("items", [])
         ]
 
+    def account_present(self, *, profile_id: str, provider_account_id: str) -> bool:
+        with _client() as client:
+            response = client.get(f"/v1/accounts/{provider_account_id}")
+        if response.status_code == 404:
+            return False
+        _raise_for(response, label="Zernio account")
+        return True
+
     def disconnect(self, *, provider_account_id: str) -> None:
         with _client() as client:
             _raise_for(

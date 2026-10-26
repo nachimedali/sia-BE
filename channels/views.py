@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.conf import settings
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
@@ -32,6 +33,7 @@ from channels.adapters import get_connect_adapter
 from channels.adapters.base import REMOTE_OPTION_SOURCES
 from channels.models import SocialAccount
 from channels.serializers import (
+    AccountCheckSerializer,
     ConnectCompleteRequestSerializer,
     ConnectCompleteResponseSerializer,
     ConnectionsOverviewSerializer,
@@ -220,6 +222,32 @@ class SocialAccountViewSet(
             account, actor=request.user, scheduled=payload.validated_data["scheduled"]
         )
         return Response(DisconnectResultSerializer(result).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: AccountCheckSerializer},
+        summary="Ask the provider whether it still holds this account",
+        description=(
+            'The "Check status" button. An active account the provider no '
+            "longer holds moves to reconnect and its admins are told once; an "
+            "account already out of service is not asked about. A provider that "
+            "cannot answer is a 422 and changes nothing."
+        ),
+    )
+    @action(detail=True, methods=["post"])
+    def check(self, request: Request, pk: str | None = None) -> Response:
+        account = self.get_object()
+        present = services.check_account(account)
+        card = next(
+            card
+            for card in connections_overview.account_cards(account.workspace)
+            if card["account"].pk == account.pk
+        )
+        return Response(
+            AccountCheckSerializer(
+                {"present": present, "checked_at": timezone.now(), "card": card}
+            ).data
+        )
 
     @extend_schema(
         request=None,

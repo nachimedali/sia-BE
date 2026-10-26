@@ -462,3 +462,40 @@ def disconnect(
     }
     logger.info("social account disconnected", extra={"social_account": account.pk, **counts})
     return {"account": account, **counts}
+
+
+def set_account_status(account: SocialAccount, status: str, reason: str) -> bool:
+    """Moves the account to `status` and tells its admins — only on a change,
+    so a retried webhook or a second "Check status" never notifies twice."""
+    from notifications.services import account_event
+
+    if account.status == status:
+        return False
+    account.status = status
+    account.reconnect_reason = reason[:280]
+    account.save(update_fields=["status", "reconnect_reason", "updated_at"])
+    account_event(account, reason=reason)
+    return True
+
+
+GONE_REASON = "The provider no longer has this account. Reconnect it to keep publishing."
+OTHER_PROVIDER_REASON = "This account was connected through another publishing provider."
+
+
+def check_account(account: SocialAccount) -> bool | None:
+    """The "Check status" button: asks the provider whether it still holds an
+    active account. Returns whether it does, or None when nothing was asked —
+    an account already out of service is fixed by reconnecting, not by asking.
+    A provider that cannot answer raises `PlatformError` and changes nothing."""
+    if account.status != SocialAccountStatus.ACTIVE:
+        return None
+    if account.provider_key and account.provider_key != provider_key("connect"):
+        set_account_status(account, SocialAccountStatus.REAUTH_REQUIRED, OTHER_PROVIDER_REASON)
+        return None
+    present = get_connect_adapter().account_present(
+        profile_id=account.workspace.provider_profile_id,
+        provider_account_id=account.provider_account_id,
+    )
+    if not present:
+        set_account_status(account, SocialAccountStatus.REAUTH_REQUIRED, GONE_REASON)
+    return present
