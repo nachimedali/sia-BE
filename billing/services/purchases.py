@@ -22,7 +22,7 @@ from billing.gateways.stripe import get_billing_gateway
 from billing.models import Pack, PackKind
 from billing.services import ledger, pricing
 from billing.services.entitlements import entitlements_for
-from common.exceptions import OCCSError
+from common.exceptions import OCCSError, StateConflict
 from workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,15 @@ def start_purchase(
         # videos with no overage path (§4.3), so selling it a video pack would
         # sell something it cannot spend.
         entitlements_for(workspace).require_feature("video_generation")
+    if pack.kind == PackKind.TEMPLATE:
+        from ai.services import ad_templates
+
+        # Selling it twice, or to a plan that has it, takes money for nothing.
+        if ad_templates.premium_open(entitlements_for(workspace)):
+            raise StateConflict(
+                "Premium templates are already open for your organization.",
+                code="already_unlocked",
+            )
 
     # Resolved by the organization's billing currency (per-country pricing),
     # falling back to the pack's default row and then to its legacy column.
@@ -97,7 +106,13 @@ def fulfil_purchase(workspace: Workspace, *, pack_code: str) -> None:
         raise OCCSError(f"Paid pack '{pack_code}' does not exist.", code="unknown_pack")
 
     note = f"{pack.display_name} pack"
-    if pack.kind == PackKind.VIDEO:
+    if pack.kind == PackKind.TEMPLATE:
+        from ai.services.ad_templates import PREMIUM_FEATURE
+        from workspaces.services.addons import set_addon
+
+        # Bought outright: an add-on with no trial clock, so nothing expires it.
+        set_addon(workspace.organization, key=PREMIUM_FEATURE, enabled=True, with_trial=False)
+    elif pack.kind == PackKind.VIDEO:
         # The unit cost recorded on the ledger is the one actually charged, in
         # the currency actually charged — reconstructing it from `pack` later
         # would quote a dollar figure against a euro payment.

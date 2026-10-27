@@ -283,3 +283,26 @@ def test_a_music_bed_that_is_not_installed_fails_rather_than_ships_silent(
     info = _probe(silent.content, tmp_path)
     assert not any(s["codec_type"] == "audio" for s in info["streams"])
     assert next(s for s in info["streams"] if s["codec_type"] == "video")["width"] == 1080
+
+
+def test_a_reaction_reel_opens_on_the_person_then_cuts_to_the_product(
+    auth_client: Any, growth: Any, make_png_upload: Any  # noqa: F811
+) -> None:
+    """`reaction-reveal` (2026-10-27): the first shot is the drawn frame with
+    the avatar, the rest the product's photos — one hold, one debit."""
+    from ai.tests.test_ad_templates import avatar_for
+
+    product = make_product(growth, make_png_upload, photos=2)
+    lina = avatar_for(growth, make_png_upload)
+    request = {**body(product, "reaction-reveal", "clip-10"), "avatar": lina.pk}
+    render = auth_client.post(RENDERS, confirmed(auth_client, request), format="json").json()
+
+    assert render["status"] == "SUCCEEDED", render
+    assert render["keyframe"] is not None  # the reaction is drawn first, with the person
+    [reel] = _fake_video_composer.calls
+    assert [shot["overlay"] for shot in reel["shots"]] == [
+        "Wait, what?",
+        "Olive oil 500 ml",
+        "See it for yourself.",
+    ]
+    assert VideoLedger.objects.filter(workspace=growth, delta__lt=0).count() == 1

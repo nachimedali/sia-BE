@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 #: inventing a table to hold it would be speculative.
 TRIAL = dt.timedelta(days=30)
 
+#: Add-ons only a paid pack grants (`billing.services.purchases`): never
+#: switched on, trialled or off through `POST /billing/addons/`.
+PURCHASED_ONLY = frozenset({"ad_templates_premium"})
+
 
 @transaction.atomic
 def set_addon(organization: Any, *, key: str, enabled: bool, with_trial: bool = True) -> None:

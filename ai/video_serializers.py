@@ -74,6 +74,14 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
     # the person picked; without it the render makes its own.
     template = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
     avatar = serializers.IntegerField(required=False, allow_null=True, default=None)
+    #: People and products beside the main ones (plan `ad_avatars_per_ad`,
+    #: `ad_products_per_ad`), drawn into the first frame.
+    extra_avatars = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list, max_length=9
+    )
+    extra_products = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list, max_length=9
+    )
     location = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
     script = AdScriptSerializer(required=False, allow_null=True, default=None)
 

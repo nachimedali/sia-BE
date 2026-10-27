@@ -203,6 +203,8 @@ class Spec:
     # S17: an ad template, the person on screen and where it is set.
     template: CreativeOption | None = None
     avatar: Any = None
+    extra_avatars: list[Any] = field(default_factory=list)
+    extra_products: list[Product] = field(default_factory=list)
     location: str = ""
     script: dict[str, str] = field(default_factory=dict)
 
@@ -227,6 +229,8 @@ class Spec:
                 "template": self.template.key,
                 "source": self.source.pk if self.source else None,
                 "avatar": self.avatar.pk if self.avatar else None,
+                "extra_avatars": [item.pk for item in self.extra_avatars],
+                "extra_products": [item.pk for item in self.extra_products],
                 "location": self.location,
                 "role": "start",
                 "script": self.script,
@@ -386,6 +390,14 @@ def _parse_template(
         avatar_id=data.get("avatar"),
         language=language,
     )
+    assert product is not None
+    people, others = ad_templates.resolve_cast(
+        workspace,
+        avatar=avatar,
+        product=product,
+        extra_avatars=list(data.get("extra_avatars") or []),
+        extra_products=list(data.get("extra_products") or []),
+    )
     length = common["length"]
     ad_templates.length_units(row, length.key)
     location = str(data.get("location") or "")
@@ -410,6 +422,8 @@ def _parse_template(
         role="start",
         template=row,
         avatar=avatar,
+        extra_avatars=people,
+        extra_products=others,
         location=location,
     )
 
@@ -715,6 +729,8 @@ def start_render(
                 product=spec.product,
                 avatar=spec.avatar,
                 location=spec.location,
+                extra_avatars=spec.extra_avatars,
+                extra_products=spec.extra_products,
             )
         render = VideoRender.objects.create(
             workspace=workspace,

@@ -179,6 +179,7 @@ def test_the_gallery_lists_every_template_with_its_fit_and_lock(
     assert rows["founder-story"]["lock"] == {
         "feature": "ad_templates_talking",
         "suggested_plan": "growth",
+        "pack": None,
     }
     assert rows["founder-story"]["available"] is False
     assert body["rerolls"] == 3
