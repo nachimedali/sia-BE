@@ -32,6 +32,7 @@ SEEDS = [
     "billing.migrations.0021_plan_is_default",
     "billing.migrations.0022_packages_2026_10",
     "billing.migrations.0023_spark_free_videos",
+    "billing.migrations.0026_discovery_package",
     "ai.migrations.0008_seed_catalog",
     "ai.migrations.0009_revise_reason",
     "ai.migrations.0011_catalog_v2",
@@ -40,6 +41,7 @@ SEEDS = [
     "ai.migrations.0021_seed_model_routes",
     "ai.migrations.0022_video_clip_credits",
     "ai.migrations.0024_spark_wan_routes",
+    "ai.migrations.0028_discovery_routes",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -130,6 +132,36 @@ def test_spark_gets_four_free_wan_clips_and_an_edit_survives() -> None:
 
     assert Plan.objects.get(pk=spark.pk).features["free_video_clips"] == 2
     assert AIModelRoute.objects.get(task="video_start", plan=spark).model == "edited"
+
+
+def test_discovery_sits_between_spark_and_essential_at_720p() -> None:
+    _run_all()
+    public = Plan.objects.filter(is_public=True).order_by("sort_order", "id")
+    assert list(public.values_list("code", flat=True)) == [
+        "spark",
+        "discovery",
+        "essential",
+        "growth",
+        "scale",
+    ]
+    discovery = Plan.objects.get(code="discovery")
+    assert PlanPrice.objects.get(plan=discovery, is_default=True).monthly_cents == 2900
+    for task in ("video_start", "video_end"):
+        route = AIModelRoute.objects.get(task=task, plan=discovery)
+        assert route.params["resolution"] == "720p", task
+
+
+def test_discovery_never_moves_an_edited_order_or_route() -> None:
+    _run_all()
+    Plan.objects.filter(code="essential").update(sort_order=40)
+    Plan.objects.filter(code="discovery").update(display_name="Edited")
+    AIModelRoute.objects.filter(task="video_start", plan__code="discovery").update(model="edited")
+
+    _run_all()
+
+    assert Plan.objects.get(code="essential").sort_order == 40
+    assert Plan.objects.get(code="discovery").display_name == "Edited"
+    assert AIModelRoute.objects.get(task="video_start", plan__code="discovery").model == "edited"
 
 
 def test_the_guard_keeps_the_suite_off_the_seed(settings) -> None:

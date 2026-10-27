@@ -87,7 +87,7 @@ def test_generate_video_on_free_plan_is_a_402(auth_client: Any, workspace: Any) 
     )
 
     assert response.status_code == 402
-    assert response.json()["error"]["upgrade"]["suggested_plan"] == "essential"
+    assert response.json()["error"]["upgrade"]["suggested_plan"] == "discovery"
 
 
 def test_retrieve_generation(auth_client: Any, workspace: Any, generation_costs: Any) -> None:

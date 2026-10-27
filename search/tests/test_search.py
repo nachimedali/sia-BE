@@ -145,9 +145,9 @@ def test_older_matches_are_counted_never_returned(
     history = body["history"]
     assert history["days"] == 7
     assert history["older_matches"] == 2
-    # Spark (the default plan) → Essential, the cheapest public plan that looks
+    # Spark (the default plan) → Discovery, the cheapest public plan that looks
     # further back.
-    assert history["next_plan"] == {"name": "Essential", "days": 90}
+    assert history["next_plan"] == {"name": "Discovery", "days": 30}
 
 
 def test_a_longer_plan_searches_further_back(

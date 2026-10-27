@@ -298,7 +298,7 @@ def test_a_template_above_the_plan_is_402_with_an_upgrade(
     error = response.json()["error"]
     # Spark has no avatars at all: the person is the first lock it meets.
     assert error["code"] in ("avatar_over_limit", "feature_not_available")
-    assert error["upgrade"]["suggested_plan"] == "essential"
+    assert error["upgrade"]["suggested_plan"] == "discovery"
 
 
 def test_re_rolls_stop_at_the_plans_number(auth_client: Any, oil: Any) -> None:

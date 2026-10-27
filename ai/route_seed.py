@@ -134,14 +134,17 @@ ROUTES: list[dict[str, Any]] = [
         params={"resolution": "1080p"},
         note="First-frame clips and text-to-video.",
     ),
-    _route(
-        "video_start",
-        VIDEO,
-        GROK_LITE,
-        plan="essential",
-        fallback=WAN_3,
-        params={"resolution": "720p"},
-        note="Essential renders at 720p.",
+    *(
+        _route(
+            "video_start",
+            VIDEO,
+            GROK_LITE,
+            plan=plan,
+            fallback=WAN_3,
+            params={"resolution": "720p"},
+            note=f"{plan.title()} renders at 720p.",
+        )
+        for plan in ("discovery", "essential")
     ),
     _route(
         "video_end",
@@ -151,14 +154,17 @@ ROUTES: list[dict[str, Any]] = [
         params={"resolution": "1080p", "audio": True},
         note="Grok takes a first frame only; Wan 3.0 lands on a last frame and has audio.",
     ),
-    _route(
-        "video_end",
-        VIDEO,
-        WAN_3,
-        plan="essential",
-        fallback=KLING_3_STD,
-        params={"resolution": "720p", "audio": True},
-        note="Essential renders at 720p.",
+    *(
+        _route(
+            "video_end",
+            VIDEO,
+            WAN_3,
+            plan=plan,
+            fallback=KLING_3_STD,
+            params={"resolution": "720p", "audio": True},
+            note=f"{plan.title()} renders at 720p.",
+        )
+        for plan in ("discovery", "essential")
     ),
     # S17: avatar portraits and their reference angles. 1K is enough for a
     # face the image model is then given as a reference.

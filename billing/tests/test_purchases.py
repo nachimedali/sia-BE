@@ -155,7 +155,7 @@ def test_free_cannot_buy_video_because_it_has_no_way_to_spend_it(workspace, pack
         purchases.start_purchase(workspace, pack_code="videos-4", success_url="s", cancel_url="c")
 
     assert excinfo.value.status_code == 402
-    assert excinfo.value.upgrade["suggested_plan"] == "essential"
+    assert excinfo.value.upgrade["suggested_plan"] == "discovery"
 
 
 def test_a_paid_plan_can_buy_video(pro_workspace, packs) -> None:
@@ -295,7 +295,7 @@ def test_a_402_carries_the_upgrade_payload(auth_client, workspace, packs) -> Non
 
     assert response.status_code == 402
     assert response.json()["error"]["upgrade"] == {
-        "suggested_plan": "essential",
+        "suggested_plan": "discovery",
         "cta": "/app/billing",
     }
 

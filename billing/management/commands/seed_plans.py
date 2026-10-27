@@ -250,7 +250,8 @@ PLANS: list[dict[str, Any]] = [
 ]
 
 
-# The packages of 2026-10-21 (pricing.audit.md §7, pricing.plan.md Phase 2).
+# The packages of 2026-10-21 (pricing.audit.md §7, pricing.plan.md Phase 2),
+# and Discovery below Essential (2026-10-27).
 # Kept out of `PLANS` for the reason `PRESENTATION` is: `billing/0018` imports
 # that list and creates rows from it before `is_default` exists (`0021`).
 # `billing/0022` creates these on databases that already ran 0018.
@@ -334,13 +335,63 @@ PACKAGES: list[dict[str, Any]] = [
         "support_response": "2 working days",
     },
     {
+        # 2026-10-27, owner (zeely-comparison.md): a paid first step, so a
+        # brand tries publishing and video before Essential. Five 720p units,
+        # two channels; no trends, one seat and 30 days of history keep
+        # Essential the bigger step. `billing/0026` creates it.
+        "code": "discovery",
+        "display_name": "Discovery",
+        "tagline": "Two posts a week on two channels, with five short videos.",
+        "price_monthly_cents": 2900,
+        "price_annual_cents": 29000,
+        "price_per_workspace_cents": 2900,
+        "sort_order": 11,
+        "monthly_ai_credits": 200,
+        "included_videos": 5,
+        "max_social_accounts": 2,
+        "max_autopublish_posts": 30,
+        "max_scheduled_posts": 50,
+        "scheduling_horizon_days": 60,
+        "max_workspace_members": 1,
+        "max_products": 2,
+        "trial_days": 7,
+        "trial_post_quota": 0,
+        "max_workspaces": 1,
+        "counts_docs_against_quota": False,
+        "max_campaigns": 2,
+        "max_tracked_competitors": 0,
+        "max_labels": 5,
+        "included_views": 3,
+        "features": {
+            **_PAID_FEATURES,
+            "trend_engine": False,
+            "approval_workflow": False,
+            "approval_chain_depth": 1,
+            "api_access": False,
+            "autopilot": False,
+            "analytics_history_days": 30,
+            "reply_to_comments": False,
+            "ad_templates": True,
+            "ad_templates_people": True,
+            "ad_templates_talking": False,
+            "max_avatars": 1,
+            "avatar_drafts_monthly": 1,
+            "ad_rerolls": 2,
+            "max_references": 2,
+            "real_avatars": False,
+        },
+        "comment_capture_interval_minutes": 1440,
+        "reaction_detail": "TOTAL",
+        "support_response": "2 working days",
+    },
+    {
         "code": "essential",
         "display_name": "Essential",
         "tagline": "Three posts a week on three channels, with short videos.",
         "price_monthly_cents": 4900,
         "price_annual_cents": 49000,
         "price_per_workspace_cents": 4900,
-        "sort_order": 11,
+        "sort_order": 12,
         "monthly_ai_credits": 500,
         "included_videos": 4,
         "max_social_accounts": 3,
@@ -386,7 +437,7 @@ PACKAGES: list[dict[str, Any]] = [
         "price_monthly_cents": 9900,
         "price_annual_cents": 99000,
         "price_per_workspace_cents": 9900,
-        "sort_order": 12,
+        "sort_order": 13,
         "monthly_ai_credits": 1100,
         "included_videos": 9,
         "max_social_accounts": 5,
@@ -431,7 +482,7 @@ PACKAGES: list[dict[str, Any]] = [
         "price_monthly_cents": 24900,
         "price_annual_cents": 249000,
         "price_per_workspace_cents": 24900,
-        "sort_order": 13,
+        "sort_order": 14,
         "monthly_ai_credits": 2200,
         "included_videos": 17,
         "max_social_accounts": 10,

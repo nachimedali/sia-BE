@@ -146,7 +146,7 @@ def test_a_plan_without_avatars_is_402_with_an_upgrade(
     assert response.status_code == 402
     error = response.json()["error"]
     assert error["code"] == "feature_not_available"
-    assert error["upgrade"]["suggested_plan"] == "essential"
+    assert error["upgrade"]["suggested_plan"] == "discovery"
 
 
 def test_an_unknown_trait_is_400(auth_client: Any, growth: Any) -> None:

@@ -78,7 +78,7 @@ def test_with_no_rows_the_settings_answer(plans) -> None:
 def test_a_default_row_answers_every_package(plans) -> None:
     _route(AITask.SENTIMENT, "bulk-model")
 
-    for code in ("spark", "essential", "growth", "scale"):
+    for code in ("spark", "discovery", "essential", "growth", "scale"):
         route = resolve(AITask.SENTIMENT, plan=plans[code])
         assert (route.model, route.source) == ("bulk-model", SOURCE_DEFAULT), code
     assert resolve(AITask.SENTIMENT).model == "bulk-model"
