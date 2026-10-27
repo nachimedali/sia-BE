@@ -577,6 +577,13 @@ VIDEO_PROVIDER_API_KEY = env("VIDEO_PROVIDER_API_KEY", default="")
 VIDEO_DEFAULT_MODEL = env("VIDEO_DEFAULT_MODEL", default="x-ai/grok-imagine-video-1.5-lite")
 VIDEO_POLL_INTERVAL_SECONDS = env.int("VIDEO_POLL_INTERVAL_SECONDS", default=10)
 VIDEO_POLL_TIMEOUT_SECONDS = env.int("VIDEO_POLL_TIMEOUT_SECONDS", default=600)
+# The reel composer is this machine's ffmpeg (`ai.providers.ffmpeg_composer`):
+# the font its lines are set in, and the folder of licensed music beds, one
+# file per music row key (`oud.m4a`). A bed missing from it fails the render.
+VIDEO_FONT_FILE = env(
+    "VIDEO_FONT_FILE", default="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+)
+VIDEO_MUSIC_DIR = env("VIDEO_MUSIC_DIR", default=str(BASE_DIR / "media" / "music"))
 
 # One fake switch per vendor (`ai.providers.switches`), each on until its key
 # is set: the NVIDIA key alone makes text real and leaves image and video on
@@ -588,17 +595,6 @@ USE_FAKE_VIDEO_PROVIDER = env.bool("USE_FAKE_VIDEO_PROVIDER", default=not VIDEO_
 # The pre-publish OCR and policy checks (S4) have no vendor yet.
 USE_FAKE_CHECKS_PROVIDER = env.bool("USE_FAKE_CHECKS_PROVIDER", default=True)
 
-# S17 look-alike check on invented avatars: AWS Rekognition celebrity
-# recognition (`ai.providers.likeness`). No key means the check reports "not
-# checked" in production; the fake runs until a key is set.
-LIKENESS_AWS_ACCESS_KEY_ID = env("LIKENESS_AWS_ACCESS_KEY_ID", default="")
-LIKENESS_AWS_SECRET_ACCESS_KEY = env("LIKENESS_AWS_SECRET_ACCESS_KEY", default="")
-LIKENESS_AWS_REGION = env("LIKENESS_AWS_REGION", default="eu-west-1")
-USE_FAKE_LIKENESS_PROVIDER = env.bool(
-    "USE_FAKE_LIKENESS_PROVIDER", default=not LIKENESS_AWS_ACCESS_KEY_ID
-)
-#: The fake's answer: true makes every portrait "look like a known person".
-FAKE_LIKENESS_MATCH = env.bool("FAKE_LIKENESS_MATCH", default=False)
 
 # Embeddings share the LLM gateway (`LLM_BASE_URL`/`LLM_API_KEY`) and the same
 # fake switch — one vendor relationship, three endpoints. Changing the model

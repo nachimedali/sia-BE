@@ -37,6 +37,14 @@ MAX_FEATURES = 8
 
 #: Image hints that are page furniture, not the product.
 _NOT_PRODUCT = re.compile(r"logo|icon|sprite|badge|avatar|payment|flag|banner|placeholder", re.I)
+#: Words in a product's type or name that make it "beauty or wearable" (S17).
+_WEARABLE = re.compile(
+    r"\b(beauty|skin|cosmetic|make-?up|serum|lotion|perfume|fragrance|parfum|lipstick|"
+    r"mascara|nail|hair|jewel|ring|necklace|bracelet|earring|watch|sunglass|apparel|"
+    r"clothing|dress|shirt|shoe|sneaker)",
+    re.I,
+)
+_APP_TYPES = {"SoftwareApplication", "MobileApplication", "WebApplication"}
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -154,6 +162,20 @@ def _structured(
     }
 
 
+def _offer_kind(nodes: list[dict[str, Any]], via: str, words: list[str]) -> str:
+    """`Product.offer_kind` when the page says it: an app or a service by its
+    markup type, a product by any product source — "beauty" when its own type
+    or name says so. Blank when nothing does; the form asks."""
+    types = set().union(*(_types(node) for node in nodes)) if nodes else set()
+    if types & _APP_TYPES:
+        return "app"
+    if "Service" in types:
+        return "service"
+    if not via:
+        return ""
+    return "beauty" if _WEARABLE.search(" ".join(words)) else "physical"
+
+
 def extract_product(
     page: Page,
     *,
@@ -173,6 +195,7 @@ def extract_product(
 
     via = ""  # the first structured source that described the product
     texts: list[str] = []
+    kinds: list[str] = []  # the shops' and markup's own words for what this is
     navigation = {_clean(text).casefold() for _, text in page.anchors if text}
 
     # 1-2 · the shop's own product data: Shopify's product JSON, then
@@ -187,6 +210,9 @@ def extract_product(
             "brand": product.get("vendor"),
             "sku": variant.get("sku"),
             "price": price,
+            "kind": " ".join(
+                str(x) for x in (product.get("product_type"), product.get("tags")) if x
+            ),
         }
         shops.append(
             (
@@ -208,6 +234,9 @@ def extract_product(
             "name": row.get("name"),
             "sku": row.get("sku"),
             "price": woo_price(row.get("prices") or {}),
+            "kind": " ".join(
+                str(c.get("name") or "") for c in row.get("categories") or [] if isinstance(c, dict)
+            ),
         }
         html = str(row.get("description") or row.get("short_description") or "")
         shops.append(
@@ -223,12 +252,14 @@ def extract_product(
         put("brand", _clean(data.get("brand"))[:80], source)
         put("sku", _clean(data["sku"])[:64], source)
         put("price", data["price"], source)
+        kinds.append(str(data.get("kind") or ""))
         for field in ("short", "long", "features", "images"):
             put(field, data[field], source)
         texts.append(data["_text"])
 
     # 3 · JSON-LD Product
-    for node in _ld_nodes(page):
+    nodes = _ld_nodes(page)
+    for node in nodes:
         if "Product" not in _types(node):
             continue
         via = via or "json-ld"
@@ -239,6 +270,7 @@ def extract_product(
         put("name", _clean(node.get("name"))[:80], url)
         put("brand", _clean(brand.get("name") if isinstance(brand, dict) else brand)[:80], url)
         put("sku", _clean(node.get("sku"))[:64], url)
+        kinds.append(_clean(node.get("category")))
         if isinstance(offer, dict) and (offer.get("price") or offer.get("lowPrice")) is not None:
             put(
                 "price",
@@ -291,6 +323,12 @@ def extract_product(
     if lang:
         out["language"] = _found(lang, url)
     put("url", url, url)
+
+    put(
+        "offer_kind",
+        _offer_kind(nodes, via, [*kinds, str(out.get("name", {}).get("value", ""))]),
+        url,
+    )
 
     claims = claims_in([t for t in texts if t], claim_rows or [])
     if claims:

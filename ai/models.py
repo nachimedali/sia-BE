@@ -404,6 +404,7 @@ class AITask(models.TextChoices):
     VIDEO_START = "video_start", "Video from a first frame, and text-to-video"
     VIDEO_END = "video_end", "Video landing on a last frame"
     AVATAR_PORTRAIT = "avatar_portrait", "Avatar portraits and reference angles"
+    AD_SCRIPT = "ad_script", "Ad template scripts: hook, body and call to action"
 
 
 class AIKind(models.TextChoices):

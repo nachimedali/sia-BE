@@ -32,7 +32,7 @@ from ai.models import AITask, CreativeKind, CreativeOption, GenerationKind, Gene
 from billing.services import ledger
 from billing.services.entitlements import Entitlements, entitlements_for
 from billing.services.plans import suggest_upgrade
-from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus, Likeness
+from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus
 from common.exceptions import (
     FeatureNotAvailable,
     InsufficientCredits,
@@ -73,12 +73,6 @@ class AvatarDraftsExhaustedError(FeatureNotAvailable):
 class ConsentRequiredError(StateConflict):
     default_code = "avatar_consent_required"
     default_detail = "A real person needs recorded consent, and it must still stand."
-
-
-class LikenessMatchError(OCCSError):
-    status_code = 422
-    default_code = "likeness_match"
-    default_detail = "This face is too close to a well-known person. Pick another portrait."
 
 
 class AvatarRefusedError(OCCSError):
@@ -124,8 +118,6 @@ def state_of(avatar: Avatar, usable: set[int], *, real_allowed: bool) -> str:
             return "consent_required"
         if not real_allowed:
             return "plan"
-    if avatar.likeness == Likeness.MATCH:
-        return "likeness"
     if avatar.pk not in usable:
         return "over_limit"
     return "usable"
@@ -276,16 +268,6 @@ def _ingest(workspace: Workspace, content: bytes, mime: str, name: str) -> Media
     return ingest_media(workspace=workspace, upload=upload, source=MediaSource.GENERATED)
 
 
-def _likeness(content: bytes) -> tuple[str, str]:
-    from ai.providers.likeness import get_likeness_checker
-
-    checker = get_likeness_checker()
-    if checker is None:
-        return Likeness.UNCHECKED, ""
-    result = checker.check(content)
-    return (Likeness.MATCH if result.match else Likeness.CLEAR), result.provider
-
-
 def run_draft(draft_id: int) -> AvatarDraft:
     """Idempotent: a draft that is not QUEUED is returned as it is."""
     from ai.providers.nanobanana_image import get_image_provider
@@ -314,11 +296,10 @@ def run_draft(draft_id: int) -> AvatarDraft:
         )
         portraits = []
         for index, variant in enumerate(result.variants[:PORTRAITS_PER_DRAFT]):
-            likeness, provider = _likeness(variant.content)
             asset = _ingest(
                 draft.workspace, variant.content, variant.mime, f"avatar-{draft.pk}-{index}.png"
             )
-            portraits.append({"media": asset.pk, "likeness": likeness, "provider": provider})
+            portraits.append({"media": asset.pk})
     except ProviderError:
         logger.warning("avatar draft %s: provider error", draft.pk, exc_info=True)
         return fail("The portraits could not be drawn. No credits were taken.")
@@ -396,8 +377,6 @@ def create_synthetic(
     if not 0 <= index < len(draft.portraits):
         raise ValidationError({"index": "Pick one of the portraits."})
     picked = draft.portraits[index]
-    if picked["likeness"] == Likeness.MATCH:
-        raise LikenessMatchError
     portrait = MediaAsset.objects.filter(workspace=workspace, pk=picked["media"]).first()
     if portrait is None:
         raise NotFound
@@ -411,8 +390,6 @@ def create_synthetic(
             portrait=portrait,
             traits=draft.traits,
             languages=langs,
-            likeness=picked["likeness"],
-            likeness_provider=picked.get("provider", ""),
             created_by=user,
         )
         if is_house or not Avatar.objects.filter(workspace=workspace, is_house=True).exists():
@@ -517,7 +494,6 @@ def create_real(
             portrait=assets[photos[0]],
             angles=list(photos[1:]),
             languages=langs,
-            likeness=Likeness.UNCHECKED,
             consent_signed_by=signer,
             consent_signed_on=signed_on,
             consent_recorded_by=user,
@@ -559,8 +535,6 @@ def resolve_for_render(workspace: Workspace, avatar_id: Any) -> Avatar:
         raise NotFound
     if state in ("consent_revoked", "consent_required"):
         raise ConsentRequiredError(detail={"avatar": avatar.pk, "state": state})
-    if state == "likeness":
-        raise LikenessMatchError(detail={"avatar": avatar.pk})
     if state == "plan":
         raise FeatureNotAvailable(
             "Avatars of real people are not in your plan.",

@@ -23,6 +23,7 @@ button that fails.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -37,7 +38,7 @@ from common.exceptions import FeatureNotAvailable, OCCSError, StateConflict
 from products.models import Product
 from workspaces.models import Workspace
 
-CATEGORIES = ("unbox", "hand", "tryon", "app", "talk", "interview", "fx")
+CATEGORIES = ("unbox", "hand", "tryon", "app", "tour", "talk", "interview", "fx")
 OFFER_KINDS = ("physical", "beauty", "app", "service", "space")
 PERSON = ("required", "optional", "none")
 #: Which plan feature unlocks each tier.
@@ -47,6 +48,11 @@ TIER_FEATURE = {
     "talking": "ad_templates_talking",
 }
 NEEDS = ("", "app_screenshot")
+#: A multi-shot template's shots (T3): `frame` animates the first frame,
+#: `photo` animates the product's next photo, `screen` sets its app screenshot
+#: in as a still — never through the video model, which would blur it.
+SHOT_USES = ("frame", "photo", "screen")
+SHOTS_MIN, SHOTS_MAX = 2, 5
 #: The shot tag that marks a product photo as an app screenshot.
 SCREEN_TAG = "screen"
 PROMPT_MAX = 900
@@ -56,7 +62,8 @@ KEYFRAME_ASPECT = "9:16"
 
 class TemplateRefusedError(OCCSError):
     """400 with its own code — `template_fit`, `needs_screenshot`,
-    `person_required`, `no_person`, `template_length`, `template_location` — so
+    `person_required`, `no_person`, `template_length`, `template_location`,
+    `no_frame` — so
     the page can say exactly what to change."""
 
     default_code = "template_refused"
@@ -117,6 +124,25 @@ def validate_metadata(meta: Any) -> None:
             errors[field] = "A non-empty list of text."
     if meta.get("needs", "") not in NEEDS:
         errors["needs"] = "Blank or app_screenshot."
+    shots = meta.get("shots")
+    if shots is not None:
+        if (
+            not isinstance(shots, list)
+            or not SHOTS_MIN <= len(shots) <= SHOTS_MAX
+            or any(
+                not isinstance(shot, dict)
+                or shot.get("use") not in SHOT_USES
+                or not isinstance(shot.get("text", ""), str)
+                for shot in shots
+            )
+        ):
+            errors["shots"] = (
+                f"{SHOTS_MIN} to {SHOTS_MAX} shots, each {{use: frame, photo or screen, text}}."
+            )
+        elif any(shot["use"] == "screen" for shot in shots) and meta.get("needs") != (
+            "app_screenshot"
+        ):
+            errors["needs"] = "A screen shot needs app_screenshot."
     if not isinstance(meta.get("available", True), bool):
         errors["available"] = "true or false."
     if errors:
@@ -162,6 +188,17 @@ def feature_for(row: CreativeOption, *, with_person: bool) -> str:
     if tier == "product" and with_person:
         tier = "people"
     return TIER_FEATURE[tier]
+
+
+def shots_of(row: CreativeOption) -> list[dict[str, Any]]:
+    """The template's shots; empty for a one-shot template (one clip)."""
+    return list(row.metadata.get("shots") or [])
+
+
+def has_frame(row: CreativeOption) -> bool:
+    """Whether the template opens on a drawn first frame (a keyframe)."""
+    shots = shots_of(row)
+    return not shots or any(shot["use"] == "frame" for shot in shots)
 
 
 def has_screenshot(product: Product, photo_ids: set[str] | None = None) -> bool:
@@ -242,6 +279,7 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "locations": meta["locations"],
                 "needs": meta.get("needs", ""),
                 "available": bool(meta.get("available", True)),
+                "frame": has_frame(row),
                 "fit": fit_of(row, product, photo_ids=photo_ids),
                 "lock": (
                     {"feature": feature, "suggested_plan": upgrade[feature]} if locked else None
@@ -392,17 +430,29 @@ def motion_prompt(row: CreativeOption) -> str:
     return str(row.metadata["motion_prompt"])
 
 
-def script_text(row: CreativeOption, script: dict[str, Any] | None, product: Product) -> str:
-    """The post caption a render carries: the person's script, or the row's."""
-    parts = []
+def script_parts(
+    row: CreativeOption, script: dict[str, Any] | None, product: Product
+) -> dict[str, str]:
+    """Hook, body and call to action: the person's words, or the row's, filled."""
     base = row.metadata["script"]
+    out = {}
     for part in ("hook", "body", "cta"):
         value = (script or {}).get(part)
         text = value if isinstance(value, str) else base[part]
-        text = text.replace("{product}", product.name).strip()[:SCRIPT_MAX]
-        if text:
-            parts.append(text)
-    return "\n".join(parts)
+        out[part] = text.replace("{product}", product.name).strip()[:SCRIPT_MAX]
+    return out
+
+
+def script_text(row: CreativeOption, script: dict[str, Any] | None, product: Product) -> str:
+    """The post caption a render carries: the person's script, or the row's."""
+    return "\n".join(text for text in script_parts(row, script, product).values() if text)
+
+
+def shot_line(text: str, product: Product, script: dict[str, str]) -> str:
+    """A shot's kinetic line: `{product}`, `{hook}`, `{body}`, `{cta}` filled."""
+    for key, value in (("product", product.name), *script.items()):
+        text = text.replace("{" + key + "}", value)
+    return text.strip()
 
 
 # -----------------------------------------------------------------------------
@@ -439,6 +489,11 @@ def create_keyframe(
     The avatar's portrait travels as a `person` asset — never to the quality
     gate, which holds the *product* to its photos and must not score a face.
     """
+    if not has_frame(row):
+        raise TemplateRefusedError(
+            "This template has no first frame: it is made from the product's own photos.",
+            code="no_frame",
+        )
     from ai.services import pipeline
 
     root: Generation | None = None
@@ -477,3 +532,100 @@ def create_keyframe(
             **({"avatar": avatar.pk} if avatar else {}),
         },
     )
+
+
+# -----------------------------------------------------------------------------
+# The script writer (S17-13, `AD_SCRIPT`)
+# -----------------------------------------------------------------------------
+LANGUAGE_NAMES = {"en": "English", "fr": "French", "it": "Italian"}
+SCRIPT_SYSTEM = (
+    "You write the script for a short vertical video ad from a template. "
+    "Three parts: a hook spoken or shown in the first two seconds, a body, and a call to "
+    "action. Keep the template's shape and beats; make the words specific to the product.\n"
+    "Rules:\n"
+    "- Write in the language asked for, and nothing else.\n"
+    "- Never invent a fact, a number, a price, a rating or a claim the brief does not give.\n"
+    "- Short spoken sentences; the whole script must be readable in the seconds given.\n"
+    "- No hashtags, no emoji, no links.\n"
+    "Reply with exactly three lines and nothing else:\n"
+    "HOOK: …\nBODY: …\nCTA: …"
+)
+_SCRIPT_LINE = re.compile(r"^\s*(HOOK|BODY|CTA)\s*:\s*(.+?)\s*$", re.I | re.M)
+
+
+def _script_from(body: str, brief: str) -> dict[str, str] | None:
+    """The three parts, or `None` when the reply is not the three lines asked
+    for or fails the rephrase checks (a number the brief never gave, a link)."""
+    from ai.services import rephrase
+
+    found = {key.lower(): text for key, text in _SCRIPT_LINE.findall(body)}
+    parts = {key: found.get(key, "")[:SCRIPT_MAX] for key in ("hook", "body", "cta")}
+    if not all(parts.values()) or not rephrase.acceptable(" ".join(parts.values()), brief):
+        return None
+    return parts
+
+
+def write_script(
+    workspace: Workspace, *, key: str, product: Product, language: str, seconds: int = 0
+) -> dict[str, Any]:
+    """The template's script, written for this product by the text model.
+
+    Synchronous, like the Tools suite: one short call. Paid in credits (the
+    `(TEXT, RECIPE)` price) and debited only when the words pass their checks;
+    a reply that fails them, or a model that is down, gives back the
+    template's own words, free (`by: "template"`)."""
+    from django.db import transaction
+
+    from ai.models import AITask
+    from ai.providers.llm_text import get_text_provider
+    from ai.services.costing import resolve_cost
+    from billing.services import ledger
+    from common.exceptions import ProviderError
+
+    peek = CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=str(key)).first()
+    row = resolve(
+        workspace,
+        key,
+        product=product,
+        with_person=bool(peek and peek.metadata.get("person") == "required"),
+    )
+    if language and language not in LANGUAGE_NAMES:
+        raise ValidationError({"language": "One of en, fr, it."})
+    price = resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.RECIPE)
+    entitlements = entitlements_for(workspace)
+    entitlements.require_credits(price)
+
+    base = script_parts(row, None, product)
+    meta = row.metadata
+    brief = "\n".join(
+        line
+        for line in (
+            f"Product: {product.name}",
+            f"About it: {product.short_description}" if product.short_description else "",
+            f"Template: {row.label} — beats: {' · '.join(meta['beats'])}",
+            f"Seconds: {seconds}" if seconds else "",
+            f"Language: {LANGUAGE_NAMES.get(language or 'en', 'English')}",
+            f"Starting hook: {base['hook']}",
+            f"Starting body: {base['body']}",
+            f"Starting call to action: {base['cta']}",
+        )
+        if line
+    )
+    parts = None
+    try:
+        result = get_text_provider(AITask.AD_SCRIPT, workspace=workspace).generate(
+            system=SCRIPT_SYSTEM, prompt=brief, n=1
+        )
+        parts = _script_from(result.variants[0].body if result.variants else "", brief)
+    except ProviderError:
+        parts = None
+    if parts is None:
+        return {**base, "by": "template", "credits": 0}
+    with transaction.atomic():
+        ledger.debit_credits(
+            workspace,
+            price,
+            quota=entitlements.quota("monthly_ai_credits"),
+            note=f"ad script {row.key}",
+        )
+    return {**parts, "by": "model", "credits": price}

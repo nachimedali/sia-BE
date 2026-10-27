@@ -30,7 +30,11 @@ from accounts.views import (
     VerifyCodeView,
     VerifyEmailView,
 )
-from ai.ad_template_views import AdTemplateGalleryView, AdTemplateKeyframeView
+from ai.ad_template_views import (
+    AdTemplateGalleryView,
+    AdTemplateKeyframeView,
+    AdTemplateScriptView,
+)
 from ai.video_views import (
     VideoCatalogueView,
     VideoEstimateView,
@@ -89,6 +93,7 @@ from brand.avatar_views import (
     AvatarDraftDetailView,
     AvatarDraftListView,
     AvatarHouseView,
+    AvatarLimitsView,
     AvatarListView,
     AvatarRevokeView,
 )
@@ -301,6 +306,7 @@ urlpatterns = [
     path("brand/core/", BrandCoreView.as_view(), name="brand-core"),
     # --- avatars (S17); `{pk}` resolved inside the workspace, so 404 elsewhere ---
     path("brand/avatars/", AvatarListView.as_view(), name="brand-avatars"),
+    path("brand/avatars/limits/", AvatarLimitsView.as_view(), name="brand-avatar-limits"),
     path("brand/avatars/drafts/", AvatarDraftListView.as_view(), name="brand-avatar-drafts"),
     path(
         "brand/avatars/drafts/<int:pk>/",
@@ -530,6 +536,7 @@ urlpatterns = [
         AdTemplateKeyframeView.as_view(),
         name="ai-ad-template-keyframe",
     ),
+    path("ai/ad-templates/script/", AdTemplateScriptView.as_view(), name="ai-ad-template-script"),
     # --- guest review: sharing a post with someone who has no account ---
     # `{pk}` is resolved through a workspace-filtered queryset inside the view,
     # so another tenant's post is a 404 and not a 403 (Part 7 rule 3) — the

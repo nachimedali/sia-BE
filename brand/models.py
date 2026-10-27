@@ -228,6 +228,8 @@ class Avatar(models.Model):
     #: Content languages this person speaks (L-6: en, fr, it).
     languages = models.JSONField(default=list, blank=True)
     is_house = models.BooleanField(default=False)
+    #: Unused since the look-alike check was removed (2026-10-27); dropped in a
+    #: later deploy (expand → contract).
     likeness = models.CharField(max_length=10, choices=Likeness.choices, default=Likeness.UNCHECKED)
     likeness_provider = models.CharField(max_length=40, blank=True)
 
@@ -282,7 +284,7 @@ class AvatarDraft(models.Model):
     traits = models.JSONField(default=dict, blank=True)
     prompt = models.TextField(blank=True)
     status = models.CharField(max_length=8, choices=DraftStatus.choices, default=DraftStatus.QUEUED)
-    #: `[{"media": id, "likeness": "CLEAR" | "MATCH" | "UNCHECKED"}]`
+    #: `[{"media": id}]` (older rows also carry an unused `likeness`)
     portraits = models.JSONField(default=list, blank=True)
     credits = models.PositiveIntegerField(default=0)
     charge = models.OneToOneField(

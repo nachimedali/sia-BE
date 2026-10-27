@@ -45,7 +45,7 @@ from django.utils.dateparse import parse_datetime
 from PIL import Image, UnidentifiedImageError
 
 from accounts.models import User
-from billing.services.flags import CHECKS_S4, flag_enabled
+from billing.services.flags import AD_TEMPLATES_S17, CHECKS_S4, flag_enabled
 from checks.logo import find_logo
 from checks.models import CheckRun, CheckRunState, CheckStatus, CheckVerdict
 from checks.ports import TextBox, VideoFacts, get_ocr, get_policy, get_video
@@ -737,27 +737,35 @@ def summary(latest_run: dict[str, Any] | None, *, current: str) -> dict[str, Any
 def ensure_not_blocked(post: Post, *, actor: User | None = None) -> CheckRun | None:
     """The gate. 409 `checks_blocked` while a check blocks the post as it is now.
 
-    Flag off is pre-phase behaviour: no gate. An out-of-date or missing run is
+    Flag off is pre-phase behaviour: no gate — except the AI label (S17), which
+    holds whenever ad templates are on. An out-of-date or missing run is
     replaced before deciding, so the answer is always about this content.
     """
-    if not flag_enabled(post.workspace.organization, CHECKS_S4):
+    organization = post.workspace.organization
+    if not flag_enabled(organization, CHECKS_S4):
+        if flag_enabled(organization, AD_TEMPLATES_S17):
+            _refuse(None, _check_disclosure(post, _media(post)))
         return None
     prefetch_related_objects([post], *PREFETCH)  # a no-op when the caller did
     run = latest(post)
     if run is None or run.fingerprint != fingerprint(post):
         run = run_checks(post, actor=actor)
-    if run.verdict == CheckVerdict.BLOCK:
-        blocking = [r for r in run.results if r["status"] == CheckStatus.BLOCK]
+    _refuse(run.pk, run.results)
+    return run
+
+
+def _refuse(run: int | None, results: list[dict[str, Any]]) -> None:
+    blocking = [r for r in results if r["status"] == CheckStatus.BLOCK]
+    if blocking:
         raise ChecksBlockedError(
             detail={
-                "run": run.pk,
+                "run": run,
                 "blocking": [
                     {"label": r["label"], "subject": r["subject"], "message": r["message"]}
                     for r in blocking
                 ],
             }
         )
-    return run
 
 
 def queue_after_submit(post: Post, *, actor: User | None) -> None:

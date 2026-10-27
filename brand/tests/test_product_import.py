@@ -166,6 +166,36 @@ GALLERY_PAGE = """<html lang="fr"><head>
 </body></html>"""
 
 
+def test_what_the_product_is_comes_from_its_markup_or_its_own_type() -> None:
+    url = "https://djerbaolive.tn/products/first-harvest"
+    oil = extract_product(_page(url), shopify=(f"{url}.json", _json(f"{url}.json")))
+    assert value(oil, "offer_kind") == "physical"
+
+    serum = {"product": {"title": "Night serum", "product_type": "Skincare", "variants": [{}]}}
+    assert value(extract_product(_page(url), shopify=(f"{url}.json", serum)), "offer_kind") == (
+        "beauty"
+    )
+
+    def ld(kind: str) -> str:
+        html = (
+            '<html><head><script type="application/ld+json">'
+            f'{{"@type": "{kind}", "name": "X"}}</script></head><body><h1>X</h1></body></html>'
+        )
+        return str(
+            extract_product(parse_page("https://x.tn/p", html))
+            .get("offer_kind", {})
+            .get("value", "")
+        )
+
+    assert ld("MobileApplication") == "app"
+    assert ld("Service") == "service"
+    # A plain page says nothing about what it sells: left for the form to ask.
+    plain = extract_product(
+        parse_page("https://x.tn/p", "<html><body><h1>Spring chair</h1></body></html>")
+    )
+    assert "offer_kind" not in plain
+
+
 def test_a_zoom_gallery_outnumbering_the_structured_images_gives_every_photo() -> None:
     result = extract_product(parse_page("https://shop.tn/shop/9626-cosmic", GALLERY_PAGE))
 

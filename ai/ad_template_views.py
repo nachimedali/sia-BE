@@ -63,6 +63,9 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     needs = serializers.CharField(allow_blank=True)
     #: False while the format needs speech (T4): shown, never rendered.
     available = serializers.BooleanField()
+    #: False when the template is made from the product's own photos (T3):
+    #: there is no first frame to draw.
+    frame = serializers.BooleanField()
     #: Why it cannot be made for this product (`template_fit`,
     #: `needs_screenshot`), or null.
     fit = serializers.CharField(allow_null=True)
@@ -172,3 +175,51 @@ class AdTemplateKeyframeView(APIView):
         run_generation_task.delay(generation_id=generation.id, n=1)
         generation.refresh_from_db()
         return Response(GenerationSerializer(generation).data, status=status.HTTP_201_CREATED)
+
+
+class AdScriptRequestSerializer(serializers.Serializer[Any]):
+    template = serializers.CharField(max_length=40)
+    product = serializers.IntegerField()
+    language = serializers.CharField(max_length=8, required=False, allow_blank=True, default="")
+    #: The clip length, so the words fit it.
+    seconds = serializers.IntegerField(required=False, min_value=0, max_value=60, default=0)
+
+
+class AdScriptSerializer(serializers.Serializer[Any]):
+    hook = serializers.CharField(allow_blank=True)
+    body = serializers.CharField(allow_blank=True)
+    cta = serializers.CharField(allow_blank=True)
+    #: `model` when written for this product, `template` when the template's
+    #: own words came back (nothing charged).
+    by = serializers.ChoiceField(choices=["model", "template"])
+    credits = serializers.IntegerField()
+
+
+class AdTemplateScriptView(APIView):
+    permission_classes: list[Any] = _WRITE
+
+    @extend_schema(
+        request=AdScriptRequestSerializer,
+        responses={200: AdScriptSerializer},
+        summary="Write a template's script for a product",
+        description=(
+            "The text model writes the hook, body and call to action in the content language. "
+            "Paid in credits only when its words pass their checks; otherwise the template's "
+            "own words come back free (`by: template`). 402 `insufficient_credits` or "
+            "`feature_not_available`; 400 when the template does not fit the product; 409 "
+            "`template_unavailable`; 404 for another workspace's product or with "
+            "`ad_templates_s17` off."
+        ),
+    )
+    def post(self, request: Request) -> Response:
+        payload = AdScriptRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        script = ad_templates.write_script(
+            request_workspace(request),
+            key=data["template"],
+            product=_product(request, data["product"]),
+            language=data["language"],
+            seconds=data["seconds"],
+        )
+        return Response(AdScriptSerializer(script).data)

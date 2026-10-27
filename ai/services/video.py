@@ -204,6 +204,7 @@ class Spec:
     template: CreativeOption | None = None
     avatar: Any = None
     location: str = ""
+    script: dict[str, str] = field(default_factory=dict)
 
     @property
     def seconds(self) -> int:
@@ -228,6 +229,7 @@ class Spec:
                 "avatar": self.avatar.pk if self.avatar else None,
                 "location": self.location,
                 "role": "start",
+                "script": self.script,
             }
         elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
@@ -388,13 +390,20 @@ def _parse_template(
     ad_templates.length_units(row, length.key)
     location = str(data.get("location") or "")
     ad_templates.keyframe_prompt(row, product=product, location=location)  # 400 on a bad location
-    source = _media(workspace, data["source"]) if data.get("source") is not None else None
+    # A template made only from the product's photos has no first frame to pick.
+    source = (
+        _media(workspace, data["source"])
+        if data.get("source") is not None and ad_templates.has_frame(row)
+        else None
+    )
     assert product is not None
+    script = ad_templates.script_parts(row, data.get("script"), product)
     return Spec(
         **{
             **common,
-            "text": common["text"] or ad_templates.script_text(row, data.get("script"), product),
+            "text": common["text"] or "\n".join(text for text in script.values() if text),
         },
+        script=script,
         aspect=_vertical(),
         language=language,
         source=source,
@@ -445,6 +454,8 @@ class Quote:
 
 def _keyframe_credits(spec: Spec) -> int:
     if spec.template is None or spec.source is not None:
+        return 0
+    if not ad_templates.has_frame(spec.template):
         return 0
     from ai.services.costing import resolve_cost
 
@@ -796,15 +807,17 @@ def _end_card(render: VideoRender) -> EndCard:
 
 
 def _render_clip(render: VideoRender) -> VideoResult:
-    provider = get_video_provider(workspace=render.workspace)
-    if provider is None:
-        raise VideoUnavailableError
-    assert render.source is not None
     template = (
         CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=render.template).first()
         if render.template
         else None
     )
+    if template is not None and ad_templates.shots_of(template):
+        return _render_template_reel(render, template)
+    provider = get_video_provider(workspace=render.workspace)
+    if provider is None:
+        raise VideoUnavailableError
+    assert render.source is not None
     motion = (
         None
         if template
@@ -847,6 +860,75 @@ def _render_clip(render: VideoRender) -> VideoResult:
         prompt=prompt,
         aspect=str(aspect.metadata["aspect"]) if aspect else REEL_ASPECT,
         duration_seconds=float(render.spec["seconds"]),
+    )
+    return result
+
+
+def _render_template_reel(render: VideoRender, template: CreativeOption) -> VideoResult:
+    """A multi-shot template (T3): one clip per `frame` or `photo` shot, the
+    app screenshot set in as a still, a kinetic line on each, an end card —
+    cut by the composer into one file. One render, so one hold and one debit,
+    however many shots; any shot failing fails the whole render, unpaid."""
+    composer = get_video_composer()
+    if composer is None:
+        raise VideoUnavailableError
+    shots_meta = ad_templates.shots_of(template)
+    product = render.product
+    assert product is not None
+    script = dict(render.spec.get("script") or {})
+    tags = product.reference_tags or {}
+    photos = list(product.reference_images.order_by("id"))
+    screens = [a for a in photos if tags.get(str(a.pk)) == ad_templates.SCREEN_TAG]
+    plain = [a for a in photos if tags.get(str(a.pk)) != ad_templates.SCREEN_TAG] or photos
+    provider = None
+    if any(shot["use"] != "screen" for shot in shots_meta):
+        provider = get_video_provider(workspace=render.workspace)
+        if provider is None:
+            raise VideoUnavailableError
+    seconds = float(render.spec["seconds"])
+    card = EndCard(
+        title=product.name,
+        call_to_action=script.get("cta", "")[:OVERLAY_MAX],
+        seconds=END_CARD_SECONDS,
+    )
+    per_shot = round((seconds - card.seconds) / len(shots_meta), 2)
+    prompt = ad_templates.motion_prompt(template)
+    _advance(render, *PHASES[1])
+    shots: list[ReelShot] = []
+    counts = {"photo": 0, "screen": 0}
+    for shot in shots_meta:
+        use = shot["use"]
+        if use == "frame":
+            assert render.source is not None
+            still = render.source
+        else:
+            pool = screens if use == "screen" else plain
+            if not pool:
+                raise VideoUnavailableError
+            still = pool[counts[use] % len(pool)]
+            counts[use] += 1
+        image = _bytes(still)
+        clip = None
+        if use != "screen":
+            assert provider is not None
+            clip = provider.animate(
+                image=image,
+                role="start",
+                prompt=prompt,
+                aspect=REEL_ASPECT,
+                # The models' shortest clip; the composer trims it to the shot.
+                duration_seconds=float(max(5, -(-per_shot // 1))),
+            ).content
+        line = ad_templates.shot_line(str(shot.get("text") or ""), product, script)
+        shots.append(ReelShot(image=image, seconds=per_shot, overlay=line[:OVERLAY_MAX], clip=clip))
+    result: VideoResult = composer.compose(
+        shots=shots,
+        aspect=REEL_ASPECT,
+        transition="crossfade",
+        music=None,
+        captions=[],
+        end_card=card,
+        duration_seconds=seconds,
     )
     return result
 

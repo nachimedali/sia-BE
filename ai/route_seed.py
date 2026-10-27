@@ -69,6 +69,7 @@ ROUTES: list[dict[str, Any]] = [
             "campaign_plan",
             "digest",
             "tools",
+            "ad_script",
         )
     ),
     _route(

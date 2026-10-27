@@ -34,7 +34,6 @@ def ports(settings: Any) -> Any:
     settings.USE_FAKE_IMAGE_PROVIDER = False
     settings.USE_FAKE_VIDEO_PROVIDER = False
     settings.VIDEO_PROVIDER_API_KEY = ""
-    settings.VIDEO_COMPOSER_API_KEY = ""
     return settings
 
 
@@ -66,9 +65,15 @@ def test_embeddings_and_page_scanning_follow_the_text_switch(ports: Any) -> None
     assert isinstance(get_brand_inference(), FakeBrandInference)
 
 
-def test_a_real_video_switch_with_no_vendor_is_still_none(ports: Any) -> None:
-    """Turning the video fake off never invents a vendor: no key, no provider."""
+def test_a_real_video_switch_with_no_vendor_is_still_none(ports: Any, monkeypatch: Any) -> None:
+    """Turning the video fake off never invents a vendor: no key, no provider.
+    The composer is local editing — ffmpeg here, or nothing without it."""
+    from ai.providers.ffmpeg_composer import FfmpegVideoComposer
+
     assert get_video_provider() is None
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    assert isinstance(get_video_composer(), FfmpegVideoComposer)
+    monkeypatch.setattr("shutil.which", lambda name: None)
     assert get_video_composer() is None
 
 

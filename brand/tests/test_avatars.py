@@ -19,7 +19,7 @@ from django.utils import timezone
 from billing.models import FeatureFlag
 from billing.services import ledger
 from billing.services.flags import AD_TEMPLATES_S17
-from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus, Likeness
+from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus
 from brand.services import avatars
 from common.exceptions import ProviderError
 from content.services.media import ingest_media
@@ -67,7 +67,6 @@ def avatar_in(workspace: Any, upload: Any, name: str, **fields: Any) -> Avatar:
         name=name,
         kind=fields.pop("kind", AvatarKind.SYNTHETIC),
         portrait=portrait,
-        likeness=Likeness.CLEAR,
         languages=["en"],
         **fields,
     )
@@ -76,14 +75,13 @@ def avatar_in(workspace: Any, upload: Any, name: str, **fields: Any) -> Avatar:
 # -----------------------------------------------------------------------------
 # Drafts
 # -----------------------------------------------------------------------------
-def test_a_batch_of_four_portraits_is_drawn_checked_and_paid_on_success(
+def test_a_batch_of_four_portraits_is_drawn_and_paid_on_success(
     auth_client: Any, growth: Any
 ) -> None:
     before = ledger.credit_balance(growth)
     draft = ready_draft(auth_client)
 
     assert len(draft["portraits"]) == 4
-    assert {p["likeness"] for p in draft["portraits"]} == {Likeness.CLEAR}
     assert draft["traits"]["age"] == "age-30s"  # the archetype filled its groups
     assert draft["charged"] == draft["credits"] == 12
     assert ledger.credit_balance(growth) == before - 12
@@ -175,30 +173,6 @@ def test_an_invented_avatar_is_saved_from_a_portrait_and_becomes_the_house_face(
     assert body["is_house"] is True  # the first one is the house face
     assert body["state"] == "usable"
     assert len(body["angles"]) == 3  # drawn by the task (eager)
-
-
-def test_a_portrait_that_looks_like_a_known_person_is_refused(
-    auth_client: Any, growth: Any, settings: Any
-) -> None:
-    settings.USE_FAKE_LIKENESS_PROVIDER = True
-    settings.FAKE_LIKENESS_MATCH = True
-    draft = ready_draft(auth_client)
-    assert {p["likeness"] for p in draft["portraits"]} == {Likeness.MATCH}
-    response = auth_client.post(
-        LIBRARY, {"draft": draft["id"], "index": 0, "name": "X"}, format="json"
-    )
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "likeness_match"
-
-
-def test_with_no_look_alike_vendor_the_portrait_says_not_checked(
-    auth_client: Any, growth: Any, settings: Any
-) -> None:
-    settings.USE_FAKE_AI_PROVIDERS = False
-    settings.USE_FAKE_IMAGE_PROVIDER = True
-    settings.LIKENESS_AWS_ACCESS_KEY_ID = ""
-    draft = ready_draft(auth_client)
-    assert {p["likeness"] for p in draft["portraits"]} == {Likeness.UNCHECKED}
 
 
 def test_a_draft_still_drawing_is_409(auth_client: Any, growth: Any, user: Any) -> None:
@@ -446,7 +420,17 @@ def test_flag_off_the_avatar_routes_do_not_exist(
     FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
     on_plan(workspace, plans, "growth")
     assert auth_client.get(LIBRARY).status_code == 404
+    assert auth_client.get(f"{LIBRARY}limits/").status_code == 404
     assert auth_client.post(DRAFTS, {"traits": TRAITS}, format="json").status_code == 404
+
+
+def test_the_limits_alone_say_used_out_of_max_without_the_library(
+    auth_client: Any, growth: Any, make_png_upload: Any
+) -> None:
+    avatar_in(growth, make_png_upload, "Lina")
+    body = auth_client.get(f"{LIBRARY}limits/").json()
+    assert body["used"] == 1
+    assert body["max_avatars"] == auth_client.get(LIBRARY).json()["limits"]["max_avatars"]
 
 
 def test_a_viewer_reads_the_library_but_cannot_draw(

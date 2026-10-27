@@ -23,6 +23,10 @@ metadata is validated on save (`ai.services.ad_templates.validate_metadata`):
 * `script` — the starting hook, body and call to action, in English; the person
   edits them, and they become the post's caption
 * `hooks`, `locations` — what "Make 3" and "Remix" vary
+* `shots` — optional, a multi-shot template (T3): each `{use, text}`, where
+  `frame` animates the first frame, `photo` the product's next photo and
+  `screen` sets its app screenshot in as a still; `text` is the shot's kinetic
+  line (`{product}`, `{hook}`, `{body}`, `{cta}`). The reel closes on an end card
 * `needs` — `app_screenshot` when the frame needs one from the product
 * `available` — false while the format needs speech (T4): shown, never rendered
 
@@ -64,6 +68,14 @@ _CLIP = ("clip-5", "clip-10", "clip-15")
 _UNITS = {"clip-5": 1, "clip-10": 1, "clip-15": 2}
 
 
+def _units(length: str, tier: str, category: str) -> int:
+    """Talking formats carry speech and lip sync (T4): 3 units, and 5 for an
+    interview, which has two people on screen."""
+    if category == "interview":
+        return 5
+    return 3 if tier == "talking" else _UNITS[length]
+
+
 def _template(
     key: str,
     label: str,
@@ -84,6 +96,7 @@ def _template(
     available: bool = True,
     scene: str = "",
     sort: int = 0,
+    shots: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, Any]:
     person_line = {
         "required": " {person} is in the frame, natural and unposed.",
@@ -109,7 +122,7 @@ def _template(
             "person": person,
             "tier": tier,
             "lengths": list(lengths),
-            "units": {length: _UNITS[length] for length in lengths},
+            "units": {length: _units(length, tier, category) for length in lengths},
             "beats": list(beats),
             "keyframe_prompt": keyframe,
             "motion_prompt": f"{motion} The product never changes shape, label or colour.",
@@ -121,6 +134,7 @@ def _template(
             "available": available,
             "scene": scene,
             "seed": SEED_VERSION,
+            **({"shots": [{"use": use, "text": text} for use, text in shots]} if shots else {}),
         },
     }
 
@@ -544,6 +558,49 @@ TEMPLATES: list[dict[str, Any]] = [
         scene="re1-3",
         sort=61,
     ),
+    # --- multi-shot (T3): a reel of clips ---------------------------------------
+    _template(
+        "app-walkthrough",
+        "App walkthrough",
+        "app",
+        ("app",),
+        "optional",
+        "product",
+        lengths=("clip-10", "clip-15"),
+        beats=("Phone in hand", "The screen", "The result", "Download"),
+        frame="A hand holding a phone toward the camera in natural light.",
+        motion="The hand brings the phone closer, a slow push-in, the thumb ready to tap.",
+        script=("Watch this.", "{product}, in three taps.", "Download it free."),
+        hooks=("Watch this.", "Three taps, done.", "You'll want this app."),
+        locations=("studio", "terrace"),
+        needs="app_screenshot",
+        sort=42,
+        shots=(("frame", "{hook}"), ("screen", "{product}"), ("screen", "Done in seconds")),
+    ),
+    _template(
+        "space-tour",
+        "Space tour",
+        "tour",
+        ("space", "service"),
+        "none",
+        "product",
+        lengths=("clip-10", "clip-15"),
+        beats=("Arrive", "Walk through", "Details", "Book"),
+        frame="A wide view of the space, doors open, light coming in.",
+        motion=(
+            "A slow, steady gimbal glide forward through the space with gentle parallax; "
+            "nothing in the room moves or changes, no people appear."
+        ),
+        script=(
+            "Step inside {product}.",
+            "Light, space and every detail ready for you.",
+            "Book your visit.",
+        ),
+        hooks=("Step inside {product}.", "Take the tour.", "This is where it happens."),
+        locations=("studio",),
+        sort=45,
+        shots=(("photo", "{hook}"), ("photo", ""), ("photo", "")),
+    ),
     # --- effects --------------------------------------------------------------
     _template(
         "liquid-splash",
@@ -617,6 +674,7 @@ CATEGORIES: list[tuple[str, str]] = [
     ("hand", "In hand"),
     ("tryon", "Try-on"),
     ("app", "App demo"),
+    ("tour", "Space tour"),
     ("talk", "Talking"),
     ("interview", "Interview"),
     ("fx", "Effects"),
