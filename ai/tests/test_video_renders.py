@@ -17,7 +17,7 @@ from ai.services import video
 from ai.video_seed import VIDEO_CATALOG
 from billing.models import CreditLedger, FeatureFlag
 from billing.services import ledger
-from billing.services.flags import VIDEO_S3
+from billing.services.flags import AD_TEMPLATES_S17, VIDEO_S3
 from common.exceptions import FeatureNotAvailable, ProviderError, StateConflict
 from content.models import MediaKind, PostStatus
 from content.services.media import ingest_media
@@ -28,6 +28,15 @@ pytestmark = pytest.mark.django_db
 
 BASE = "/api/v1/ai/video/"
 CATALOGUE = f"{BASE}catalogue/"
+
+
+@pytest.fixture(autouse=True)
+def credits_path(db: None) -> None:
+    """This file covers video priced in credits: S17 off, which is on by
+    default; its units path is `test_ad_templates.py`."""
+    FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
+
+
 ESTIMATE = f"{BASE}estimate/"
 RENDERS = f"{BASE}renders/"
 SEND = f"{RENDERS}send/"

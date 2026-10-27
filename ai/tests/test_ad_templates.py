@@ -143,9 +143,18 @@ def test_the_seed_never_overwrites_an_operators_edit(catalog: None) -> None:
 # -----------------------------------------------------------------------------
 # The gallery
 # -----------------------------------------------------------------------------
+def test_templates_are_on_from_deploy_with_no_flag_row(
+    auth_client: Any, workspace: Any, catalog: None, plans: Any
+) -> None:
+    on_plan(workspace, plans, "spark")
+    assert not FeatureFlag.objects.filter(key=AD_TEMPLATES_S17).exists()
+    assert auth_client.get(GALLERY).status_code == 200
+
+
 def test_flag_off_is_the_studio_as_it_was(
     auth_client: Any, workspace: Any, catalog: None, make_png_upload: Any, plans: Any
 ) -> None:
+    FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
     on_plan(workspace, plans, "growth")
     product = make_product(workspace, make_png_upload)
     assert auth_client.get(GALLERY).status_code == 404
@@ -354,6 +363,7 @@ def test_a_render_sends_at_most_the_plans_product_photos(
 def test_with_the_flag_off_every_photo_is_sent(
     workspace: Any, plans: Any, catalog: None, make_png_upload: Any
 ) -> None:
+    FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
     on_plan(workspace, plans, "essential")
     product = make_product(workspace, make_png_upload, photos=4)
     assert ad_templates.references_cap(workspace) is None

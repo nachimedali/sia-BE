@@ -443,6 +443,7 @@ def test_another_organizations_and_another_brands_avatars_are_404(
 def test_flag_off_the_avatar_routes_do_not_exist(
     auth_client: Any, workspace: Any, plans: Any
 ) -> None:
+    FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
     on_plan(workspace, plans, "growth")
     assert auth_client.get(LIBRARY).status_code == 404
     assert auth_client.post(DRAFTS, {"traits": TRAITS}, format="json").status_code == 404
