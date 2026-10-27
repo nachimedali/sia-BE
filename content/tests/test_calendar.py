@@ -132,6 +132,44 @@ def test_a_post_with_targets_is_matched_by_its_targets_not_its_plan(
     assert found("instagram") == [post.pk]
 
 
+def test_filters_by_the_connected_account_a_post_targets(
+    auth_client: Any, pro: Any, user: Any, social_account: Any
+) -> None:
+    from channels.models import SocialAccount
+    from content.models import PostTarget
+
+    second = SocialAccount.objects.create(
+        workspace=pro, platform="instagram", handle="@shop", provider_account_id="acct-ig-2"
+    )
+    mine = _post(pro, user, "on the main account")
+    PostTarget.objects.create(post=mine, platform="instagram", social_account=social_account)
+    other = _post(pro, user, "on the shop account")
+    PostTarget.objects.create(post=other, platform="instagram", social_account=second)
+    _post(pro, user, "planned only", planned_platforms=["instagram"])
+
+    def ids(query: str) -> list[int]:
+        return sorted(r["id"] for r in auth_client.get(f"{POSTS}?{query}").json()["results"])
+
+    assert ids(f"account={social_account.pk}") == [mine.pk]
+    assert ids(f"account={social_account.pk}&account={second.pk}") == sorted([mine.pk, other.pk])
+
+
+def test_another_workspaces_account_filters_to_nothing(
+    auth_client: Any, pro: Any, user: Any, other_workspace: Any
+) -> None:
+    from channels.models import SocialAccount
+    from content.models import PostTarget
+
+    theirs = SocialAccount.objects.create(
+        workspace=other_workspace, platform="instagram", provider_account_id="acct-theirs"
+    )
+    owner = other_workspace.memberships.first().user
+    post = _post(other_workspace, owner, "not yours")
+    PostTarget.objects.create(post=post, platform="instagram", social_account=theirs)
+    _post(pro, user, "mine, untargeted")
+    assert auth_client.get(f"{POSTS}?account={theirs.pk}").json()["results"] == []
+
+
 def test_search_matches_the_caption_the_product_and_a_comment(
     auth_client: Any, pro: Any, user: Any
 ) -> None:
@@ -191,6 +229,7 @@ def test_unscheduled_lists_what_is_not_on_the_calendar_yet(
         ("from=yesterday", "invalid_date"),
         ("to=2026-13-45", "invalid_date"),
         ("product=abc", "invalid_product"),
+        ("account=abc", "invalid_account"),
     ],
 )
 def test_a_bad_filter_is_a_400_not_an_unfiltered_page(

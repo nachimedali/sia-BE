@@ -233,6 +233,7 @@ class PostViewSet(
             OpenApiParameter("product", int, many=True, description="Repeatable product ids."),
             OpenApiParameter("source", str, many=True, enum=PostSource.values),
             OpenApiParameter("platform", str, many=True, enum=Platform.values),
+            OpenApiParameter("account", int, many=True, description="Repeatable account ids."),
             OpenApiParameter("q", str, description="Caption, product name or a comment."),
             OpenApiParameter("from", str, description="ISO date/datetime, inclusive."),
             OpenApiParameter("to", str, description="ISO date/datetime, exclusive."),
