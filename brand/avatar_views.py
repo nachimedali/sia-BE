@@ -119,6 +119,8 @@ class AvatarDraftSerializer(serializers.Serializer[Any]):
     credits = serializers.IntegerField()
     charged = serializers.IntegerField()
     error = serializers.CharField(allow_blank=True)
+    #: Served from unused faces of earlier batches: no model call, no credits.
+    reused = serializers.BooleanField()
 
 
 def _urls(workspace: Workspace, ids: list[int]) -> dict[int, str | None]:
@@ -182,6 +184,7 @@ def _draft(workspace: Workspace, draft: AvatarDraft) -> dict[str, Any]:
                 "credits": draft.credits,
                 "charged": draft.credits if draft.charge_id else 0,
                 "error": draft.error,
+                "reused": draft.reused,
             }
         ).data
     )

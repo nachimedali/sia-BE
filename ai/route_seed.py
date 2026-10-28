@@ -173,8 +173,9 @@ ROUTES: list[dict[str, Any]] = [
         IMAGE,
         NANO_BANANA_21,
         fallback=NANO_BANANA_2,
-        params={"image_size": "1K"},
-        note="Avatar portraits and angles, 1K.",
+        # 2K: a batch is one 2x2 grid split in four, so each face is ~1K.
+        params={"image_size": "2K"},
+        note="Avatar portraits (one 2x2 grid) and angles, 2K.",
     ),
     # Spark's four free clips: Wan only, 720p, and no fallback — a free render
     # that fails is given back, never retried on a dearer model.

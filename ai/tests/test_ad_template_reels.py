@@ -286,7 +286,9 @@ def test_a_music_bed_that_is_not_installed_fails_rather_than_ships_silent(
 
 
 def test_a_reaction_reel_opens_on_the_person_then_cuts_to_the_product(
-    auth_client: Any, growth: Any, make_png_upload: Any  # noqa: F811
+    auth_client: Any,
+    growth: Any,  # noqa: F811
+    make_png_upload: Any,
 ) -> None:
     """`reaction-reveal` (2026-10-27): the first shot is the drawn frame with
     the avatar, the rest the product's photos — one hold, one debit."""

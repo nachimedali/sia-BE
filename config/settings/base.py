@@ -318,6 +318,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "billing.tasks.expire_trials",
         "schedule": crontab(hour=2, minute=45),
     },
+    # S17: unpicked shareable avatar batches older than a week give their
+    # faces to the pool (`brand.services.avatars.release_stale_drafts`).
+    "brand-release-stale-avatar-drafts": {
+        "task": "brand.tasks.release_stale_avatar_drafts",
+        "schedule": crontab(hour=4, minute=10),
+    },
     # Runs after the two writers above, so drift they introduce is caught the
     # same night rather than a day later.
     "billing-reconcile-ledgers": {
