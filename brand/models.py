@@ -41,6 +41,7 @@ class ImportStage(models.TextChoices):
     READING = "READING", "Reading pages"
     PRODUCTS = "PRODUCTS", "Finding products"
     AUDIENCE = "AUDIENCE", "Reading audience signals"
+    #: Retired with competitor tracking; kept so older rows still read.
     COMPETITORS = "COMPETITORS", "Spotting competitors"
     VOICE = "VOICE", "Listening for voice"
     PALETTE = "PALETTE", "Sampling palette and fonts"
@@ -48,7 +49,7 @@ class ImportStage(models.TextChoices):
 
 
 #: The sections the user reviews, in order. Fixed: each one has its own shape.
-SECTIONS: tuple[str, ...] = ("products", "audience", "competitors", "voice", "palette")
+SECTIONS: tuple[str, ...] = ("products", "audience", "voice", "palette")
 
 
 class ReviewState(models.TextChoices):

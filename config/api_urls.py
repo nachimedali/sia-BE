@@ -59,9 +59,6 @@ from analytics.views import (
     AudienceCommentActionView,
     AudienceCommentReplyView,
     AudienceDemographicsView,
-    CompetitorComparisonView,
-    CompetitorDetailView,
-    CompetitorView,
     ReportRunShareView,
     ReportShareRevokeView,
     ReportViewSet,
@@ -376,25 +373,13 @@ urlpatterns = [
     ),
     path("inbox/summary/", InboxSummaryView.as_view(), name="inbox-summary"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
-    # --- Phase 6: demographics and competitors ---
-    # Both answer for the caller's own workspace, so there is no id for the
-    # tenancy sweep to walk; the competitor detail route resolves its pk
-    # through `competitors.tracked`, which is workspace-filtered.
+    # --- Phase 6: demographics ---
+    # Answers for the caller's own workspace, so there is no id for the
+    # tenancy sweep to walk.
     path(
         "analytics/demographics/",
         AudienceDemographicsView.as_view(),
         name="analytics-demographics",
-    ),
-    path("analytics/competitors/", CompetitorView.as_view(), name="analytics-competitors"),
-    path(
-        "analytics/competitors/<int:pk>/",
-        CompetitorDetailView.as_view(),
-        name="analytics-competitor-detail",
-    ),
-    path(
-        "analytics/competitors/comparison/",
-        CompetitorComparisonView.as_view(),
-        name="analytics-competitor-comparison",
     ),
     # --- Phase 6: report shares ---
     # `{pk}` is a run, resolved through a workspace-filtered queryset inside

@@ -1,5 +1,5 @@
-"""What the import knows how sure it is of (S1-02), the offers and verified
-competitors it reads (S1-03), and what applying it writes (S1-04, S1-05)."""
+"""What the import knows how sure it is of (S1-02), the offers it reads
+(S1-03), and what applying it writes (S1-04, S1-05)."""
 
 from __future__ import annotations
 
@@ -36,33 +36,11 @@ def web() -> Any:
 
 
 class Rivals:
-    """An inference that names one rival that exists, one that does not, and
-    one whose site answers but under another name."""
+    """An inference that still names a rival, as an older model answer might.
+    Competitor tracking is retired: nothing of it may reach the kit."""
 
     def infer(self, **_: Any) -> dict[str, Any]:
-        return {
-            "competitors": [
-                {
-                    "name": "Rival Olives",
-                    "domain": "rival-olives.tn",
-                    "why": "same oil",
-                    "relationship": "inferred",
-                },
-                {
-                    "name": "Ghost Brand",
-                    "domain": "ghost-brand.tn",
-                    "why": "?",
-                    "relationship": "inferred",
-                },
-                {
-                    "name": "Somebody Else",
-                    "domain": "rival-olives.tn",
-                    "why": "?",
-                    "relationship": "inferred",
-                },
-                {"name": "No Domain Co", "domain": "", "why": "?", "relationship": "inferred"},
-            ],
-        }
+        return {"competitors": [{"name": "Rival Olives", "domain": "rival-olives.tn"}]}
 
     def infer_product(self, **_: Any) -> dict[str, Any]:
         return {}
@@ -168,53 +146,6 @@ def test_offers_arrive_in_the_products_section(auth_client: Any, workspace: Any,
     assert len(offers) == 2
 
 
-def test_only_a_rival_whose_own_site_says_its_name_is_verified(
-    auth_client: Any, workspace: Any, web: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(imports, "get_brand_inference", lambda: Rivals())
-    pk = start(auth_client, "offerhouse.tn")
-
-    result = auth_client.get(f"{IMPORTS}{pk}/").json()["result"]
-    rivals = {row["name"]: row for row in result["sections"]["competitors"]["items"]}
-
-    assert rivals["Rival Olives"]["relationship"] == "verified"
-    assert rivals["Rival Olives"]["source"] == "https://rival-olives.tn/"
-    assert {s["platform"] for s in rivals["Rival Olives"]["socials"]} == {"instagram", "facebook"}
-    assert rivals["Ghost Brand"]["relationship"] == "inferred"
-    assert rivals["Somebody Else"]["relationship"] == "inferred", (
-        "a site that answers under another name"
-    )
-    assert rivals["No Domain Co"]["relationship"] == "inferred"
-    assert result["confidence"]["competitors"] == "mixed"
-
-
-def test_a_competitor_pointing_back_at_the_brand_itself_is_not_verified(
-    auth_client: Any, workspace: Any, web: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class Self:
-        def infer(self, **_: Any) -> dict[str, Any]:
-            return {
-                "competitors": [
-                    {
-                        "name": "Offer House",
-                        "domain": "offerhouse.tn",
-                        "why": "",
-                        "relationship": "inferred",
-                    }
-                ]
-            }
-
-        def infer_product(self, **_: Any) -> dict[str, Any]:
-            return {}
-
-    monkeypatch.setattr(imports, "get_brand_inference", lambda: Self())
-    pk = start(auth_client, "offerhouse.tn")
-
-    [row] = auth_client.get(f"{IMPORTS}{pk}/").json()["result"]["sections"]["competitors"]["items"]
-
-    assert row["relationship"] == "inferred"
-
-
 # --- S1-04: what applying writes
 def test_listed_products_become_product_drafts_within_the_plans_cap(
     auth_client: Any, workspace: Any, web: Any, plans: dict[str, Any]
@@ -307,7 +238,7 @@ def test_a_second_import_replaces_the_profile_the_first_one_wrote(
     assert TasteProfile.objects.filter(workspace=workspace, is_active=True).count() == 1
 
 
-def test_verified_competitors_with_a_handle_become_trend_sources_and_guesses_do_not(
+def test_a_rival_the_model_names_is_neither_listed_nor_tracked(
     auth_client: Any,
     workspace: Any,
     web: Any,
@@ -321,22 +252,9 @@ def test_verified_competitors_with_a_handle_become_trend_sources_and_guesses_do_
 
     body = run(auth_client, "offerhouse.tn")
 
-    assert body["wrote"]["competitors_tracked"] == ["Rival Olives"]
-    source = TrendSource.objects.get(workspace=workspace, kind="COMPETITOR")
-    assert (source.platform, source.handle) == ("instagram", "rivalolives")
-
-
-def test_a_verified_competitor_with_no_account_is_reported_not_guessed(workspace: Any) -> None:
-    out = downstream.Downstream()
-
-    downstream.track_competitors(
-        workspace, [{"name": "Rival", "relationship": "verified", "socials": []}], out
-    )
-
-    assert out.competitors_tracked == []
-    assert out.competitors_skipped == [
-        {"name": "Rival", "reason": "Its website shows no account to watch."}
-    ]
+    assert "competitors" not in body["core"]["sections"]
+    assert "competitors" not in body["wrote"]
+    assert not TrendSource.objects.filter(workspace=workspace, kind="COMPETITOR").exists()
 
 
 def test_a_section_kept_from_a_hand_edit_writes_nothing_again(

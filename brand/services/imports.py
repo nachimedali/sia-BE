@@ -161,7 +161,6 @@ _STAGE_PROGRESS = {
     ImportStage.READING: 30,
     ImportStage.PRODUCTS: 50,
     ImportStage.AUDIENCE: 62,
-    ImportStage.COMPETITORS: 72,
     ImportStage.VOICE: 82,
     ImportStage.PALETTE: 94,
     ImportStage.DONE: 100,
@@ -286,13 +285,6 @@ def run_import(run: BrandImport) -> BrandImport:
         inferred = get_brand_inference().infer(
             name=name, text=text, categories=categories, products=[p["name"] for p in products]
         )
-        _advance(run, ImportStage.COMPETITORS)
-        inferred = {
-            **inferred,
-            "competitors": _verify_competitors(
-                fetcher, inferred.get("competitors") or [], domain, read
-            ),
-        }
         _advance(run, ImportStage.VOICE)
 
         _advance(run, ImportStage.PALETTE)
@@ -356,7 +348,6 @@ def _assemble(
     sections: dict[str, Any] = {
         "products": {"items": products, **({"offers": offers} if offers else {})},
         "audience": inferred.get("audience") or {"summary": "", "segments": []},
-        "competitors": {"items": inferred.get("competitors") or []},
         "voice": voice,
         "palette": {"colors": palette, "fonts": fonts},
     }
@@ -377,7 +368,7 @@ def _assemble(
         },
         "sections": sections,
         "confidence": _confidence(sections),
-        "inferred": ["audience", "competitors", "voice", "market"],
+        "inferred": ["audience", "voice", "market"],
     }
 
 
@@ -387,56 +378,18 @@ def _confidence(sections: dict[str, Any]) -> dict[str, str]:
 
     `high` is read straight off the page (a price in markup, a colour in the
     stylesheet); `medium` is read but thin; `inferred` is a model's or a rule's
-    judgement; `verified` is a competitor whose own site answered."""
+    judgement."""
     out: dict[str, str] = {}
     items = (sections.get("products") or {}).get("items") or []
     if items:
         out["products"] = "high" if any(row.get("price") for row in items) else "medium"
     if (sections.get("audience") or {}).get("summary"):
         out["audience"] = "inferred"
-    competitors = (sections.get("competitors") or {}).get("items") or []
-    if competitors:
-        kinds = {row.get("relationship") for row in competitors}
-        out["competitors"] = (
-            "verified" if kinds == {"verified"} else "mixed" if "verified" in kinds else "inferred"
-        )
     voice = sections.get("voice") or {}
     if voice.get("preset") or voice.get("descriptors") or voice.get("quote"):
         out["voice"] = "inferred"
     if (sections.get("palette") or {}).get("colors"):
         out["palette"] = "high"
-    return out
-
-
-#: A competitor is "verified" only when its own website answers and says its
-#: name; one that merely exists as a domain is still a guess.
-_NAME_NOISE = re.compile(r"[^a-z0-9]+")
-
-
-def _verify_competitors(
-    fetcher: SiteFetcher, competitors: list[dict[str, Any]], own_domain: str, read: list[str]
-) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for row in competitors:
-        domain = str(row.get("domain") or "").removeprefix("www.")
-        item = dict(row)
-        if domain and domain != own_domain:
-            page = _read(fetcher, f"https://{domain}/", read)
-            if page is not None and page.ok and "html" in page.content_type:
-                parsed = extract.parse_page(page.url, page.text)
-                heard = _NAME_NOISE.sub(
-                    "", " ".join([parsed.title, parsed.metas.get("og:site_name", "")]).casefold()
-                )
-                name = _NAME_NOISE.sub("", str(row.get("name") or "").casefold())
-                if name and name in heard:
-                    item["relationship"] = "verified"
-                    item["source"] = parsed.url
-                    socials = (extract.extract_identity([parsed], domain).get("socials") or {}).get(
-                        "value"
-                    )
-                    if socials:
-                        item["socials"] = socials
-        out.append(item)
     return out
 
 
@@ -485,22 +438,6 @@ def _clean_section(section: str, value: Any) -> dict[str, Any]:
     if section == "audience":
         segments = [str(s).strip()[:40] for s in value.get("segments") or [] if str(s).strip()]
         return {"summary": str(value.get("summary") or "").strip()[:400], "segments": segments[:8]}
-    if section == "competitors":
-        items = []
-        for row in value.get("items") or []:
-            if not isinstance(row, dict) or not str(row.get("name") or "").strip():
-                raise InvalidSectionError(
-                    "Every competitor needs a name.", detail={"section": section}
-                )
-            items.append(
-                {
-                    "name": str(row["name"]).strip()[:80],
-                    "domain": str(row.get("domain") or "").strip()[:120],
-                    "why": str(row.get("why") or "").strip()[:200],
-                    "relationship": "you",
-                }
-            )
-        return {"items": items[:8]}
     if section == "voice":
         from workspaces.models import BrandVoice
 
@@ -630,7 +567,7 @@ class ApplyResult:
 def apply(run: BrandImport, *, user: User) -> ApplyResult:
     """The new version, the sections kept from an earlier hand edit, the
     workspace fields pre-filled, what changed field by field, and what the
-    accepted sections wrote downstream (products, taste, tracked competitors)."""
+    accepted sections wrote downstream (products, taste)."""
     if run.status != ImportStatus.SUCCEEDED:
         raise ImportNotReadyError(detail={"status": run.status})
     missing = [s for s in SECTIONS if s not in run.review]
@@ -685,10 +622,6 @@ def apply(run: BrandImport, *, user: User) -> ApplyResult:
         )
     if "voice" not in kept:
         downstream.propose_taste(run.workspace, sections["voice"]["value"] or {}, user, wrote)
-    if "competitors" not in kept:
-        downstream.track_competitors(
-            run.workspace, (sections["competitors"]["value"] or {}).get("items") or [], wrote
-        )
 
     run.status = ImportStatus.APPLIED
     run.save(update_fields=["status", "updated_at"])

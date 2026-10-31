@@ -27,7 +27,6 @@ LOCKED = [
     "/api/v1/analytics/summary/",
     "/api/v1/analytics/best-times/",
     "/api/v1/analytics/demographics/",
-    "/api/v1/analytics/competitors/",
 ]
 SHARED = [
     "/api/v1/analytics/overview/",

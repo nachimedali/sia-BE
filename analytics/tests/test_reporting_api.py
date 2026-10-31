@@ -331,61 +331,6 @@ class TestDemographicsEndpoint:
 
 
 class TestCompetitorEndpoints:
-    def test_tracking_and_listing(self, paid_auth_client: Any, paid_workspace: Any) -> None:
-        from categories.models import Category
-
-        paid_workspace.category = Category.objects.create(name="Ceramics", slug="cer")
-        paid_workspace.save(update_fields=["category"])
-
-        created = paid_auth_client.post(
-            reverse("analytics-competitors"),
-            {"platform": "instagram", "handle": "@Rival", "label": "Rival"},
-            format="json",
-        )
-
-        assert created.status_code == 201
-        assert created.data["handle"] == "rival"
-
-        listing = paid_auth_client.get(reverse("analytics-competitors"))
-        assert [row["handle"] for row in listing.data] == ["rival"]
-
-    def test_the_cap_is_a_402_with_an_upgrade_path(
-        self, paid_auth_client: Any, paid_workspace: Any
-    ) -> None:
-        from categories.models import Category
-
-        paid_workspace.category = Category.objects.create(name="Ceramics", slug="cer")
-        paid_workspace.save(update_fields=["category"])
-        plan = paid_workspace.organization.plan
-        plan.max_tracked_competitors = 0
-        plan.save(update_fields=["max_tracked_competitors"])
-
-        response = paid_auth_client.post(
-            reverse("analytics-competitors"),
-            {"platform": "instagram", "handle": "rival"},
-            format="json",
-        )
-
-        assert response.status_code == 402
-
-    def test_untracking_another_workspaces_competitor_is_404(
-        self, paid_auth_client: Any, other_workspace: tuple[Any, Any, Any]
-    ) -> None:
-        from categories.models import Category
-        from trends.services import competitors
-
-        theirs, _user, _account = other_workspace
-        theirs.category = Category.objects.create(name="Ceramics", slug="cer")
-        theirs.save(update_fields=["category"])
-        source = competitors.track(theirs, platform="instagram", handle="rival")
-
-        response = paid_auth_client.delete(reverse("analytics-competitor-detail", args=[source.pk]))
-
-        assert response.status_code == 404
-
-    def test_the_comparison_needs_a_platform(self, paid_auth_client: Any) -> None:
-        response = paid_auth_client.get(reverse("analytics-competitor-comparison"))
-        assert response.status_code == 400
-
-    def test_requires_authentication(self, api_client: Any) -> None:
-        assert api_client.get(reverse("analytics-competitors")).status_code == 401
+    def test_competitor_tracking_is_retired(self, paid_auth_client: Any) -> None:
+        for url in ("competitors/", "competitors/1/", "competitors/comparison/?platform=instagram"):
+            assert paid_auth_client.get(f"/api/v1/analytics/{url}").status_code == 404

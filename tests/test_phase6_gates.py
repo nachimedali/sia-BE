@@ -17,7 +17,7 @@ through. A gate that held on one of them would hold on the one nobody uses.
 The second half of this file is the other claim the phase makes: **a number a
 customer reads is never fabricated** (Part 7 rules 12 and 17). Unavailable is
 null across every Phase 6 surface — demographics, channel totals, campaign
-goals and the competitor comparison — and a fake-adapter row reaches none of
+goals — and a fake-adapter row reaches none of
 them.
 """
 
@@ -227,24 +227,6 @@ class TestUnavailableIsNeverZero:
         assert rows.exists()
         assert all(row.breakdown is None for row in rows)
         assert all(row.availability == Availability.UNAVAILABLE for row in rows)
-
-    def test_a_competitor_with_no_reported_audience_has_a_null_rate(
-        self, paid_workspace: Any
-    ) -> None:
-        """Part 7 rule 12 applies to somebody else's account too."""
-        from categories.models import Category
-        from trends.models import TrendItem
-        from trends.services import competitors
-
-        paid_workspace.category = Category.objects.create(name="Ceramics", slug="cer")
-        paid_workspace.save(update_fields=["category"])
-        source = competitors.track(paid_workspace, platform=Platform.INSTAGRAM, handle="rival")
-        competitors.refresh(paid_workspace, platform=Platform.INSTAGRAM)
-        TrendItem.objects.filter(source=source).update(author_followers=0)
-
-        result = competitors.comparison(paid_workspace, platform=Platform.INSTAGRAM)
-
-        assert result["competitors"][0]["engagement_rate"] is None
 
 
 # -----------------------------------------------------------------------------

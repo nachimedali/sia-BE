@@ -72,7 +72,7 @@ def test_a_quote_must_appear_verbatim_in_the_site_text() -> None:
     assert "voice" not in dropped
 
 
-def test_choices_must_be_known_and_competitors_are_only_ever_inferred() -> None:
+def test_choices_must_be_known_and_competitors_are_dropped() -> None:
     found = validate(
         {
             "voice": {"preset": "LOUD", "descriptors": ["Warm", " ", "Rooted"]},
@@ -91,15 +91,7 @@ def test_choices_must_be_known_and_competitors_are_only_ever_inferred() -> None:
     assert found["voice"] == {"descriptors": ["warm", "rooted"]}
     assert found["category"] == "Food & Drink"
     assert "business_type" not in found
-    assert found["competitors"] == [
-        {
-            "name": "Zitouna Gold",
-            "domain": "zitounagold.tn",
-            "why": "Same story",
-            "relationship": "inferred",
-        },
-        {"name": "Odd", "domain": "", "why": "", "relationship": "inferred"},
-    ]
+    assert "competitors" not in found
 
 
 def test_the_llm_answer_is_parsed_from_a_fenced_block_then_validated(
