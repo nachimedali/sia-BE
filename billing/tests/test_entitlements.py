@@ -129,7 +129,7 @@ def test_free_plan_is_refused_the_paid_features(workspace, plans) -> None:
             entitlements.require_feature(feature)
         assert excinfo.value.status_code == 402
         # The cheapest public plan that has the feature, read from the catalogue.
-        expected = "growth" if feature == "autopilot" else "essential"
+        expected = {"autopilot": "growth", "trend_engine": "essential"}.get(feature, "discovery")
         assert excinfo.value.upgrade["suggested_plan"] == expected
 
 

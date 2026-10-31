@@ -53,6 +53,11 @@ SERVER_ROLES: dict[str, str] = {
         "build; do not change who they are. They are an invented or consenting brand "
         "presenter, not a public figure."
     ),
+    # A second or third product in an ad template (S17); the note names it.
+    "product": (
+        "Image {n} is another product in the scene. Show it exactly as pictured: same shape, "
+        "label and colours."
+    ),
 }
 
 

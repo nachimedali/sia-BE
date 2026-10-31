@@ -54,6 +54,8 @@ GENERATION_COSTS: list[dict[str, Any]] = [
     # S17: a batch of four avatar portraits and their reference angles, seven
     # images at about $0.05 — `ceil(0.35 / 0.03)` at $0.10 a credit.
     _row(GenerationKind.IMAGE, GenerationMode.AVATAR, 12),
+    # S17-13: a template script written by the text model (`AD_SCRIPT`).
+    _row(GenerationKind.TEXT, GenerationMode.RECIPE, 1),
 ]
 
 

@@ -52,6 +52,17 @@ PACKS: list[dict[str, Any]] = [
         "price_cents": 1280,
         "sort_order": 1,
     },
+    {
+        # S17: opens every premium ad template for the organization, for good.
+        # The price is a proposal; the owner sets it in admin.
+        "code": "templates-premium",
+        "display_name": "Premium templates",
+        "tagline": "Every premium ad template, for every brand of your organization. Paid once.",
+        "kind": PackKind.TEMPLATE,
+        "units": 1,
+        "price_cents": 1900,
+        "sort_order": 2,
+    },
 ]
 
 

@@ -39,6 +39,9 @@ class AdTemplateLengthSerializer(serializers.Serializer[Any]):
 class AdTemplateLockSerializer(serializers.Serializer[Any]):
     feature = serializers.CharField()
     suggested_plan = serializers.CharField()
+    #: A premium template's pack, when one is on sale: buying it opens every
+    #: premium template for the organization. Null for a plan lock.
+    pack = serializers.CharField(allow_null=True)
 
 
 class AdTemplateScriptSerializer(serializers.Serializer[Any]):
@@ -63,6 +66,12 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     needs = serializers.CharField(allow_blank=True)
     #: False while the format needs speech (T4): shown, never rendered.
     available = serializers.BooleanField()
+    #: A premium template: in the plans with `ad_templates_premium`, or bought
+    #: as the template pack.
+    premium = serializers.BooleanField()
+    #: False when the template is made from the product's own photos (T3):
+    #: there is no first frame to draw.
+    frame = serializers.BooleanField()
     #: Why it cannot be made for this product (`template_fit`,
     #: `needs_screenshot`), or null.
     fit = serializers.CharField(allow_null=True)
@@ -83,6 +92,9 @@ class AdTemplateGallerySerializer(serializers.Serializer[Any]):
     locations = AdTemplateOptionSerializer(many=True)
     #: Model re-rolls allowed per ad on this plan.
     rerolls = serializers.IntegerField()
+    #: How many avatars and products one ad may show, the main ones included.
+    avatars_per_ad = serializers.IntegerField()
+    products_per_ad = serializers.IntegerField()
     #: Product photos a render sends on this plan (`max_references`).
     references_cap = serializers.IntegerField(allow_null=True)
     references_total = serializers.IntegerField()
@@ -94,6 +106,14 @@ class AdKeyframeRequestSerializer(serializers.Serializer[Any]):
     avatar = serializers.IntegerField(required=False, allow_null=True, default=None)
     location = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
     language = serializers.CharField(max_length=8, required=False, allow_blank=True, default="")
+    #: People and products beside the main ones, up to the plan's
+    #: `ad_avatars_per_ad` / `ad_products_per_ad`.
+    extra_avatars = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list, max_length=9
+    )
+    extra_products = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list, max_length=9
+    )
     #: A keyframe of this ad to draw again — a re-roll, counted against
     #: `ad_rerolls`.
     reroll_of = serializers.IntegerField(required=False, allow_null=True, default=None)
@@ -136,10 +156,12 @@ class AdTemplateKeyframeView(APIView):
         description=(
             "Queues an image generation (poll `GET /ai/generations/{id}/`), paid in credits on "
             "pass. 400 when the template does not fit the product, needs a person or has none; "
-            "402 `feature_not_available` for a template above the plan, `reroll_limit_reached` "
-            "past `ad_rerolls`, `avatar_over_limit` for an avatar locked by a downgrade; 409 "
-            "`template_unavailable` for a format not ready yet, `avatar_consent_required`; 404 "
-            "for a product, avatar or generation of another workspace."
+            "402 `feature_not_available` for a template above the plan (a premium one names its "
+            "pack), `cast_limit_reached` past `ad_avatars_per_ad` or `ad_products_per_ad`, "
+            "`reroll_limit_reached` past `ad_rerolls`, `avatar_over_limit` for an avatar "
+            "locked by a downgrade; 409 `template_unavailable` for a format not ready yet, "
+            "`avatar_consent_required`; 404 for a product, avatar or generation of another "
+            "workspace."
         ),
     )
     def post(self, request: Request) -> Response:
@@ -155,6 +177,13 @@ class AdTemplateKeyframeView(APIView):
             avatar_id=data["avatar"],
             language=data["language"],
         )
+        people, others = ad_templates.resolve_cast(
+            workspace,
+            avatar=avatar,
+            product=product,
+            extra_avatars=data["extra_avatars"],
+            extra_products=data["extra_products"],
+        )
         reroll_of = None
         if data["reroll_of"] is not None:
             reroll_of = Generation.objects.filter(workspace=workspace, pk=data["reroll_of"]).first()
@@ -168,7 +197,57 @@ class AdTemplateKeyframeView(APIView):
             avatar=avatar,
             location=data["location"],
             reroll_of=reroll_of,
+            extra_avatars=people,
+            extra_products=others,
         )
         run_generation_task.delay(generation_id=generation.id, n=1)
         generation.refresh_from_db()
         return Response(GenerationSerializer(generation).data, status=status.HTTP_201_CREATED)
+
+
+class AdScriptRequestSerializer(serializers.Serializer[Any]):
+    template = serializers.CharField(max_length=40)
+    product = serializers.IntegerField()
+    language = serializers.CharField(max_length=8, required=False, allow_blank=True, default="")
+    #: The clip length, so the words fit it.
+    seconds = serializers.IntegerField(required=False, min_value=0, max_value=60, default=0)
+
+
+class AdScriptSerializer(serializers.Serializer[Any]):
+    hook = serializers.CharField(allow_blank=True)
+    body = serializers.CharField(allow_blank=True)
+    cta = serializers.CharField(allow_blank=True)
+    #: `model` when written for this product, `template` when the template's
+    #: own words came back (nothing charged).
+    by = serializers.ChoiceField(choices=["model", "template"])
+    credits = serializers.IntegerField()
+
+
+class AdTemplateScriptView(APIView):
+    permission_classes: list[Any] = _WRITE
+
+    @extend_schema(
+        request=AdScriptRequestSerializer,
+        responses={200: AdScriptSerializer},
+        summary="Write a template's script for a product",
+        description=(
+            "The text model writes the hook, body and call to action in the content language. "
+            "Paid in credits only when its words pass their checks; otherwise the template's "
+            "own words come back free (`by: template`). 402 `insufficient_credits` or "
+            "`feature_not_available`; 400 when the template does not fit the product; 409 "
+            "`template_unavailable`; 404 for another workspace's product or with "
+            "`ad_templates_s17` off."
+        ),
+    )
+    def post(self, request: Request) -> Response:
+        payload = AdScriptRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        script = ad_templates.write_script(
+            request_workspace(request),
+            key=data["template"],
+            product=_product(request, data["product"]),
+            language=data["language"],
+            seconds=data["seconds"],
+        )
+        return Response(AdScriptSerializer(script).data)

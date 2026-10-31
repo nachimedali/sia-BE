@@ -78,6 +78,12 @@ FEATURE_KEYS = frozenset(
         "max_references",
         # An avatar of a real person, with recorded consent.
         "real_avatars",
+        # Premium ad templates (2026-10-27, owner): a boolean, also sold as the
+        # `templates-premium` pack; and integers, how many avatars and products
+        # one ad may show, the main ones included.
+        "ad_templates_premium",
+        "ad_avatars_per_ad",
+        "ad_products_per_ad",
     }
 )
 
@@ -427,6 +433,8 @@ class PlanPrice(CataloguePrice):
 class PackKind(models.TextChoices):
     CREDITS = "CREDITS", "Credits"
     VIDEO = "VIDEO", "Video units"
+    #: Unlocks every premium ad template for the organization, for good (S17).
+    TEMPLATE = "TEMPLATE", "Premium templates"
 
 
 class Pack(CatalogueItem):

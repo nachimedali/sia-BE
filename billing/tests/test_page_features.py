@@ -46,7 +46,7 @@ def test_spark_is_refused_with_an_upgrade_path(auth_client: Any, workspace: Any,
     assert response.status_code == 402
     error = response.json()["error"]
     assert error["code"] == "feature_not_available"
-    assert error["upgrade"]["suggested_plan"] == "essential"
+    assert error["upgrade"]["suggested_plan"] == "discovery"
 
 
 @pytest.mark.parametrize("url", LOCKED)

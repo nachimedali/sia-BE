@@ -68,7 +68,7 @@ def test_seed_packs_is_idempotent(db) -> None:
     call_command("seed_packs", verbosity=0)
     call_command("seed_packs", verbosity=0)
     # `credits-500` stays, off the public list, for its purchase history.
-    assert Pack.objects.count() == 3
+    assert Pack.objects.count() == 4
 
 
 def test_pack_code_is_immutable_after_creation(packs) -> None:
@@ -155,7 +155,7 @@ def test_free_cannot_buy_video_because_it_has_no_way_to_spend_it(workspace, pack
         purchases.start_purchase(workspace, pack_code="videos-4", success_url="s", cancel_url="c")
 
     assert excinfo.value.status_code == 402
-    assert excinfo.value.upgrade["suggested_plan"] == "essential"
+    assert excinfo.value.upgrade["suggested_plan"] == "discovery"
 
 
 def test_a_paid_plan_can_buy_video(pro_workspace, packs) -> None:
@@ -295,7 +295,7 @@ def test_a_402_carries_the_upgrade_payload(auth_client, workspace, packs) -> Non
 
     assert response.status_code == 402
     assert response.json()["error"]["upgrade"] == {
-        "suggested_plan": "essential",
+        "suggested_plan": "discovery",
         "cta": "/app/billing",
     }
 
@@ -305,7 +305,7 @@ def test_packs_are_listed_for_a_signed_in_workspace(auth_client, workspace, pack
 
     assert response.status_code == 200
     codes = [row["code"] for row in response.json()]
-    assert codes == ["credits-100", "videos-4"]
+    assert codes == ["credits-100", "videos-4", "templates-premium"]
     assert response.json()[0]["units"] == 100
 
 
@@ -315,7 +315,7 @@ def test_withdrawn_packs_are_not_listed(auth_client, workspace, packs) -> None:
     pack.save()
 
     codes = [row["code"] for row in auth_client.get(PACKS_URL).json()]
-    assert codes == ["credits-100"]
+    assert codes == ["credits-100", "templates-premium"]
 
 
 def test_packs_need_a_session(client, packs) -> None:

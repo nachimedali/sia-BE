@@ -177,8 +177,9 @@ PLAYBOOK_V1 = "playbook_v1"
 #: avatars and their library, per-plan reference caps, and **video paid in
 #: video units** instead of credits. Off restores pre-step behaviour exactly:
 #: the template and avatar endpoints answer 404, every render is priced and
-#: debited in credits, and product photos are sent uncapped as before. This
-#: flag gates a price change, and the app is deployed, so it ships off.
+#: debited in credits, and product photos are sent uncapped as before. On by
+#: default (owner, 2026-10-27): every user sees the templates from deploy; an
+#: organization row of `enabled=False` restores pre-step behaviour.
 AD_TEMPLATES_S17 = "ad_templates_s17"
 
 ROLLOUT_DEFAULTS: dict[str, bool] = {
@@ -205,9 +206,9 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     # consent flow independently refuses until a `ConsentPolicy` is published,
     # so even a flag flipped early collects nothing.
     COHORT_V8: False,
-    # Off: shipped after the first deploy, and it moves video from credits to
-    # video units. Promoted by a FeatureFlag row, deliberately.
-    AD_TEMPLATES_S17: False,
+    # On from deploy (owner, 2026-10-27), although it moves video from credits
+    # to video units: every user must see and use the templates.
+    AD_TEMPLATES_S17: True,
     # Off until trendgen serves them; see the declarations above.
     TRENDGEN_FEED: False,
     TRENDGEN_GENERATION: False,

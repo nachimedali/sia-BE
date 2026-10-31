@@ -17,7 +17,7 @@ from django.db.models import Count, Exists, OuterRef
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -716,6 +716,8 @@ class OrganizationAddonView(APIView):
         if organization is None:
             raise NotFoundError("This workspace has no organization.", code="no_organization")
 
+        if payload.validated_data["addon_key"] in addons.PURCHASED_ONLY:
+            raise ValidationError({"addon_key": "This add-on is bought as a pack."})
         addons.set_addon(
             organization,
             key=payload.validated_data["addon_key"],

@@ -31,13 +31,29 @@ pytestmark = pytest.mark.django_db
 # -----------------------------------------------------------------------------
 # The packages as seeded
 # -----------------------------------------------------------------------------
-def test_the_public_list_is_the_four_packages_in_price_order(plans) -> None:
+def test_the_public_list_is_the_five_packages_in_price_order(plans) -> None:
     public = list(Plan.objects.filter(is_public=True).order_by("sort_order"))
 
-    assert [plan.code for plan in public] == ["spark", "essential", "growth", "scale"]
-    assert [plan.price_monthly_cents for plan in public] == [0, 4900, 9900, 24900]
+    assert [plan.code for plan in public] == ["spark", "discovery", "essential", "growth", "scale"]
+    assert [plan.price_monthly_cents for plan in public] == [0, 2900, 4900, 9900, 24900]
     # Annual is ten months: two free.
-    assert [plan.price_annual_cents for plan in public] == [0, 49000, 99000, 249000]
+    assert [plan.price_annual_cents for plan in public] == [0, 29000, 49000, 99000, 249000]
+
+
+def test_discovery_is_the_paid_first_step_below_essential(plans) -> None:
+    """Publishing on two accounts with five videos, to try a paid package
+    before Essential (zeely-comparison.md, owner 2026-10-27)."""
+    discovery, essential = plans["discovery"], plans["essential"]
+
+    assert discovery.feature("auto_publish") and discovery.max_autopublish_posts > 0
+    assert discovery.max_social_accounts == 2
+    assert discovery.included_videos == 5
+    assert discovery.feature("analytics_history_days") == 30
+    # Essential stays the bigger step: more channels, seats, trends, history.
+    assert essential.max_social_accounts > discovery.max_social_accounts
+    assert essential.max_workspace_members > discovery.max_workspace_members
+    assert essential.feature("trend_engine") and not discovery.feature("trend_engine")
+    assert not discovery.feature("autopilot_auto_approve")  # L-2
 
 
 def test_each_package_carries_the_ladder_the_audit_sets(plans) -> None:
@@ -140,8 +156,10 @@ def test_a_retired_plan_cannot_be_checked_out(workspace, plans) -> None:
 @pytest.mark.parametrize(
     ("current", "feature", "expected"),
     [
-        ("spark", None, "essential"),
-        ("spark", "auto_publish", "essential"),
+        ("spark", None, "discovery"),
+        ("spark", "auto_publish", "discovery"),
+        ("discovery", None, "essential"),
+        ("discovery", "trend_engine", "essential"),
         ("spark", "autopilot", "growth"),
         ("essential", "approval_workflow", "growth"),
         ("growth", "api_access", "scale"),
@@ -159,9 +177,9 @@ def test_the_suggestion_is_the_cheapest_public_plan_that_unlocks_it(
 
 
 def test_an_unpublished_package_is_never_suggested(plans) -> None:
-    Plan.objects.filter(code="essential").update(is_public=False)
+    Plan.objects.filter(code="discovery").update(is_public=False)
 
-    assert suggest_upgrade(plans["spark"], "auto_publish") == "growth"
+    assert suggest_upgrade(plans["spark"], "auto_publish") == "essential"
 
 
 def test_an_empty_catalogue_still_names_a_plan(plans) -> None:
@@ -182,7 +200,7 @@ def _older_catalogue(settings) -> None:
     Plan.objects.filter(code="pro").update(is_recommended=True)
     Plan.objects.filter(code="free").update(is_default=True)
     Pack.objects.filter(code="credits-500").update(is_public=True)
-    Plan.objects.filter(code__in=("spark", "essential", "growth", "scale")).delete()
+    Plan.objects.filter(code__in=("spark", "discovery", "essential", "growth", "scale")).delete()
     Pack.objects.filter(code="credits-100").delete()
 
 
@@ -197,6 +215,7 @@ def test_the_migration_brings_an_older_catalogue_to_the_packages(settings) -> No
 
     assert list(Plan.objects.filter(is_public=True).values_list("code", flat=True)) == [
         "spark",
+        "discovery",
         "essential",
         "growth",
         "scale",

@@ -21,8 +21,8 @@ from ai.services import ad_templates, disclosure, video
 from ai.services.pipeline import _reference_image_bytes
 from billing.models import CreditLedger, FeatureFlag, VideoLedger
 from billing.services import ledger
-from billing.services.flags import AD_TEMPLATES_S17
-from brand.models import Avatar, AvatarKind, Likeness
+from billing.services.flags import AD_TEMPLATES_S17, CHECKS_S4
+from brand.models import Avatar, AvatarKind
 from checks.models import CheckStatus
 from common.exceptions import ProviderError
 from content.services.media import ingest_media
@@ -85,7 +85,6 @@ def avatar_for(workspace: Any, upload: Any, **fields: Any) -> Avatar:
     defaults: dict[str, Any] = {
         "name": "Lina",
         "kind": AvatarKind.SYNTHETIC,
-        "likeness": Likeness.CLEAR,
         "languages": ["en", "fr"],
         "traits": {"age": "age-30s"},
     }
@@ -143,9 +142,18 @@ def test_the_seed_never_overwrites_an_operators_edit(catalog: None) -> None:
 # -----------------------------------------------------------------------------
 # The gallery
 # -----------------------------------------------------------------------------
+def test_templates_are_on_from_deploy_with_no_flag_row(
+    auth_client: Any, workspace: Any, catalog: None, plans: Any
+) -> None:
+    on_plan(workspace, plans, "spark")
+    assert not FeatureFlag.objects.filter(key=AD_TEMPLATES_S17).exists()
+    assert auth_client.get(GALLERY).status_code == 200
+
+
 def test_flag_off_is_the_studio_as_it_was(
     auth_client: Any, workspace: Any, catalog: None, make_png_upload: Any, plans: Any
 ) -> None:
+    FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
     on_plan(workspace, plans, "growth")
     product = make_product(workspace, make_png_upload)
     assert auth_client.get(GALLERY).status_code == 404
@@ -171,6 +179,7 @@ def test_the_gallery_lists_every_template_with_its_fit_and_lock(
     assert rows["founder-story"]["lock"] == {
         "feature": "ad_templates_talking",
         "suggested_plan": "growth",
+        "pack": None,
     }
     assert rows["founder-story"]["available"] is False
     assert body["rerolls"] == 3
@@ -290,7 +299,7 @@ def test_a_template_above_the_plan_is_402_with_an_upgrade(
     error = response.json()["error"]
     # Spark has no avatars at all: the person is the first lock it meets.
     assert error["code"] in ("avatar_over_limit", "feature_not_available")
-    assert error["upgrade"]["suggested_plan"] == "essential"
+    assert error["upgrade"]["suggested_plan"] == "discovery"
 
 
 def test_re_rolls_stop_at_the_plans_number(auth_client: Any, oil: Any) -> None:
@@ -354,6 +363,7 @@ def test_a_render_sends_at_most_the_plans_product_photos(
 def test_with_the_flag_off_every_photo_is_sent(
     workspace: Any, plans: Any, catalog: None, make_png_upload: Any
 ) -> None:
+    FeatureFlag.objects.create(organization=None, key=AD_TEMPLATES_S17, enabled=False)
     on_plan(workspace, plans, "essential")
     product = make_product(workspace, make_png_upload, photos=4)
     assert ad_templates.references_cap(workspace) is None
@@ -520,6 +530,28 @@ def test_a_person_on_screen_is_labelled_through_to_the_draft_and_the_checks(
     post.save(update_fields=["master_body"])
     results = [r for r in run_checks(post).results if r["key"] == "disclosure"]
     assert results[0]["status"] == CheckStatus.BLOCK
+
+
+def test_the_label_blocks_scheduling_even_with_the_checks_step_off(
+    auth_client: Any, oil: Any, lina: Avatar
+) -> None:
+    from checks.services import ChecksBlockedError, ensure_not_blocked
+    from content.models import Post
+
+    FeatureFlag.objects.create(
+        organization=oil.workspace.organization, key=CHECKS_S4, enabled=False
+    )
+    body = template_clip(oil, avatar=lina.pk)
+    render = auth_client.post(RENDERS, confirmed(auth_client, body), format="json").json()
+    auth_client.patch(f"{RENDERS}{render['id']}/", {"review": "ACCEPTED"}, format="json")
+    sent = auth_client.post(f"{RENDERS}send/", {"renders": [render["id"]]}, format="json").json()
+    post = Post.objects.get(pk=sent["posts"][0])
+    assert ensure_not_blocked(post) is None  # labelled: passes, no S4 run made
+
+    post.master_body = "Watch this."
+    post.save(update_fields=["master_body"])
+    with pytest.raises(ChecksBlockedError):
+        ensure_not_blocked(post)
 
 
 def test_the_label_follows_the_language_and_is_never_doubled() -> None:

@@ -228,6 +228,8 @@ class Avatar(models.Model):
     #: Content languages this person speaks (L-6: en, fr, it).
     languages = models.JSONField(default=list, blank=True)
     is_house = models.BooleanField(default=False)
+    #: Unused since the look-alike check was removed (2026-10-27); dropped in a
+    #: later deploy (expand → contract).
     likeness = models.CharField(max_length=10, choices=Likeness.choices, default=Likeness.UNCHECKED)
     likeness_provider = models.CharField(max_length=40, blank=True)
 
@@ -263,6 +265,9 @@ class DraftStatus(models.TextChoices):
     RUNNING = "RUNNING", "Running"
     READY = "READY", "Ready"
     FAILED = "FAILED", "Failed"
+    #: Picked from, or left unpicked for a week: its other faces went to the
+    #: pool, so nobody picks from it again (shareable batches only).
+    USED = "USED", "Used"
 
 
 class AvatarDraft(models.Model):
@@ -282,7 +287,7 @@ class AvatarDraft(models.Model):
     traits = models.JSONField(default=dict, blank=True)
     prompt = models.TextField(blank=True)
     status = models.CharField(max_length=8, choices=DraftStatus.choices, default=DraftStatus.QUEUED)
-    #: `[{"media": id, "likeness": "CLEAR" | "MATCH" | "UNCHECKED"}]`
+    #: `[{"media": id}]` (older rows also carry an unused `likeness`)
     portraits = models.JSONField(default=list, blank=True)
     credits = models.PositiveIntegerField(default=0)
     charge = models.OneToOneField(
@@ -293,6 +298,12 @@ class AvatarDraft(models.Model):
         related_name="avatar_draft",
     )
     error = models.CharField(max_length=300, blank=True)
+    #: Shareable batches only (trait chips, no free-text note): a hash of the
+    #: portrait prompt, the key its faces are pooled and served under. Blank
+    #: for a private batch.
+    pool_key = models.CharField(max_length=64, blank=True)
+    #: Served from the pool: no model call, no credits.
+    reused = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
@@ -301,3 +312,39 @@ class AvatarDraft(models.Model):
 
     def __str__(self) -> str:
         return f"avatar draft {self.pk} ({self.status})"
+
+
+class PooledPortrait(models.Model):
+    """An unused face from a shareable batch, offered once to another
+    organization asking for the same traits (owner, 2026-10-27; a change
+    request against BUILD-PLAN Part 7 rule 16, recorded in `todo-steps.md`
+    S17-23). Only trait-chip batches are pooled — no tenant text reaches the
+    picture — and a served face is *copied* into the new brand's own files;
+    `source` is never shown across the boundary."""
+
+    pool_key = models.CharField(max_length=64)
+    source = models.OneToOneField(
+        "content.MediaAsset", on_delete=models.CASCADE, related_name="pooled_as"
+    )
+    #: The organization that released it — never served back to it.
+    released_by = models.ForeignKey(
+        "workspaces.Organization", on_delete=models.CASCADE, related_name="+"
+    )
+    released_at = models.DateTimeField(auto_now_add=True)
+    claimed_by = models.ForeignKey(
+        AvatarDraft, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["released_at", "id"]
+        indexes: ClassVar[list[models.Index]] = [
+            # What a claim reads: the open faces under one key, oldest first.
+            models.Index(
+                fields=["pool_key", "released_at"],
+                condition=models.Q(claimed_by__isnull=True),
+                name="brand_pool_open_idx",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"pooled portrait {self.pk}"

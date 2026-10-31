@@ -23,6 +23,7 @@ button that fails.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -37,7 +38,19 @@ from common.exceptions import FeatureNotAvailable, OCCSError, StateConflict
 from products.models import Product
 from workspaces.models import Workspace
 
-CATEGORIES = ("unbox", "hand", "tryon", "app", "talk", "interview", "fx")
+CATEGORIES = (
+    "unbox",
+    "hand",
+    "tryon",
+    "use",
+    "app",
+    "tour",
+    "maker",
+    "talk",
+    "interview",
+    "promo",
+    "fx",
+)
 OFFER_KINDS = ("physical", "beauty", "app", "service", "space")
 PERSON = ("required", "optional", "none")
 #: Which plan feature unlocks each tier.
@@ -46,7 +59,19 @@ TIER_FEATURE = {
     "people": "ad_templates_people",
     "talking": "ad_templates_talking",
 }
+#: A premium template (`premium: true`) also needs this feature in the plan,
+#: or the add-on of the same key, which the `templates-premium` pack grants.
+PREMIUM_FEATURE = "ad_templates_premium"
+PREMIUM_PACK = "templates-premium"
+#: How many people and products one ad may show, each counting the main one.
+#: A plan without the key keeps one of each, as before.
+CAST_FEATURES = {"avatars": "ad_avatars_per_ad", "products": "ad_products_per_ad"}
 NEEDS = ("", "app_screenshot")
+#: A multi-shot template's shots (T3): `frame` animates the first frame,
+#: `photo` animates the product's next photo, `screen` sets its app screenshot
+#: in as a still — never through the video model, which would blur it.
+SHOT_USES = ("frame", "photo", "screen")
+SHOTS_MIN, SHOTS_MAX = 2, 5
 #: The shot tag that marks a product photo as an app screenshot.
 SCREEN_TAG = "screen"
 PROMPT_MAX = 900
@@ -56,7 +81,8 @@ KEYFRAME_ASPECT = "9:16"
 
 class TemplateRefusedError(OCCSError):
     """400 with its own code — `template_fit`, `needs_screenshot`,
-    `person_required`, `no_person`, `template_length`, `template_location` — so
+    `person_required`, `no_person`, `template_length`, `template_location`,
+    `no_frame` — so
     the page can say exactly what to change."""
 
     default_code = "template_refused"
@@ -66,6 +92,11 @@ class TemplateRefusedError(OCCSError):
 class TemplateUnavailableError(StateConflict):
     default_code = "template_unavailable"
     default_detail = "This template is not available yet."
+
+
+class CastLimitError(FeatureNotAvailable):
+    default_code = "cast_limit_reached"
+    default_detail = "Your plan does not allow that many people or products in one ad."
 
 
 class RerollLimitError(FeatureNotAvailable):
@@ -117,8 +148,29 @@ def validate_metadata(meta: Any) -> None:
             errors[field] = "A non-empty list of text."
     if meta.get("needs", "") not in NEEDS:
         errors["needs"] = "Blank or app_screenshot."
+    shots = meta.get("shots")
+    if shots is not None:
+        if (
+            not isinstance(shots, list)
+            or not SHOTS_MIN <= len(shots) <= SHOTS_MAX
+            or any(
+                not isinstance(shot, dict)
+                or shot.get("use") not in SHOT_USES
+                or not isinstance(shot.get("text", ""), str)
+                for shot in shots
+            )
+        ):
+            errors["shots"] = (
+                f"{SHOTS_MIN} to {SHOTS_MAX} shots, each {{use: frame, photo or screen, text}}."
+            )
+        elif any(shot["use"] == "screen" for shot in shots) and meta.get("needs") != (
+            "app_screenshot"
+        ):
+            errors["needs"] = "A screen shot needs app_screenshot."
     if not isinstance(meta.get("available", True), bool):
         errors["available"] = "true or false."
+    if not isinstance(meta.get("premium", False), bool):
+        errors["premium"] = "true or false."
     if errors:
         raise DjangoValidationError(
             {"metadata": [f"{field}: {message}" for field, message in errors.items()]}
@@ -146,6 +198,23 @@ def references_cap(workspace: Workspace, entitlements: Entitlements | None = Non
     return min(value, references.MAX_REFERENCES) if value >= 1 else references.MAX_REFERENCES
 
 
+def premium_open(entitlements: Entitlements) -> bool:
+    """The plan has premium templates, or the organization bought the pack."""
+    return bool(entitlements.feature(PREMIUM_FEATURE)) or entitlements.has_addon(PREMIUM_FEATURE)
+
+
+def premium_pack() -> str | None:
+    """The pack a locked premium tile offers, when one is on sale."""
+    from billing.models import Pack, PackKind
+
+    pack = Pack.objects.filter(code=PREMIUM_PACK, kind=PackKind.TEMPLATE, is_public=True).first()
+    return pack.code if pack else None
+
+
+def cast_limits(entitlements: Entitlements) -> dict[str, int]:
+    return {part: max(1, entitlements.int_feature(key, 1)) for part, key in CAST_FEATURES.items()}
+
+
 def _rows() -> list[CreativeOption]:
     return list(CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, is_active=True))
 
@@ -162,6 +231,17 @@ def feature_for(row: CreativeOption, *, with_person: bool) -> str:
     if tier == "product" and with_person:
         tier = "people"
     return TIER_FEATURE[tier]
+
+
+def shots_of(row: CreativeOption) -> list[dict[str, Any]]:
+    """The template's shots; empty for a one-shot template (one clip)."""
+    return list(row.metadata.get("shots") or [])
+
+
+def has_frame(row: CreativeOption) -> bool:
+    """Whether the template opens on a drawn first frame (a keyframe)."""
+    shots = shots_of(row)
+    return not shots or any(shot["use"] == "frame" for shot in shots)
 
 
 def has_screenshot(product: Product, photo_ids: set[str] | None = None) -> bool:
@@ -206,7 +286,12 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     plan = entitlements.plan
     lengths = _lengths()
     # One upgrade answer per tier feature, not one Plan query per tile.
-    upgrade = {feature: suggest_upgrade(plan, feature) for feature in TIER_FEATURE.values()}
+    upgrade = {
+        feature: suggest_upgrade(plan, feature)
+        for feature in (*TIER_FEATURE.values(), PREMIUM_FEATURE)
+    }
+    premium = premium_open(entitlements)
+    pack = None if premium else premium_pack()
     photo_ids = (
         {str(pk) for pk in product.reference_images.values_list("pk", flat=True)}
         if product is not None
@@ -216,7 +301,15 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     for row in _rows():
         meta = row.metadata
         feature = TIER_FEATURE[meta["tier"]]
-        locked = not entitlements.feature(feature)
+        lock = None
+        if not entitlements.feature(feature):
+            lock = {"feature": feature, "suggested_plan": upgrade[feature], "pack": None}
+        elif meta.get("premium") and not premium:
+            lock = {
+                "feature": PREMIUM_FEATURE,
+                "suggested_plan": upgrade[PREMIUM_FEATURE],
+                "pack": pack,
+            }
         out.append(
             {
                 "key": row.key,
@@ -242,15 +335,16 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "locations": meta["locations"],
                 "needs": meta.get("needs", ""),
                 "available": bool(meta.get("available", True)),
+                "premium": bool(meta.get("premium", False)),
+                "frame": has_frame(row),
                 "fit": fit_of(row, product, photo_ids=photo_ids),
-                "lock": (
-                    {"feature": feature, "suggested_plan": upgrade[feature]} if locked else None
-                ),
+                "lock": lock,
                 # A person on an optional template is a `people` render.
                 "person_lock": (
                     {
                         "feature": TIER_FEATURE["people"],
                         "suggested_plan": upgrade[TIER_FEATURE["people"]],
+                        "pack": None,
                     }
                     if meta["person"] == "optional"
                     and not entitlements.feature(TIER_FEATURE["people"])
@@ -263,6 +357,8 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         "categories": [{"key": key, "label": label} for key, label in _category_labels()],
         "locations": [{"key": key, "label": key.capitalize()} for key in _location_keys(out)],
         "rerolls": entitlements.int_feature("ad_rerolls"),
+        "avatars_per_ad": cast_limits(entitlements)["avatars"],
+        "products_per_ad": cast_limits(entitlements)["products"],
         "references_cap": references_cap(workspace, entitlements),
         "references_total": len(photo_ids),
     }
@@ -318,7 +414,70 @@ def resolve(
             detail={"feature": feature, "template": row.key, "plan": entitlements.plan.code},
             suggested_plan=suggest_upgrade(entitlements.plan, feature),
         )
+    if meta.get("premium") and not premium_open(entitlements):
+        raise FeatureNotAvailable(
+            "This is a premium template: upgrade, or buy the template pack.",
+            detail={"feature": PREMIUM_FEATURE, "template": row.key, "pack": premium_pack()},
+            suggested_plan=suggest_upgrade(entitlements.plan, PREMIUM_FEATURE),
+        )
     return row
+
+
+def _plan_for(entitlements: Entitlements, key: str, needed: int) -> str:
+    """The cheapest public plan above this one that allows `needed` of `key`."""
+    from billing.models import Plan
+
+    current = entitlements.plan.price_monthly_cents
+    for plan in Plan.objects.filter(is_public=True, price_monthly_cents__gt=current).order_by(
+        "price_monthly_cents", "sort_order", "id"
+    ):
+        value = plan.feature(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= needed:
+            return str(plan.code)
+    return suggest_upgrade(entitlements.plan, key)
+
+
+def resolve_cast(
+    workspace: Workspace,
+    *,
+    avatar: Any,
+    product: Product,
+    extra_avatars: list[int],
+    extra_products: list[int],
+) -> tuple[list[Any], list[Product]]:
+    """The people and products beside the main ones, each checked: none twice,
+    no more than the plan's `ad_avatars_per_ad` / `ad_products_per_ad`
+    (counting the main one), every one this brand's and usable now."""
+    if extra_avatars and avatar is None:
+        raise ValidationError({"extra_avatars": "Pick the main avatar first."})
+    avatar_ids = [avatar.pk, *extra_avatars] if avatar is not None else []
+    product_ids = [product.pk, *extra_products]
+    for field, ids in (("extra_avatars", avatar_ids), ("extra_products", product_ids)):
+        if len(set(ids)) != len(ids):
+            raise ValidationError({field: "The same one is in the ad twice."})
+    entitlements = entitlements_for(workspace)
+    limits = cast_limits(entitlements)
+    for part, ids in (("avatars", avatar_ids), ("products", product_ids)):
+        if len(ids) > limits[part]:
+            key = CAST_FEATURES[part]
+            raise CastLimitError(
+                f"Your plan allows {limits[part]} {part[:-1]}"
+                f"{'s' if limits[part] != 1 else ''} in one ad.",
+                detail={"feature": key, "limit": limits[part], "asked": len(ids)},
+                suggested_plan=_plan_for(entitlements, key, len(ids)),
+            )
+    people = []
+    if extra_avatars:
+        from brand.services import avatars
+
+        people = [avatars.resolve_for_render(workspace, pk) for pk in extra_avatars]
+    found = Product.objects.filter(workspace=workspace, pk__in=extra_products).in_bulk()
+    if len(found) != len(extra_products):
+        raise NotFound
+    products = [found[pk] for pk in extra_products]
+    if any(not item.reference_images.exists() for item in products):
+        raise ValidationError({"extra_products": "Every product in the ad needs a photo."})
+    return people, products
 
 
 def speaks(row: CreativeOption) -> bool:
@@ -375,13 +534,19 @@ def _location(row: CreativeOption, location: str) -> str:
 
 
 def keyframe_prompt(
-    row: CreativeOption, *, product: Product, location: str = "", person: str = ""
+    row: CreativeOption,
+    *,
+    product: Product,
+    location: str = "",
+    person: str = "",
+    also: tuple[str, ...] = (),
 ) -> str:
-    """The first frame, filled. `person` is the avatar's description or blank."""
+    """The first frame, filled. `person` is the avatar's description or blank;
+    `also` names the other products in the ad."""
     prompt = str(row.metadata["keyframe_prompt"])
     optional = f" {person} is in the frame, natural and unposed." if person else ""
     return (
-        prompt.replace("{product}", product.name)
+        prompt.replace("{product}", " and ".join((product.name, *also)))
         .replace("{location}", _location(row, location))
         .replace("{person_optional}", optional)
         .replace("{person}", person or "A person")
@@ -392,17 +557,29 @@ def motion_prompt(row: CreativeOption) -> str:
     return str(row.metadata["motion_prompt"])
 
 
-def script_text(row: CreativeOption, script: dict[str, Any] | None, product: Product) -> str:
-    """The post caption a render carries: the person's script, or the row's."""
-    parts = []
+def script_parts(
+    row: CreativeOption, script: dict[str, Any] | None, product: Product
+) -> dict[str, str]:
+    """Hook, body and call to action: the person's words, or the row's, filled."""
     base = row.metadata["script"]
+    out = {}
     for part in ("hook", "body", "cta"):
         value = (script or {}).get(part)
         text = value if isinstance(value, str) else base[part]
-        text = text.replace("{product}", product.name).strip()[:SCRIPT_MAX]
-        if text:
-            parts.append(text)
-    return "\n".join(parts)
+        out[part] = text.replace("{product}", product.name).strip()[:SCRIPT_MAX]
+    return out
+
+
+def script_text(row: CreativeOption, script: dict[str, Any] | None, product: Product) -> str:
+    """The post caption a render carries: the person's script, or the row's."""
+    return "\n".join(text for text in script_parts(row, script, product).values() if text)
+
+
+def shot_line(text: str, product: Product, script: dict[str, str]) -> str:
+    """A shot's kinetic line: `{product}`, `{hook}`, `{body}`, `{cta}` filled."""
+    for key, value in (("product", product.name), *script.items()):
+        text = text.replace("{" + key + "}", value)
+    return text.strip()
 
 
 # -----------------------------------------------------------------------------
@@ -433,21 +610,28 @@ def create_keyframe(
     avatar: Any = None,
     location: str = "",
     reroll_of: Generation | None = None,
+    extra_avatars: list[Any] | None = None,
+    extra_products: list[Product] | None = None,
 ) -> Generation:
     """The first frame as a PENDING image generation; the caller queues it.
 
     The avatar's portrait travels as a `person` asset — never to the quality
     gate, which holds the *product* to its photos and must not score a face.
     """
+    if not has_frame(row):
+        raise TemplateRefusedError(
+            "This template has no first frame: it is made from the product's own photos.",
+            code="no_frame",
+        )
     from ai.services import pipeline
 
     root: Generation | None = None
     if reroll_of is not None:
-        marker = (reroll_of.creative or {}).get("ad_template") or {}
-        if marker.get("template") is None:
+        parent = (reroll_of.creative or {}).get("ad_template") or {}
+        if parent.get("template") is None:
             raise ValidationError({"reroll_of": "That generation is not a template keyframe."})
         root = Generation.objects.filter(
-            workspace=workspace, pk=marker.get("root") or reroll_of.pk
+            workspace=workspace, pk=parent.get("root") or reroll_of.pk
         ).first()
         if root is None:
             raise NotFound
@@ -455,12 +639,26 @@ def create_keyframe(
 
     person = ""
     assets: list[dict[str, Any]] = []
-    if avatar is not None:
+    people = [avatar, *(extra_avatars or [])] if avatar is not None else []
+    others = list(extra_products or [])
+    if people:
         from brand.services import avatars
 
-        person = avatars.describe(avatar)
-        assets = [{"media": avatar.portrait_id, "role": "person", "note": ""}]
-    marker = {"template": row.key, "location": location, "avatar": avatar.pk if avatar else None}
+        person = " and ".join(avatars.describe(item) for item in people)
+        assets = [{"media": item.portrait_id, "role": "person", "note": ""} for item in people]
+    for item in others:
+        photo = item.reference_images.order_by("pk").first()
+        assert photo is not None  # resolve_cast refused a product with no photo
+        assets.append({"media": photo.pk, "role": "product", "note": f"This is {item.name}."})
+    marker: dict[str, Any] = {
+        "template": row.key,
+        "location": location,
+        "avatar": avatar.pk if avatar else None,
+    }
+    if people[1:]:
+        marker["extra_avatars"] = [item.pk for item in people[1:]]
+    if others:
+        marker["extra_products"] = [item.pk for item in others]
     if root is not None:
         marker["root"] = root.pk
     return pipeline.create_generation(
@@ -468,7 +666,13 @@ def create_keyframe(
         user=user,
         kind=GenerationKind.IMAGE,
         mode=GenerationMode.PRODUCT,
-        prompt=keyframe_prompt(row, product=product, location=location, person=person),
+        prompt=keyframe_prompt(
+            row,
+            product=product,
+            location=location,
+            person=person,
+            also=tuple(item.name for item in others),
+        ),
         product=product,
         aspect=KEYFRAME_ASPECT,
         creative={
@@ -477,3 +681,100 @@ def create_keyframe(
             **({"avatar": avatar.pk} if avatar else {}),
         },
     )
+
+
+# -----------------------------------------------------------------------------
+# The script writer (S17-13, `AD_SCRIPT`)
+# -----------------------------------------------------------------------------
+LANGUAGE_NAMES = {"en": "English", "fr": "French", "it": "Italian"}
+SCRIPT_SYSTEM = (
+    "You write the script for a short vertical video ad from a template. "
+    "Three parts: a hook spoken or shown in the first two seconds, a body, and a call to "
+    "action. Keep the template's shape and beats; make the words specific to the product.\n"
+    "Rules:\n"
+    "- Write in the language asked for, and nothing else.\n"
+    "- Never invent a fact, a number, a price, a rating or a claim the brief does not give.\n"
+    "- Short spoken sentences; the whole script must be readable in the seconds given.\n"
+    "- No hashtags, no emoji, no links.\n"
+    "Reply with exactly three lines and nothing else:\n"
+    "HOOK: …\nBODY: …\nCTA: …"
+)
+_SCRIPT_LINE = re.compile(r"^\s*(HOOK|BODY|CTA)\s*:\s*(.+?)\s*$", re.I | re.M)
+
+
+def _script_from(body: str, brief: str) -> dict[str, str] | None:
+    """The three parts, or `None` when the reply is not the three lines asked
+    for or fails the rephrase checks (a number the brief never gave, a link)."""
+    from ai.services import rephrase
+
+    found = {key.lower(): text for key, text in _SCRIPT_LINE.findall(body)}
+    parts = {key: found.get(key, "")[:SCRIPT_MAX] for key in ("hook", "body", "cta")}
+    if not all(parts.values()) or not rephrase.acceptable(" ".join(parts.values()), brief):
+        return None
+    return parts
+
+
+def write_script(
+    workspace: Workspace, *, key: str, product: Product, language: str, seconds: int = 0
+) -> dict[str, Any]:
+    """The template's script, written for this product by the text model.
+
+    Synchronous, like the Tools suite: one short call. Paid in credits (the
+    `(TEXT, RECIPE)` price) and debited only when the words pass their checks;
+    a reply that fails them, or a model that is down, gives back the
+    template's own words, free (`by: "template"`)."""
+    from django.db import transaction
+
+    from ai.models import AITask
+    from ai.providers.llm_text import get_text_provider
+    from ai.services.costing import resolve_cost
+    from billing.services import ledger
+    from common.exceptions import ProviderError
+
+    peek = CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=str(key)).first()
+    row = resolve(
+        workspace,
+        key,
+        product=product,
+        with_person=bool(peek and peek.metadata.get("person") == "required"),
+    )
+    if language and language not in LANGUAGE_NAMES:
+        raise ValidationError({"language": "One of en, fr, it."})
+    price = resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.RECIPE)
+    entitlements = entitlements_for(workspace)
+    entitlements.require_credits(price)
+
+    base = script_parts(row, None, product)
+    meta = row.metadata
+    brief = "\n".join(
+        line
+        for line in (
+            f"Product: {product.name}",
+            f"About it: {product.short_description}" if product.short_description else "",
+            f"Template: {row.label} — beats: {' · '.join(meta['beats'])}",
+            f"Seconds: {seconds}" if seconds else "",
+            f"Language: {LANGUAGE_NAMES.get(language or 'en', 'English')}",
+            f"Starting hook: {base['hook']}",
+            f"Starting body: {base['body']}",
+            f"Starting call to action: {base['cta']}",
+        )
+        if line
+    )
+    parts = None
+    try:
+        result = get_text_provider(AITask.AD_SCRIPT, workspace=workspace).generate(
+            system=SCRIPT_SYSTEM, prompt=brief, n=1
+        )
+        parts = _script_from(result.variants[0].body if result.variants else "", brief)
+    except ProviderError:
+        parts = None
+    if parts is None:
+        return {**base, "by": "template", "credits": 0}
+    with transaction.atomic():
+        ledger.debit_credits(
+            workspace,
+            price,
+            quota=entitlements.quota("monthly_ai_credits"),
+            note=f"ad script {row.key}",
+        )
+    return {**parts, "by": "model", "credits": price}

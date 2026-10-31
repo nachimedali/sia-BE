@@ -52,10 +52,9 @@ class AvatarSerializer(serializers.Serializer[Any]):
     traits = serializers.DictField(child=serializers.CharField())
     languages = serializers.ListField(child=serializers.CharField())
     is_house = serializers.BooleanField()
-    likeness = serializers.CharField()
     consent = AvatarConsentSerializer(allow_null=True)
     #: `usable`, or why not: `over_limit`, `consent_revoked`,
-    #: `consent_required`, `plan`, `likeness`, `archived`.
+    #: `consent_required`, `plan`, `archived`.
     state = serializers.CharField()
     renders = serializers.IntegerField()
     created_at = serializers.DateTimeField()
@@ -110,7 +109,6 @@ class AvatarDraftRequestSerializer(serializers.Serializer[Any]):
 class AvatarDraftPortraitSerializer(serializers.Serializer[Any]):
     id = serializers.IntegerField()
     url = serializers.CharField(allow_null=True)
-    likeness = serializers.CharField()
 
 
 class AvatarDraftSerializer(serializers.Serializer[Any]):
@@ -121,6 +119,8 @@ class AvatarDraftSerializer(serializers.Serializer[Any]):
     credits = serializers.IntegerField()
     charged = serializers.IntegerField()
     error = serializers.CharField(allow_blank=True)
+    #: Served from unused faces of earlier batches: no model call, no credits.
+    reused = serializers.BooleanField()
 
 
 def _urls(workspace: Workspace, ids: list[int]) -> dict[int, str | None]:
@@ -149,7 +149,6 @@ def _avatar_rows(workspace: Workspace, rows: list[Avatar]) -> list[dict[str, Any
             "traits": avatar.traits,
             "languages": avatar.languages,
             "is_house": avatar.is_house,
-            "likeness": avatar.likeness,
             "consent": (
                 {
                     "signed_by": avatar.consent_signed_by,
@@ -180,12 +179,12 @@ def _draft(workspace: Workspace, draft: AvatarDraft) -> dict[str, Any]:
                 "status": draft.status,
                 "traits": draft.traits,
                 "portraits": [
-                    {"id": p["media"], "url": urls.get(p["media"]), "likeness": p["likeness"]}
-                    for p in draft.portraits
+                    {"id": p["media"], "url": urls.get(p["media"])} for p in draft.portraits
                 ],
                 "credits": draft.credits,
                 "charged": draft.credits if draft.charge_id else 0,
                 "error": draft.error,
+                "reused": draft.reused,
             }
         ).data
     )
@@ -238,10 +237,10 @@ class AvatarListView(APIView):
         responses={201: AvatarSerializer},
         summary="Save a new avatar",
         description=(
-            "Invented: from a ready draft's portrait; 422 `likeness_match` when it looks like a "
-            "known person, 409 `avatar_draft_not_ready`. Real: admin only (403), 402 "
-            "`feature_not_available` below the plan, 409 `avatar_consent_required` without a "
-            "signed consent, 400 `consent_signer` when the signer is not the person. Either: "
+            "Invented: from a ready draft's portrait; 409 `avatar_draft_not_ready`. "
+            "Real: admin only (403), 402 `feature_not_available` below the plan, "
+            "409 `avatar_consent_required` without a signed consent, "
+            "400 `consent_signer` when the signer is not the person. Either: "
             "402 `avatar_limit_reached` at `max_avatars`; 404 for another brand's draft or photo."
         ),
     )
@@ -276,6 +275,22 @@ class AvatarListView(APIView):
                 is_house=data["is_house"],
             )
         return Response(_one(workspace, avatar), status=status.HTTP_201_CREATED)
+
+
+class AvatarLimitsView(APIView):
+    permission_classes = _READ
+
+    @extend_schema(
+        responses={200: AvatarLimitsSerializer},
+        summary="The brand's avatar limits only: what Settings shows as used / max",
+    )
+    def get(self, request: Request) -> Response:
+        workspace = request_workspace(request)
+        return Response(
+            AvatarLimitsSerializer(
+                {**avatars.limits(workspace), "draft_credits": avatars.draft_price(workspace)}
+            ).data
+        )
 
 
 class AvatarDraftListView(APIView):

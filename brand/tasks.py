@@ -34,6 +34,14 @@ def run_avatar_draft(draft_id: int) -> None:
 
 
 @shared_task
+def release_stale_avatar_drafts() -> int:
+    """Daily: unpicked shareable portrait batches older than a week go to the pool."""
+    from brand.services.avatars import release_stale_drafts
+
+    return release_stale_drafts()
+
+
+@shared_task
 def run_avatar_angles(avatar_id: int) -> None:
     from brand.services.avatars import run_angles
 

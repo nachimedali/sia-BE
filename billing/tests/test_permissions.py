@@ -42,7 +42,7 @@ def test_the_permission_blocks_a_plan_without_the_feature(workspace, user) -> No
     assert body["error"]["code"] == "feature_not_available"
     # A2: a 402 always carries the upgrade payload, so the frontend renders an
     # upgrade prompt rather than an error toast.
-    assert body["error"]["upgrade"]["suggested_plan"] == "essential"
+    assert body["error"]["upgrade"]["suggested_plan"] == "discovery"
 
 
 def test_the_permission_allows_a_plan_with_the_feature(workspace, user, plans) -> None:

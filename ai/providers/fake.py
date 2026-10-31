@@ -172,6 +172,18 @@ class FakeTextProvider:
                 )
                 for i in range(n)
             ]
+        elif system.startswith("You write the script for a short vertical video ad"):
+            # The template script writer: the brief's product, in its words.
+            product = next(
+                (line[9:] for line in prompt.splitlines() if line.startswith("Product: ")), ""
+            )
+            variants = [
+                TextVariant(
+                    body=f"HOOK: Meet {product}.\nBODY: {product}, made for your day.\n"
+                    "CTA: Try it today."
+                )
+                for _ in range(n)
+            ]
         elif system.startswith(("You turn a product photography brief", "You write the motion")):
             # The Studio brief rewrite (`ai.services.rephrase`): the labelled
             # lines as one paragraph, every choice's words kept, nothing added
@@ -470,6 +482,7 @@ class FakeVideoComposer:
                     "image": hashlib.sha256(shot.image).hexdigest()[:16],
                     "seconds": shot.seconds,
                     "overlay": shot.overlay,
+                    "clip": shot.clip is not None,
                 }
                 for shot in shots
             ],

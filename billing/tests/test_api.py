@@ -29,9 +29,15 @@ def test_plans_are_public_so_the_pricing_page_needs_no_session(plans) -> None:
     response = APIClient().get(PLANS_URL)
 
     assert response.status_code == 200
-    # The 2026-10-21 packages; the legacy rows (Free, Trial, Pro, Advanced)
-    # stay for the accounts that sit on them, off the public list.
-    assert [row["code"] for row in response.json()] == ["spark", "essential", "growth", "scale"]
+    # The 2026-10-21 packages and Discovery; the legacy rows (Free, Trial,
+    # Pro, Advanced) stay for the accounts that sit on them, off the public list.
+    assert [row["code"] for row in response.json()] == [
+        "spark",
+        "discovery",
+        "essential",
+        "growth",
+        "scale",
+    ]
 
 
 def test_plan_payload_carries_the_quotas_the_pricing_page_renders(plans) -> None:
@@ -51,6 +57,7 @@ def test_non_public_plans_are_hidden(plans) -> None:
 
     assert [row["code"] for row in APIClient().get(PLANS_URL).json()] == [
         "spark",
+        "discovery",
         "essential",
         "scale",
     ]

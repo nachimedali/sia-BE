@@ -135,6 +135,15 @@ def apply_filters(
         except ValueError as exc:
             raise _bad("product", "invalid_product", "Product ids are numbers.") from exc
 
+    accounts = getlist("account")
+    if accounts:
+        try:
+            ids = [int(a) for a in accounts]
+        except ValueError as exc:
+            raise _bad("account", "invalid_account", "Account ids are numbers.") from exc
+        # Only a target names an account; a post that is merely planned has none.
+        queryset = queryset.filter(targets__social_account_id__in=ids)
+
     sources = getlist("source")
     if sources:
         unknown = sorted(set(sources) - set(PostSource.values))

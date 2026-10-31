@@ -18,12 +18,11 @@ class AvatarAdmin(ReadOnlyAdmin):
         "name",
         "workspace",
         "kind",
-        "likeness",
         "is_house",
         "created_at",
         "archived_at",
     )
-    list_filter = ("kind", "likeness", "is_house")
+    list_filter = ("kind", "is_house")
     search_fields = ("name", "workspace__name")
 
 

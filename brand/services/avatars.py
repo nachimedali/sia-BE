@@ -19,6 +19,7 @@ three; a portrait batch takes the organization row lock, like the trial quota.
 from __future__ import annotations
 
 import datetime as dt
+import io
 import logging
 from typing import Any
 
@@ -32,7 +33,7 @@ from ai.models import AITask, CreativeKind, CreativeOption, GenerationKind, Gene
 from billing.services import ledger
 from billing.services.entitlements import Entitlements, entitlements_for
 from billing.services.plans import suggest_upgrade
-from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus, Likeness
+from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus, PooledPortrait
 from common.exceptions import (
     FeatureNotAvailable,
     InsufficientCredits,
@@ -40,6 +41,7 @@ from common.exceptions import (
     ProviderError,
     StateConflict,
 )
+from common.tokens import digest
 from content.models import MediaAsset, MediaKind, MediaSource
 from workspaces.models import Organization, Workspace
 from workspaces.services.approvals import log
@@ -47,6 +49,10 @@ from workspaces.services.approvals import log
 logger = logging.getLogger(__name__)
 
 PORTRAITS_PER_DRAFT = 4
+#: A shareable batch nobody picked from is released to the pool after this.
+POOL_RELEASE_AFTER = dt.timedelta(days=7)
+#: Trimmed off each side of a grid quadrant, so no seam or neighbour shows.
+GRID_INSET = 0.03
 ANGLES = ("three-quarter left", "three-quarter right", "profile")
 REAL_PHOTOS = (3, 5)
 LANGUAGES = ("en", "fr", "it")
@@ -73,12 +79,6 @@ class AvatarDraftsExhaustedError(FeatureNotAvailable):
 class ConsentRequiredError(StateConflict):
     default_code = "avatar_consent_required"
     default_detail = "A real person needs recorded consent, and it must still stand."
-
-
-class LikenessMatchError(OCCSError):
-    status_code = 422
-    default_code = "likeness_match"
-    default_detail = "This face is too close to a well-known person. Pick another portrait."
 
 
 class AvatarRefusedError(OCCSError):
@@ -124,8 +124,6 @@ def state_of(avatar: Avatar, usable: set[int], *, real_allowed: bool) -> str:
             return "consent_required"
         if not real_allowed:
             return "plan"
-    if avatar.likeness == Likeness.MATCH:
-        return "likeness"
     if avatar.pk not in usable:
         return "over_limit"
     return "usable"
@@ -215,11 +213,41 @@ def describe(avatar: Avatar | None = None, *, traits: dict[str, str] | None = No
 
 
 def _portrait_prompt(traits: dict[str, str]) -> str:
+    """One image, four faces: the batch is a single call (owner, 2026-10-27)."""
     return (
-        f"Head-and-shoulders portrait photo, square, plain light background, soft daylight. "
-        f"{describe(traits=traits)}. A believable everyday person who does not resemble any "
-        "real or famous person. Natural skin, no retouching, no text, no logo, no watermark."
+        "A square 2x2 grid of four separate head-and-shoulders portrait photos of four "
+        "different people, one in each quadrant, edge to edge with no borders, gaps or text. "
+        f"Each person fits this description: {describe(traits=traits)}. Make the four clearly "
+        "different from one another in face, hair and features. Plain light background, soft "
+        "daylight, the face centred in its quadrant. Believable everyday people who do not "
+        "resemble any real or famous person. Natural skin, no retouching, no text, no logo, "
+        "no watermark."
     )
+
+
+def pool_key(traits: dict[str, str], prompt: str) -> str:
+    """The key a shareable batch's faces are pooled under; blank for a batch
+    with a free-text note, whose words are the brand's own and stay private."""
+    return "" if traits.get("note") else digest(prompt)
+
+
+def split_grid(content: bytes) -> list[bytes]:
+    """The four quadrants of a 2x2 grid — top left, top right, bottom left,
+    bottom right — each trimmed at the seams and squared, as PNG."""
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(content)).convert("RGB")
+    half_w, half_h = image.width // 2, image.height // 2
+    side = min(half_w, half_h)
+    inset = round(side * GRID_INSET)
+    out = []
+    for left, top in ((0, 0), (half_w, 0), (0, half_h), (half_w, half_h)):
+        x = left + (half_w - side) // 2 + inset
+        y = top + (half_h - side) // 2 + inset
+        buffer = io.BytesIO()
+        image.crop((x, y, x + side - 2 * inset, y + side - 2 * inset)).save(buffer, "PNG")
+        out.append(buffer.getvalue())
+    return out
 
 
 # -----------------------------------------------------------------------------
@@ -245,6 +273,8 @@ def start_draft(workspace: Workspace, *, user: Any, raw_traits: Any) -> AvatarDr
             suggested_plan=suggest_upgrade(entitlements.plan, "max_avatars"),
         )
     price = draft_price(workspace)
+    prompt = _portrait_prompt(traits)
+    key = pool_key(traits, prompt)
     with transaction.atomic():
         Organization.objects.select_for_update().filter(pk=workspace.organization_id).exists()
         used = drafts_used(workspace.organization)
@@ -254,14 +284,19 @@ def start_draft(workspace: Workspace, *, user: Any, raw_traits: Any) -> AvatarDr
                 detail={"feature": "avatar_drafts_monthly", "limit": monthly, "used": used},
                 suggested_plan=suggest_upgrade(entitlements.plan, "avatar_drafts_monthly"),
             )
-        entitlements.require_credits(price)
+        pooled = _claim(workspace, key) if key else []
+        if not pooled:
+            entitlements.require_credits(price)
         draft = AvatarDraft.objects.create(
             workspace=workspace,
             created_by=user,
             traits=traits,
-            prompt=_portrait_prompt(traits),
-            credits=price,
+            prompt=prompt,
+            pool_key=key,
+            reused=bool(pooled),
+            credits=0 if pooled else price,
         )
+        PooledPortrait.objects.filter(pk__in=[row.pk for row in pooled]).update(claimed_by=draft)
     from brand.tasks import run_avatar_draft
 
     run_avatar_draft.delay(draft.pk)
@@ -269,21 +304,79 @@ def start_draft(workspace: Workspace, *, user: Any, raw_traits: Any) -> AvatarDr
     return draft
 
 
+def _claim(workspace: Workspace, key: str) -> list[PooledPortrait]:
+    """Four unclaimed faces under `key` from another organization, locked for
+    this transaction (skipping any another request holds), or none."""
+    rows = list(
+        PooledPortrait.objects.select_for_update(skip_locked=True)
+        .filter(pool_key=key, claimed_by__isnull=True)
+        .exclude(released_by_id=workspace.organization_id)[:PORTRAITS_PER_DRAFT]
+    )
+    return rows if len(rows) == PORTRAITS_PER_DRAFT else []
+
+
+def _copy_pooled(draft: AvatarDraft) -> AvatarDraft:
+    """A batch served from the pool, outside the request's locks: each face is
+    copied into this brand's own files, so nothing of the releasing brand is
+    referenced. No model call, no credits."""
+    claimed = PooledPortrait.objects.filter(claimed_by=draft).select_related("source")
+    portraits = []
+    for index, row in enumerate(claimed):
+        with row.source.file.open("rb") as handle:
+            content = handle.read()
+        copy = _ingest(draft.workspace, content, "image/png", f"avatar-{draft.pk}-{index}.png")
+        portraits.append({"media": copy.pk})
+    draft.portraits = portraits
+    draft.status = DraftStatus.READY
+    draft.finished_at = timezone.now()
+    draft.save(update_fields=["portraits", "status", "finished_at"])
+    return draft
+
+
+def _release(draft: AvatarDraft, *, keep: int | None = None) -> int:
+    """Closes a shareable batch and pools its faces, all but `keep`."""
+    rows = [
+        PooledPortrait(
+            pool_key=draft.pool_key,
+            source_id=portrait["media"],
+            released_by_id=draft.workspace.organization_id,
+        )
+        for index, portrait in enumerate(draft.portraits)
+        if index != keep
+    ]
+    PooledPortrait.objects.bulk_create(rows, ignore_conflicts=True)
+    draft.status = DraftStatus.USED
+    draft.save(update_fields=["status"])
+    return len(rows)
+
+
+def release_stale_drafts(now: dt.datetime | None = None) -> int:
+    """Daily: shareable batches nobody picked from in a week give their four
+    faces to the pool. Returns how many faces were released."""
+    cutoff = (now or timezone.now()) - POOL_RELEASE_AFTER
+    released = 0
+    stale = AvatarDraft.objects.filter(status=DraftStatus.READY, created_at__lte=cutoff).exclude(
+        pool_key=""
+    )
+    for pk in stale.values_list("pk", flat=True):
+        with transaction.atomic():
+            locked = (
+                AvatarDraft.objects.select_for_update(of=("self",))
+                .select_related("workspace")
+                .get(pk=pk)
+            )
+            if locked.status == DraftStatus.READY:
+                released += _release(locked)
+    if released:
+        logger.info("avatar faces released to the pool", extra={"count": released})
+    return released
+
+
 def _ingest(workspace: Workspace, content: bytes, mime: str, name: str) -> MediaAsset:
     from content.services.media import ingest_media
 
     upload = SimpleUploadedFile(name, content, content_type=mime)
     return ingest_media(workspace=workspace, upload=upload, source=MediaSource.GENERATED)
-
-
-def _likeness(content: bytes) -> tuple[str, str]:
-    from ai.providers.likeness import get_likeness_checker
-
-    checker = get_likeness_checker()
-    if checker is None:
-        return Likeness.UNCHECKED, ""
-    result = checker.check(content)
-    return (Likeness.MATCH if result.match else Likeness.CLEAR), result.provider
 
 
 def run_draft(draft_id: int) -> AvatarDraft:
@@ -296,6 +389,8 @@ def run_draft(draft_id: int) -> AvatarDraft:
             return draft
         draft.status = DraftStatus.RUNNING
         draft.save(update_fields=["status"])
+    if draft.reused:
+        return _copy_pooled(draft)
 
     def fail(message: str) -> AvatarDraft:
         draft.status = DraftStatus.FAILED
@@ -309,16 +404,14 @@ def run_draft(draft_id: int) -> AvatarDraft:
             prompt=draft.prompt,
             reference_images=[],
             aspect="1:1",
-            n=PORTRAITS_PER_DRAFT,
+            n=1,
             batch=False,
         )
         portraits = []
-        for index, variant in enumerate(result.variants[:PORTRAITS_PER_DRAFT]):
-            likeness, provider = _likeness(variant.content)
-            asset = _ingest(
-                draft.workspace, variant.content, variant.mime, f"avatar-{draft.pk}-{index}.png"
-            )
-            portraits.append({"media": asset.pk, "likeness": likeness, "provider": provider})
+        faces = split_grid(result.variants[0].content) if result.variants else []
+        for index, face in enumerate(faces):
+            asset = _ingest(draft.workspace, face, "image/png", f"avatar-{draft.pk}-{index}.png")
+            portraits.append({"media": asset.pk})
     except ProviderError:
         logger.warning("avatar draft %s: provider error", draft.pk, exc_info=True)
         return fail("The portraits could not be drawn. No credits were taken.")
@@ -396,8 +489,6 @@ def create_synthetic(
     if not 0 <= index < len(draft.portraits):
         raise ValidationError({"index": "Pick one of the portraits."})
     picked = draft.portraits[index]
-    if picked["likeness"] == Likeness.MATCH:
-        raise LikenessMatchError
     portrait = MediaAsset.objects.filter(workspace=workspace, pk=picked["media"]).first()
     if portrait is None:
         raise NotFound
@@ -411,12 +502,17 @@ def create_synthetic(
             portrait=portrait,
             traits=draft.traits,
             languages=langs,
-            likeness=picked["likeness"],
-            likeness_provider=picked.get("provider", ""),
             created_by=user,
         )
         if is_house or not Avatar.objects.filter(workspace=workspace, is_house=True).exists():
             _make_house(avatar)
+        if draft.pool_key:
+            # A shareable batch closes once picked from; its other faces go
+            # to the pool, never to be picked here again.
+            locked = AvatarDraft.objects.select_for_update().get(pk=draft.pk)
+            if locked.status != DraftStatus.READY:
+                raise DraftNotReadyError(detail={"status": locked.status})
+            _release(locked, keep=index)
     from brand.tasks import run_avatar_angles
 
     run_avatar_angles.delay(avatar.pk)
@@ -517,7 +613,6 @@ def create_real(
             portrait=assets[photos[0]],
             angles=list(photos[1:]),
             languages=langs,
-            likeness=Likeness.UNCHECKED,
             consent_signed_by=signer,
             consent_signed_on=signed_on,
             consent_recorded_by=user,
@@ -559,8 +654,6 @@ def resolve_for_render(workspace: Workspace, avatar_id: Any) -> Avatar:
         raise NotFound
     if state in ("consent_revoked", "consent_required"):
         raise ConsentRequiredError(detail={"avatar": avatar.pk, "state": state})
-    if state == "likeness":
-        raise LikenessMatchError(detail={"avatar": avatar.pk})
     if state == "plan":
         raise FeatureNotAvailable(
             "Avatars of real people are not in your plan.",

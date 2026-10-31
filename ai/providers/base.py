@@ -203,11 +203,13 @@ class VideoProvider(Protocol):
 @dataclass(frozen=True)
 class ReelShot:
     """One shot in a reel: the still, how long it holds, and the line set over
-    it (empty for none)."""
+    it (empty for none). With `clip`, the shot plays that video (trimmed to
+    `seconds`) instead of holding the still."""
 
     image: bytes
     seconds: float
     overlay: str = ""
+    clip: bytes | None = None
 
 
 @dataclass(frozen=True)
