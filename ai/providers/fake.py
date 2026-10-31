@@ -179,8 +179,8 @@ class FakeTextProvider:
             )
             variants = [
                 TextVariant(
-                    body=f"HOOK: Meet {product}.\nBODY: {product}, made for your day.\n"
-                    "CTA: Try it today."
+                    body=f"HOOK: {product}, right where you use it.\n"
+                    f"BODY: {product}, made for your day.\nCTA: Try it today."
                 )
                 for _ in range(n)
             ]

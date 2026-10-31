@@ -129,3 +129,36 @@ def test_another_brand_or_organizations_product_is_404_and_flag_off_is_404(
         SCRIPT, {"template": "pour-shot", "product": oil.pk}, format="json", **here
     )
     assert response.status_code == 404
+
+
+# --- the hook rules (goose-skills `write-video-ad-script`, marketingskills `ad-creative`) ---
+
+
+def test_the_writer_is_told_the_hook_rules(auth_client: Any, oil: Any) -> None:
+    ask(auth_client, oil)
+
+    system = _fake_text_provider.calls[-1]["system"]
+    assert "12 words or fewer" in system
+    assert "Introducing" in system and "Have you ever" in system  # dead openers named
+    assert "one promise" in system.lower()
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        "Introducing the oil you will pour on everything.",
+        "Have you ever tasted oil pressed this morning?",
+        "This is the slow pour of a golden oil that was pressed this very morning in the grove.",
+    ],
+)
+def test_a_dead_opener_or_a_long_hook_gives_back_the_templates_own_free(
+    auth_client: Any, oil: Any, monkeypatch: Any, hook: str
+) -> None:
+    answer(
+        monkeypatch, f"HOOK: {hook}\nBODY: Pressed and bottled the same week.\nCTA: Order it today."
+    )
+    before = ledger.credit_balance(oil.workspace)
+    body = ask(auth_client, oil).json()
+
+    assert body["by"] == "template" and body["credits"] == 0
+    assert ledger.credit_balance(oil.workspace) == before

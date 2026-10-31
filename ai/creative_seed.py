@@ -1238,12 +1238,6 @@ CLAIM_PHRASES: dict[str, list[str]] = {
         "peint à la main",
     ],
     "natural": ["100% natural", "all natural", "100% naturel", "100% naturelle"],
-    "made-in-tunisia": [
-        "made in tunisia",
-        "produit de tunisie",
-        "fabriqué en tunisie",
-        "fait en tunisie",
-    ],
     "award-winning": [
         "award-winning",
         "award winning",
@@ -1276,7 +1270,6 @@ CLAIMS = [
         ("organic", "Organic", "Certificate from an accredited body"),
         ("handmade", "Hand-made", "Workshop photo or statement"),
         ("natural", "100% natural", "Full ingredient list"),
-        ("made-in-tunisia", "Made in Tunisia", "Origin certificate or label"),
         ("award-winning", "Award-winning", "Award name and year"),
         ("vegan", "Vegan", "Ingredient list or certification"),
         ("cruelty-free", "Cruelty-free", "Certification or supplier statement"),
@@ -1333,7 +1326,6 @@ SUGGESTIONS = [
         (
             "use_words",
             (
-                ("made-in-tunisia", "made in Tunisia"),
                 ("craft", "craft"),
                 ("new-season", "new season"),
                 ("our-story", "our story"),

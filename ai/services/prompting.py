@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ai.prompts.image_v1 import PROMPT_PREFIX as IMAGE_PROMPT_PREFIX
-from ai.prompts.text_v1 import SYSTEM_PROMPT as TEXT_SYSTEM_PROMPT
+from ai.prompts.text_v2 import SYSTEM_PROMPT as TEXT_SYSTEM_PROMPT
 from brand.services.kit import kit_for
 from brand.services.kit import prompt_lines as kit_prompt_lines
 from products import brief as product_brief

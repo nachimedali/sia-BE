@@ -687,14 +687,45 @@ def create_keyframe(
 # The script writer (S17-13, `AD_SCRIPT`)
 # -----------------------------------------------------------------------------
 LANGUAGE_NAMES = {"en": "English", "fr": "French", "it": "Italian"}
+#: The hook rules follow goose-skills `write-video-ad-script` (hook families,
+#: dead openers) and marketingskills `ad-creative`; the dead openers and the
+#: hook's length are also checked in code (`_script_from`), so a reply that
+#: ignores them falls back to the template's own words, free.
+DEAD_OPENERS = (
+    "introducing",
+    "meet ",
+    "imagine",
+    "picture this",
+    "in a world where",
+    "say goodbye to",
+    "are you tired of",
+    "tired of",
+    "have you ever",
+    "did you know",
+    "struggling with",
+    "looking for",
+    "what if i told you",
+    "stop scrolling",
+)
+HOOK_MAX_WORDS = 12
 SCRIPT_SYSTEM = (
     "You write the script for a short vertical video ad from a template. "
     "Three parts: a hook spoken or shown in the first two seconds, a body, and a call to "
     "action. Keep the template's shape and beats; make the words specific to the product.\n"
     "Rules:\n"
     "- Write in the language asked for, and nothing else.\n"
-    "- Never invent a fact, a number, a price, a rating or a claim the brief does not give.\n"
+    "- The hook is 12 words or fewer and uses one device: a moment the viewer recognises, "
+    "who it is for, the product already doing the thing, or one fact from the brief. "
+    "It must work with the sound off and say what the first shot shows.\n"
+    "- Never open with Introducing, Meet, Imagine, Picture this, In a world where, "
+    "Say goodbye to, Are you tired of, Have you ever, Did you know, Struggling with, "
+    "Looking for, What if I told you or Stop scrolling, nor with a greeting.\n"
+    "- One promise: the body pays off the hook with one demonstration or one true fact, "
+    "and says what it does for the viewer. Name the product by the body.\n"
+    "- Never invent a fact, a number, a price, a rating, a review or a claim the brief "
+    "does not give. A generated person is never a customer.\n"
     "- Short spoken sentences; the whole script must be readable in the seconds given.\n"
+    "- The call to action is one plain step the viewer can take.\n"
     "- No hashtags, no emoji, no links.\n"
     "Reply with exactly three lines and nothing else:\n"
     "HOOK: …\nBODY: …\nCTA: …"
@@ -704,12 +735,16 @@ _SCRIPT_LINE = re.compile(r"^\s*(HOOK|BODY|CTA)\s*:\s*(.+?)\s*$", re.I | re.M)
 
 def _script_from(body: str, brief: str) -> dict[str, str] | None:
     """The three parts, or `None` when the reply is not the three lines asked
-    for or fails the rephrase checks (a number the brief never gave, a link)."""
+    for, fails the rephrase checks (a number the brief never gave, a link), or
+    breaks the hook rules (too long, a dead opener)."""
     from ai.services import rephrase
 
     found = {key.lower(): text for key, text in _SCRIPT_LINE.findall(body)}
     parts = {key: found.get(key, "")[:SCRIPT_MAX] for key in ("hook", "body", "cta")}
     if not all(parts.values()) or not rephrase.acceptable(" ".join(parts.values()), brief):
+        return None
+    hook = parts["hook"].strip().lower()
+    if len(hook.split()) > HOOK_MAX_WORDS or hook.startswith(DEAD_OPENERS):
         return None
     return parts
 
