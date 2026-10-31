@@ -494,6 +494,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "content.tasks.recurrence_materialise",
         "schedule": crontab(minute=20),
     },
+    # S18: once a day, after the morning's scans, so a slot a week out is told
+    # about with a week to act.
+    "content-warn-recurrence": {
+        "task": "content.tasks.recurrence_warn",
+        "schedule": crontab(hour=7, minute=40),
+    },
 }
 
 # -----------------------------------------------------------------------------

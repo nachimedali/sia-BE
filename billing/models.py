@@ -249,6 +249,11 @@ class ReactionDetail(models.TextChoices):
     REACTORS = "REACTORS", "Per-type plus reactor identities"
 
 
+def default_credit_alert_levels() -> list[int]:
+    """The seeded starting point (owner, 2026-10-31); every row is edited in admin."""
+    return [50, 20]
+
+
 class Plan(CatalogueItem):
     #: The plan a new organization starts on and a lapsed subscription returns
     #: to — one row, chosen in admin (pricing.plan.md D-2). It used to be the
@@ -289,6 +294,9 @@ class Plan(CatalogueItem):
     max_tracked_competitors = models.IntegerField(default=0)
     storage_bytes = models.BigIntegerField(default=0)
     version_history_days = models.IntegerField(default=0)
+    #: S18: the credit balances that alert the organization on the way down,
+    #: each once per crossing. Admin-edited per plan; empty alerts on none.
+    credit_alert_levels = models.JSONField(default=default_credit_alert_levels, blank=True)
 
     # --- audience engagement (BUILD-PLAN L-4a) ---
     #: Minutes between audience-comment captures. `0` means this plan is

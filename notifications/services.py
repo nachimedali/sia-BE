@@ -158,3 +158,52 @@ def account_event(account: Any, *, reason: str) -> int:
             "subject": f"Reconnect {label} on {account.get_platform_display()}: {reason}",
         },
     )
+
+
+def _admins(workspace: Any) -> list[Any]:
+    from workspaces.models import Membership
+
+    return [
+        membership.user
+        for membership in Membership.objects.filter(
+            workspace=workspace, permissions__contains=["admin"]
+        ).select_related("user")
+    ]
+
+
+def template_slot_event(occurrence: Any, *, event_key: str) -> int:
+    """S18: a template slot that was skipped, or that will not go out — told to
+    the workspace's admins, who can top up or approve."""
+    template = occurrence.rule.source
+    product = occurrence.product
+    when = occurrence.slot_at.strftime("%Y-%m-%d %H:%M UTC")
+    title = f"{template.name} — {product.name}" if product is not None else template.name
+    return notify(
+        users=_admins(template.workspace),
+        workspace=template.workspace,
+        event_key=event_key,
+        payload={
+            "template": template.pk,
+            "product": product.pk if product is not None else None,
+            "post": occurrence.post_id,
+            "slot_at": occurrence.slot_at.isoformat(),
+            "reason": occurrence.skipped_reason,
+            "title": title,
+            "subject": f"{EventKey(event_key).label}: {title}, {when}",
+        },
+    )
+
+
+def credits_low_event(workspace: Any, *, level: int, balance: int) -> int:
+    """S18: the organization's credits fell to one of its plan's alert levels."""
+    return notify(
+        users=_admins(workspace),
+        workspace=workspace,
+        event_key=EventKey.CREDITS_LOW,
+        payload={
+            "level": level,
+            "balance": balance,
+            "title": f"{balance} credits left",
+            "subject": f"{EventKey.CREDITS_LOW.label}: {balance} credits left",
+        },
+    )

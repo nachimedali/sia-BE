@@ -109,7 +109,7 @@ class FakeGeneration:
     """Recording fake. Creates the same local row and marks it with a scripted
     status, without calling a provider."""
 
-    status: str = "succeeded"
+    status: str = "SUCCEEDED"
     body: str = "fake caption"
     costs: dict[tuple[str, str], int] = field(default_factory=dict)
     default_cost: int = 1
@@ -117,6 +117,8 @@ class FakeGeneration:
 
     #: Set to raise `CostNotConfiguredError`, which is what an unseeded price table does.
     unconfigured: bool = False
+    #: The picture an `IMAGE` generation's variant carries, when set.
+    media_asset: Any = None
 
     def resolve_cost(self, *, kind: str, mode: str) -> int:
         if self.unconfigured:
@@ -163,8 +165,13 @@ class FakeGeneration:
             prompt_template_version=prompt_template_version,
             status=self.status,
         )
-        if self.status == "succeeded":
-            GenerationVariant.objects.create(generation=generation, kind=kind, body=self.body)
+        if self.status == "SUCCEEDED":
+            GenerationVariant.objects.create(
+                generation=generation,
+                kind=kind,
+                body=self.body,
+                media_asset=self.media_asset if kind == "IMAGE" else None,
+            )
         return generation
 
 

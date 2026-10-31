@@ -128,6 +128,7 @@ from content.views import (
     PostTemplateViewSet,
     PostViewSet,
     RecurrenceRuleViewSet,
+    TemplateOptionsView,
 )
 from inbox.views import (
     InboxCommentDetailView,
@@ -515,6 +516,8 @@ urlpatterns = [
     # asks. Served rather than mirrored in the frontend so `rules.py`
     # stays the one declaration (P1-05).
     path("platform-rules/", PlatformRuleListView.as_view(), name="platform-rules"),
+    # S18. Ahead of the router, which would read "options" as a template id.
+    path("post-templates/options/", TemplateOptionsView.as_view(), name="post-template-options"),
     # --- ai ---
     path("ai/generate/", GenerateView.as_view(), name="ai-generate"),
     # A read, not a generation (P1-13): the corpus is category-shared, so

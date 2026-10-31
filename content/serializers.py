@@ -666,7 +666,38 @@ class PostTemplateSerializer(serializers.ModelSerializer[PostTemplate]):
         return value
 
     def validate_payload(self, value: dict[str, Any]) -> dict[str, Any]:
-        return templates.validate_payload(value or {})
+        request = self.context.get("request")
+        workspace = request_workspace(request) if request is not None else None
+        return templates.validate_payload(value or {}, workspace=workspace)
+
+
+class TemplateChoiceSerializer(serializers.Serializer[Any]):
+    key = serializers.CharField()
+    # Annotated: `label` shadows a `Field` attribute (see PlatformOptionSerializer).
+    label: Any = serializers.CharField()
+
+
+class TemplateProductSerializer(serializers.Serializer[Any]):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    has_photo = serializers.BooleanField()
+
+
+class TemplateAccountSerializer(serializers.Serializer[Any]):
+    id = serializers.IntegerField()
+    platform = serializers.CharField()
+    label: Any = serializers.CharField()
+
+
+class TemplateOptionsSerializer(serializers.Serializer[Any]):
+    """S18: what the template form offers — its placeholders, this
+    workspace's products and connected accounts, and the two modes."""
+
+    placeholders = TemplateChoiceSerializer(many=True)
+    products = TemplateProductSerializer(many=True)
+    accounts = TemplateAccountSerializer(many=True)
+    image_modes = TemplateChoiceSerializer(many=True)
+    text_modes = TemplateChoiceSerializer(many=True)
 
 
 class RecurrenceRuleSerializer(serializers.ModelSerializer[RecurrenceRule]):
@@ -687,6 +718,8 @@ class RecurrenceRuleSerializer(serializers.ModelSerializer[RecurrenceRule]):
             "rrule",
             "timezone",
             "horizon_days",
+            "starts_on",
+            "ends_on",
             "active",
             "recent_runs",
             "created_at",
@@ -700,9 +733,11 @@ class RecurrenceRuleSerializer(serializers.ModelSerializer[RecurrenceRule]):
     def get_recent_runs(self, rule: RecurrenceRule) -> list[dict[str, Any]]:
         """The newest drafts this rule made, read off the view's prefetch.
         Always drafts when made; the status says where each one is now."""
+        # A skipped S18 slot has no post yet; it is not a run.
+        made = [(occ, occ.post) for occ in rule.occurrences.all() if occ.post is not None]
         return [
-            {"slot_at": occ.slot_at, "post": occ.post_id, "status": occ.post.status}
-            for occ in list(rule.occurrences.all())[:RULE_RUNS_SHOWN]
+            {"slot_at": occ.slot_at, "post": post.pk, "status": post.status}
+            for occ, post in made[:RULE_RUNS_SHOWN]
         ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -720,6 +755,18 @@ class RecurrenceRuleSerializer(serializers.ModelSerializer[RecurrenceRule]):
             rrule=attrs.get("rrule", getattr(instance, "rrule", "")),
             timezone_name=attrs.get("timezone", getattr(instance, "timezone", "UTC")),
         )
+        request = self.context.get("request")
+        workspace = request_workspace(request) if request is not None else None
+        if workspace is None or not templates.rules_enabled(workspace):
+            # S18 off: From and Until did not exist.
+            attrs.pop("starts_on", None)
+            attrs.pop("ends_on", None)
+        starts = attrs.get("starts_on", getattr(instance, "starts_on", None))
+        ends = attrs.get("ends_on", getattr(instance, "ends_on", None))
+        if starts and ends and ends < starts:
+            raise recurrence.InvalidRecurrenceError(
+                "Until must be on or after From.", detail={"starts_on": starts, "ends_on": ends}
+            )
         return attrs
 
 

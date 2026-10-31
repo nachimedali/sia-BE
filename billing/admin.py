@@ -237,6 +237,7 @@ class PlanAdmin(ImmutableCodeAdmin):
                     "version_history_days",
                     "storage_bytes",
                     "counts_docs_against_quota",
+                    "credit_alert_levels",
                 ),
                 "description": (
                     "<strong>-1 means unlimited</strong> — except for "

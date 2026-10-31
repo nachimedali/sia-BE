@@ -31,6 +31,12 @@ class EventKey(models.TextChoices):
     #: The platform revoked access or removed a Page (SA-42): nothing publishes
     #: through the account until someone reconnects it.
     ACCOUNT_RECONNECT = "account.reconnect", "A connected account needs reconnecting"
+    #: S18: a template slot the balance could not pay for made no draft.
+    TEMPLATE_SLOT_SKIPPED = "template.slot_skipped", "A template slot was skipped"
+    #: S18: a template slot within the week that will not go out as it stands.
+    TEMPLATE_SLOT_AT_RISK = "template.slot_at_risk", "A template slot will not go out"
+    #: S18: the organization's credits fell to one of its plan's alert levels.
+    CREDITS_LOW = "credits.low", "Credits are running low"
 
 
 class Transport(models.TextChoices):
@@ -59,6 +65,10 @@ DEFAULT_TRANSPORTS: dict[str, list[str]] = {
     EventKey.THREAD_COMMENTED: [Transport.IN_APP],
     # Scheduled posts stop going out until someone acts: worth an email.
     EventKey.ACCOUNT_RECONNECT: [Transport.IN_APP, Transport.EMAIL],
+    # S18: each one is a post that will not go out unless someone acts.
+    EventKey.TEMPLATE_SLOT_SKIPPED: [Transport.IN_APP, Transport.EMAIL],
+    EventKey.TEMPLATE_SLOT_AT_RISK: [Transport.IN_APP, Transport.EMAIL],
+    EventKey.CREDITS_LOW: [Transport.IN_APP, Transport.EMAIL],
 }
 
 
