@@ -29,7 +29,7 @@ from rest_framework.exceptions import ValidationError
 from ai.models import CreativeKind, CreativeOption
 from content.models import MediaAsset, Platform
 from content.services.rules import formats_for
-from products.models import HashtagStyle, Product
+from products.models import EmojiStyle, HashtagStyle, Product
 
 TONE_KEYS = ("formal", "bold", "modern", "poetic")
 PHOTO_POLICY_KEYS = ("bg_remove", "restage", "unaltered", "logo_legible")
@@ -270,6 +270,20 @@ def _keyed_labels(kind: str, keys: Iterable[str]) -> list[str]:
     return [labels.get(k, k) for k in keys]
 
 
+_HASHTAG_LINES: dict[str, str] = {
+    HashtagStyle.NONE: "Use no hashtags.",
+    HashtagStyle.MINIMAL: "Use 1 to 3 hashtags.",
+    HashtagStyle.MODERATE: "Use 3 to 6 hashtags.",
+    HashtagStyle.HEAVY: "Use up to 15 hashtags.",
+}
+
+_EMOJI_LINES: dict[str, str] = {
+    EmojiStyle.NONE: "Use no emoji.",
+    EmojiStyle.LIGHT: "Use at most one or two emoji.",
+    EmojiStyle.EXPRESSIVE: "Emoji are welcome where they fit the line.",
+}
+
+
 def prompt_lines(product: Product) -> list[str]:
     """The brief as instructions. Empty fields say nothing — a prompt padded
     with "Features: none" teaches the model to invent some."""
@@ -293,8 +307,22 @@ def prompt_lines(product: Product) -> list[str]:
         lines.append(
             "Never use these words: " + ", ".join(f'"{w}"' for w in product.avoid_words) + "."
         )
-    if product.hashtags_style == HashtagStyle.NONE:
-        lines.append("Use no hashtags.")
+    if product.voice:
+        lines.append(f"Voice: {product.voice}.")
+    if product.moods:
+        lines.append("Mood: " + ", ".join(product.moods) + ".")
+    if product.hashtags_style in _HASHTAG_LINES:
+        lines.append(_HASHTAG_LINES[product.hashtags_style])
+    if product.emoji_style in _EMOJI_LINES:
+        lines.append(_EMOJI_LINES[product.emoji_style])
+    if product.ctas:
+        lines.append(
+            "Close with one of these calls to action: "
+            + ", ".join(f'"{c}"' for c in product.ctas)
+            + "."
+        )
+    if product.formats:
+        lines.append("Preferred formats: " + ", ".join(product.formats) + ".")
     if product.caption_length:
         lines.append(f"Caption length: {product.get_caption_length_display().lower()}.")
     if product.must_include:

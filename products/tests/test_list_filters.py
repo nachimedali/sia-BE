@@ -216,7 +216,14 @@ def test_summary_counts_the_whole_catalogue_per_status(
 
     body = auth_client.get(SUMMARY_URL, {"status": "ready"}).json()
 
-    assert body == {"all": 3, "ready": 2, "needs_reference": 1, "autopilot_on": 1}
+    assert body == {
+        "all": 3,
+        "ready": 2,
+        "needs_reference": 1,
+        "autopilot_on": 1,
+        "generated": 0,
+        "requires_check": 0,
+    }
 
 
 def test_summary_never_counts_a_sibling_workspace(

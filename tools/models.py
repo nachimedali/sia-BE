@@ -29,6 +29,10 @@ class Tool(models.TextChoices):
     HOOK = "hook", "Hook"
     THREAD_SPLITTER = "thread-splitter", "Thread splitter"
     BEST_TIME = "best-time", "Best time to post"
+    CTA = "cta", "CTA writer"
+    CAPTION_REWRITE = "caption-rewrite", "Caption rewriter"
+    TRANSLATE = "translate", "Translate"
+    ALT_TEXT = "alt-text", "Alt text"
 
 
 class ToolConfig(models.Model):

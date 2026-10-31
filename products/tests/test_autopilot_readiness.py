@@ -90,6 +90,7 @@ def test_autopilot_row_names_the_product_to_switch_on(
 
     assert row["status"] == MISSING
     assert row["target_id"] == autopilot_product.pk
+    assert row["facts"]["slug"] == autopilot_product.slug
 
 
 def test_the_cadence_is_reported_on_the_row_that_owns_it(
@@ -105,6 +106,7 @@ def test_the_cadence_is_reported_on_the_row_that_owns_it(
 
     assert row["facts"]["cadence_days"] == 5
     assert row["facts"]["lookahead_days"] == 20
+    assert row["facts"]["slug"] == autopilot_config.product.slug
 
 
 def test_a_weekday_schedule_is_reported_as_days_not_a_cadence(
@@ -135,6 +137,7 @@ def test_a_product_with_no_reference_image_is_not_a_ready_product(
     assert row["status"] == MISSING
     assert row["facts"]["ready"] == 0
     assert row["facts"]["total"] == 1
+    assert row["facts"]["slug"].startswith("unphotographed-")
 
 
 def test_an_empty_credit_balance_blocks(auth_client: Any, autopilot_config: Any) -> None:

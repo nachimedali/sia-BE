@@ -77,6 +77,8 @@ def test_results_are_grouped_and_counted(auth_client: Any, workspace: Any, user:
     assert hit["title"] == "Harvest glaze, fresh from the kiln."
     assert hit["status"] == "DRAFT"
     assert hit["date_label"] == "Edited"
+    assert hit["slug"] == ""
+    assert body["results"]["products"][0]["slug"] == mug.slug
 
 
 def test_every_word_must_match_but_any_field_may_hold_it(
