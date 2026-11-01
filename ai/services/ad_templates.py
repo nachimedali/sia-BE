@@ -313,8 +313,8 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         out.append(
             {
                 "key": row.key,
-                "label": row.label,
-                "description": row.description,
+                "label": row.localized("label"),
+                "description": row.localized("description"),
                 "category": meta["category"],
                 "fits": meta["fits"],
                 "person": meta["person"],
@@ -322,7 +322,7 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "lengths": [
                     {
                         "key": key,
-                        "label": lengths[key].label,
+                        "label": lengths[key].localized("label"),
                         "seconds": int(lengths[key].metadata.get("seconds", 0)),
                         "units": int(meta["units"][key]),
                     }

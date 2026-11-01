@@ -14,6 +14,7 @@ from django.core.management.base import BaseCommand, CommandParser
 from django.db import transaction
 
 from ai.ad_template_seed import AD_TEMPLATE_CATALOG
+from ai.creative_i18n import translations_for
 from ai.creative_seed import CATALOG
 from ai.models import CreativeOption
 from ai.video_seed import VIDEO_CATALOG
@@ -36,6 +37,7 @@ class Command(BaseCommand):
             for position, spec in enumerate(rows):
                 defaults = {**spec, "sort_order": position * 10, "is_active": True}
                 key = defaults.pop("key")
+                defaults["translations"] = translations_for(kind, key)
                 if options["refresh"]:
                     _, was_created = CreativeOption.objects.update_or_create(
                         kind=kind, key=key, defaults=defaults

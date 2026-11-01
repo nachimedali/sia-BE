@@ -680,6 +680,9 @@ class CreativeOption(models.Model):
     colors = models.JSONField(default=list, blank=True, validators=[_validate_colors])
     prompt_fragment = models.CharField(max_length=300, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    #: `{"fr": {"label", "description"}, "it": {…}}` — English is the row's own
+    #: `label`/`description`; a missing language or field reads English.
+    translations = models.JSONField(default=dict, blank=True)
     sort_order = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
 
@@ -695,6 +698,14 @@ class CreativeOption(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind}/{self.key}"
+
+    def localized(self, field: str) -> str:
+        """`label` or `description` in the active interface language, English
+        when that language or field has no translation."""
+        from django.utils import translation
+
+        local = (self.translations or {}).get(translation.get_language() or "", {})
+        return str(local.get(field) or getattr(self, field))
 
     def clean(self) -> None:
         super().clean()
