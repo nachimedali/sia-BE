@@ -292,6 +292,31 @@ class InvoiceRowSerializer(serializers.Serializer[Any]):
     is_credit_note = serializers.BooleanField()
     #: Stripe's hosted PDF; blank for ours, which is downloaded by id.
     pdf_url = serializers.CharField(allow_blank=True)
+    #: The currency's decimals (TND 3, USD 2), for formatting the minor amounts.
+    minor_units = serializers.IntegerField()
+    # Ours only (null for Stripe's): the breakdown printed on the PDF.
+    net_minor = serializers.IntegerField(allow_null=True)
+    vat_minor = serializers.IntegerField(allow_null=True)
+    stamp_minor = serializers.IntegerField(allow_null=True)
+    #: What Konnect took for the invoiced orders; null on a credit note (no refund is recorded).
+    charged_minor = serializers.IntegerField(allow_null=True)
+    issued_at = serializers.DateTimeField(allow_null=True)
+    #: The number of the invoice a credit note corrects.
+    corrects = serializers.CharField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True)
+    lines = serializers.IntegerField(allow_null=True)
+    #: SHA-256 of the stored PDF; every download is that file.
+    sha256 = serializers.CharField(allow_blank=True)
+
+
+class InvoiceListSerializer(serializers.Serializer[Any]):
+    #: Who issues this organization's invoices: us (TND) or Stripe (USD).
+    issued_by = serializers.ChoiceField(choices=("composevision", "stripe"))
+    invoices = InvoiceRowSerializer(many=True)
+    #: Ours only: the 1st of next month (Africa/Tunis), when this month is invoiced.
+    next_issue_on = serializers.DateField(allow_null=True)
+    #: Ours only: the first day of a past month whose invoice is held back.
+    late = serializers.DateField(allow_null=True)
 
 
 class CheckoutResponseSerializer(serializers.Serializer[Any]):

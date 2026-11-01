@@ -1,79 +1,128 @@
-<!doctype html>
+{% comment %}
+  FACTURE / AVOIR · rendered ONCE, at issue, from the frozen context built by billing.services.invoicing.context().
+  Everything printed here is already formatted (French, the currency's own decimals). The stored PDF is
+  what every download serves, so editing this template or the issuer never changes an issued document.
+  Always French, whatever language the reader's app is in.
+{% endcomment %}<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>{% if credit_note_of %}Avoir{% else %}Facture{% endif %} {{ number }}</title>
+<title>{{ title }} {{ number }}</title>
 <style>
-  @page { size: A4; margin: 18mm 16mm 20mm; @bottom-center { content: "{{ number }} — page " counter(page) " / " counter(pages); font-size: 8pt; color: #666; } }
-  body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.5pt; color: #1a1a1a; }
-  h1 { font-size: 18pt; margin: 0 0 2mm; letter-spacing: .5px; }
-  .muted { color: #666; }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10mm; }
-  .head .meta { text-align: right; }
-  .parties { display: flex; gap: 10mm; margin-bottom: 8mm; }
-  .party { flex: 1; border: 0.3mm solid #ddd; border-radius: 2mm; padding: 4mm; }
-  .party h2 { font-size: 8pt; text-transform: uppercase; letter-spacing: 1px; color: #666; margin: 0 0 2mm; }
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 8pt; text-transform: uppercase; color: #666; border-bottom: 0.4mm solid #1a1a1a; padding: 2mm 1.5mm; }
-  td { border-bottom: 0.2mm solid #e5e5e5; padding: 2.5mm 1.5mm; vertical-align: top; }
-  .num { text-align: right; white-space: nowrap; }
-  .totals { width: 70mm; margin: 6mm 0 0 auto; }
-  .totals td { border: none; padding: 1.2mm 1.5mm; }
-  .totals .grand td { border-top: 0.4mm solid #1a1a1a; font-weight: bold; font-size: 11pt; padding-top: 2.5mm; }
-  .note { margin-top: 10mm; font-size: 8pt; color: #666; }
+  @page { size: A4; margin: 16mm 15mm 18mm; @bottom-center { content: "{{ title }} {{ number }} · page " counter(page) " / " counter(pages); font: 8pt/1 "DejaVu Sans", Arial, sans-serif; color: #6b6785; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 9.5pt/1.45 "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; color: #1e1745; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12mm; padding-bottom: 6mm; border-bottom: 2.4pt solid #2e2170; }
+  .brand { font: 600 17pt/1.1 Georgia, "DejaVu Serif", serif; color: #2e2170; }
+  .brand small { display: block; font: 8pt/1.4 "DejaVu Sans", Arial, sans-serif; color: #6b6785; letter-spacing: .06em; text-transform: uppercase; margin-top: 1mm; }
+  .doc { text-align: right; }
+  .doc h1 { margin: 0; font: 700 22pt/1 "DejaVu Sans", Arial, sans-serif; letter-spacing: .12em; color: {% if kind == 'credit_note' %}#a63e2a{% else %}#2e2170{% endif %}; }
+  .doc table { margin: 3mm 0 0 auto; border-collapse: collapse; }
+  .doc th { color: #6b6785; font-weight: 400; text-align: right; padding: .4mm 4mm .4mm 0; }
+  .doc td { font-weight: 700; text-align: right; padding: .4mm 0; }
+  .corrects { margin-top: 5mm; padding: 3mm 4mm; border-left: 3pt solid #a63e2a; background: #fbefec; }
+  .parties { display: flex; gap: 8mm; margin-top: 6mm; }
+  .party { flex: 1; padding: 4mm 5mm; border: .8pt solid #d9d4ee; border-radius: 2mm; }
+  .party h2 { margin: 0 0 2mm; font-size: 7.5pt; letter-spacing: .14em; text-transform: uppercase; color: #23918e; }
+  .party b { font-size: 10.5pt; }
+  .party p { margin: .6mm 0 0; }
+  .party .id { color: #4a4470; }
+  table.lines { width: 100%; margin-top: 6mm; border-collapse: collapse; }
+  table.lines tr { break-inside: avoid; }
+  table.lines td small.ref { white-space: nowrap; font-family: "DejaVu Sans Mono", monospace; font-size: 7.5pt; }
+  table.lines th { white-space: nowrap; font-size: 7.5pt; letter-spacing: .08em; text-transform: uppercase; color: #6b6785; text-align: right; padding: 0 2mm 2mm; border-bottom: 1pt solid #2e2170; }
+  table.lines th:first-child, table.lines td:first-child { text-align: left; padding-left: 0; }
+  table.lines td { padding: 2mm 2mm; text-align: right; vertical-align: top; border-bottom: .6pt solid #e6e2f4; white-space: nowrap; }
+  table.lines td:first-child { white-space: normal; }
+  table.lines td small { display: block; color: #6b6785; font-size: 8pt; margin-top: .6mm; }
+  .bottom { display: flex; justify-content: space-between; align-items: flex-start; gap: 10mm; margin-top: 6mm; }
+  .vat { font-size: 8pt; color: #4a4470; }
+  .vat table { border-collapse: collapse; }
+  .vat td, .vat th { padding: .8mm 3mm .8mm 0; text-align: right; }
+  .vat th { font-weight: 400; color: #6b6785; }
+  table.totals { border-collapse: collapse; min-width: 72mm; }
+  table.totals td { padding: 1.6mm 0 1.6mm 6mm; text-align: right; }
+  table.totals td:first-child { text-align: left; padding-left: 0; color: #4a4470; }
+  table.totals tr.stamp td { border-top: .6pt dashed #d9d4ee; }
+  table.totals tr.ttc td { border-top: 1.4pt solid #2e2170; font-weight: 700; font-size: 11.5pt; color: #2e2170; padding-top: 2.4mm; }
+  .closing { break-inside: avoid; }
+  .words { margin-top: 5mm; padding: 3mm 4mm; background: #f4f2fb; border-radius: 2mm; }
+  .paid { margin-top: 4mm; color: #4a4470; font-size: 8.5pt; }
+  .legal { margin-top: 6mm; padding-top: 3mm; border-top: .6pt solid #e6e2f4; font-size: 7.5pt; color: #6b6785; }
 </style>
 </head>
 <body>
-  <div class="head">
-    <div>
-      <h1>{% if credit_note_of %}AVOIR{% else %}FACTURE{% endif %}</h1>
-      <div class="muted">N° {{ number }}</div>
-      {% if credit_note_of %}<div class="muted">Annule la facture n° {{ credit_note_of }}</div>{% endif %}
+  <header class="top">
+    <div class="brand">{{ issuer.legal_name }}<small>ComposeVision · contenus pour les réseaux sociaux</small></div>
+    <div class="doc">
+      <h1>{{ title }}</h1>
+      <table>
+        <tr><th>N°</th><td>{{ number }}</td></tr>
+        <tr><th>Date d’émission</th><td>{{ issue_date }}</td></tr>
+        <tr><th>Mois facturé</th><td>{{ month }}</td></tr>
+      </table>
     </div>
-    <div class="meta">
-      <div>Date : {{ issued_on|date:"d/m/Y" }}</div>
-      <div>Période : {{ period|date:"m/Y" }}</div>
-    </div>
-  </div>
+  </header>
 
-  <div class="parties">
+  {% if kind == 'credit_note' %}
+  <div class="corrects">
+    <b>Avoir sur la facture n° {{ corrects }}</b>{% if corrects_date %} du {{ corrects_date }}{% endif %}.
+    {% if reason %}<br>Motif : {{ reason }}{% endif %}
+  </div>
+  {% endif %}
+
+  <section class="parties">
     <div class="party">
       <h2>Émetteur</h2>
-      <strong>{{ issuer.legal_name }}</strong><br>
-      {{ issuer.address|linebreaksbr }}<br>
-      Matricule fiscal : {{ issuer.tax_id }}<br>
-      RC : {{ issuer.trade_register }}
-      {% if issuer.email %}<br>{{ issuer.email }}{% endif %}
+      <b>{{ issuer.legal_name }}</b>
+      <p>{{ issuer.address|linebreaksbr }}</p>
+      <p class="id">Matricule fiscal : {{ issuer.matricule_fiscal }}</p>
+      <p class="id">RC : {{ issuer.rc }}</p>
+      <p class="id">{{ issuer.email }}</p>
     </div>
     <div class="party">
       <h2>Client</h2>
-      <strong>{{ buyer_name }}</strong>
-      {% if buyer_tax_id %}<br>Matricule fiscal : {{ buyer_tax_id }}{% endif %}
+      <b>{{ client.name }}</b>
+      {% if client.tax_id %}<p class="id">Matricule fiscal : {{ client.tax_id }}</p>{% endif %}
     </div>
-  </div>
+  </section>
 
-  {% if lines %}
-  <table>
-    <thead>
-      <tr><th>Désignation</th><th class="num">Montant HT</th><th class="num">TVA</th><th class="num">Montant TVA</th></tr>
-    </thead>
+  <table class="lines">
+    <thead><tr><th>Désignation</th><th>Montant HT</th><th>TVA</th><th>Montant TVA</th></tr></thead>
     <tbody>
-      {% for line in lines %}
-      <tr><td>{{ line.label }}</td><td class="num">{{ line.net }}</td><td class="num">{{ line.rate }}</td><td class="num">{{ line.vat }}</td></tr>
+      {% for l in lines %}
+      <tr><td><b>{{ l.designation }}</b><small>{{ l.detail }}</small>{% if l.ref %}<small class="ref">Réf. Konnect {{ l.ref }}</small>{% endif %}</td><td>{{ l.ht }}</td><td>{{ l.rate }}</td><td>{{ l.tva }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
-  {% elif reason %}
-  <p>Motif : {{ reason }}</p>
+
+  <div class="closing">
+  <div class="bottom">
+    <div class="vat">
+      <table>
+        <tr><th>Taux</th><th>Base HT</th><th>TVA</th></tr>
+        {% for v in vat_breakdown %}<tr><td>{{ v.rate }}</td><td>{{ v.base }}</td><td>{{ v.tva }}</td></tr>{% endfor %}
+      </table>
+    </div>
+    <table class="totals">
+      <tr><td>Total HT</td><td>{{ total_ht }}</td></tr>
+      <tr><td>TVA</td><td>{{ total_tva }}</td></tr>
+      {% if kind == 'invoice' %}<tr class="stamp"><td>Droit de timbre</td><td>{{ stamp }}</td></tr>{% endif %}
+      <tr class="ttc"><td>{% if kind == 'credit_note' %}Total TTC à rembourser{% else %}Total TTC{% endif %}</td><td>{{ total_ttc }}</td></tr>
+    </table>
+  </div>
+
+  <p class="words">{% if kind == 'credit_note' %}Arrêté le présent avoir{% else %}Arrêtée la présente facture{% endif %} à la somme de : <b>{{ total_in_words }}</b>.</p>
+  {% if kind == 'invoice' %}
+  <p class="paid">Réglée par {{ paid_with }} : {{ charged }}, soit le montant exact prélevé pour ce mois. Aucun montant ne reste dû.</p>
+  {% else %}
+  <p class="paid">Le droit de timbre de la facture {{ corrects }} n’est pas remboursé. Le remboursement est effectué sur le moyen de paiement d’origine.</p>
   {% endif %}
 
-  <table class="totals">
-    <tr><td>Total HT</td><td class="num">{{ net }}</td></tr>
-    <tr><td>TVA</td><td class="num">{{ vat }}</td></tr>
-    <tr><td>Droit de timbre</td><td class="num">{{ stamp }}</td></tr>
-    <tr class="grand"><td>Total TTC</td><td class="num">{{ total }}</td></tr>
-  </table>
-
-  <p class="note">{% if credit_note_of %}Avoir émis en annulation de la facture citée.{% else %}Montants payés par carte, e-DINAR ou portefeuille via Konnect au cours de la période. Facture acquittée.{% endif %}</p>
+  <footer class="legal">
+    {{ issuer.legal_name }} · {{ issuer.address_line }} · MF {{ issuer.matricule_fiscal }} · RC {{ issuer.rc }} · {{ issuer.email }}<br>
+    Document émis électroniquement. Toute correction se fait par avoir ; cette {% if kind == 'credit_note' %}pièce{% else %}facture{% endif %} n’est jamais modifiée après émission.
+  </footer>
+  </div>
 </body>
 </html>

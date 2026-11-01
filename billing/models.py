@@ -1004,7 +1004,11 @@ class Invoice(AppendOnly):
     corrects = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="credit_notes"
     )
+    #: A credit note's reason, as printed on it.
+    reason = models.CharField(max_length=280, blank=True, default="")
     document = models.FileField(upload_to="invoices/")
+    #: SHA-256 of `document` at issue: every download is provably that file.
+    sha256 = models.CharField(max_length=64, blank=True, default="")
     issued_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
