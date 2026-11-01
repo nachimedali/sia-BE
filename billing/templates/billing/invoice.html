@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>{% if credit_note_of %}Avoir{% else %}Facture{% endif %} {{ number }}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm; @bottom-center { content: "{{ number }} — page " counter(page) " / " counter(pages); font-size: 8pt; color: #666; } }
+  body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.5pt; color: #1a1a1a; }
+  h1 { font-size: 18pt; margin: 0 0 2mm; letter-spacing: .5px; }
+  .muted { color: #666; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10mm; }
+  .head .meta { text-align: right; }
+  .parties { display: flex; gap: 10mm; margin-bottom: 8mm; }
+  .party { flex: 1; border: 0.3mm solid #ddd; border-radius: 2mm; padding: 4mm; }
+  .party h2 { font-size: 8pt; text-transform: uppercase; letter-spacing: 1px; color: #666; margin: 0 0 2mm; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 8pt; text-transform: uppercase; color: #666; border-bottom: 0.4mm solid #1a1a1a; padding: 2mm 1.5mm; }
+  td { border-bottom: 0.2mm solid #e5e5e5; padding: 2.5mm 1.5mm; vertical-align: top; }
+  .num { text-align: right; white-space: nowrap; }
+  .totals { width: 70mm; margin: 6mm 0 0 auto; }
+  .totals td { border: none; padding: 1.2mm 1.5mm; }
+  .totals .grand td { border-top: 0.4mm solid #1a1a1a; font-weight: bold; font-size: 11pt; padding-top: 2.5mm; }
+  .note { margin-top: 10mm; font-size: 8pt; color: #666; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <h1>{% if credit_note_of %}AVOIR{% else %}FACTURE{% endif %}</h1>
+      <div class="muted">N° {{ number }}</div>
+      {% if credit_note_of %}<div class="muted">Annule la facture n° {{ credit_note_of }}</div>{% endif %}
+    </div>
+    <div class="meta">
+      <div>Date : {{ issued_on|date:"d/m/Y" }}</div>
+      <div>Période : {{ period|date:"m/Y" }}</div>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party">
+      <h2>Émetteur</h2>
+      <strong>{{ issuer.legal_name }}</strong><br>
+      {{ issuer.address|linebreaksbr }}<br>
+      Matricule fiscal : {{ issuer.tax_id }}<br>
+      RC : {{ issuer.trade_register }}
+      {% if issuer.email %}<br>{{ issuer.email }}{% endif %}
+    </div>
+    <div class="party">
+      <h2>Client</h2>
+      <strong>{{ buyer_name }}</strong>
+      {% if buyer_tax_id %}<br>Matricule fiscal : {{ buyer_tax_id }}{% endif %}
+    </div>
+  </div>
+
+  {% if lines %}
+  <table>
+    <thead>
+      <tr><th>Désignation</th><th class="num">Montant HT</th><th class="num">TVA</th><th class="num">Montant TVA</th></tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+      <tr><td>{{ line.label }}</td><td class="num">{{ line.net }}</td><td class="num">{{ line.rate }}</td><td class="num">{{ line.vat }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif reason %}
+  <p>Motif : {{ reason }}</p>
+  {% endif %}
+
+  <table class="totals">
+    <tr><td>Total HT</td><td class="num">{{ net }}</td></tr>
+    <tr><td>TVA</td><td class="num">{{ vat }}</td></tr>
+    <tr><td>Droit de timbre</td><td class="num">{{ stamp }}</td></tr>
+    <tr class="grand"><td>Total TTC</td><td class="num">{{ total }}</td></tr>
+  </table>
+
+  <p class="note">{% if credit_note_of %}Avoir émis en annulation de la facture citée.{% else %}Montants payés par carte, e-DINAR ou portefeuille via Konnect au cours de la période. Facture acquittée.{% endif %}</p>
+</body>
+</html>

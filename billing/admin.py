@@ -18,12 +18,17 @@ from billing.models import (
     FEATURE_KEYS,
     CreditLedger,
     Currency,
+    Invoice,
+    InvoiceIssuer,
     Pack,
     PackPrice,
     Plan,
     PlanPrice,
+    PrepaidOrder,
     StripeEvent,
     Subscription,
+    TaxRate,
+    TaxStamp,
     VideoLedger,
 )
 from billing.services import ledger
@@ -78,10 +83,30 @@ class CurrencyAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     the database while any price or organization still points at it.
     """
 
-    list_display = ("code", "name", "symbol", "minor_units", "symbol_first", "is_active")
-    list_editable = ("symbol", "minor_units", "symbol_first", "is_active")
-    list_filter = ("is_active", "minor_units")
+    list_display = (
+        "code",
+        "name",
+        "symbol",
+        "minor_units",
+        "symbol_first",
+        "gateway",
+        "rate_from_usd",
+        "round_to_minor",
+        "is_active",
+    )
+    list_editable = ("symbol", "minor_units", "symbol_first", "rate_from_usd", "is_active")
+    list_filter = ("is_active", "minor_units", "gateway")
     search_fields = ("code", "name")
+
+
+@admin.register(TaxRate)
+class TaxRateAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """VAT added to converted prices (TND: 19%). To change a rate, add a row
+    with a later *valid from* rather than editing the one in force: orders
+    freeze the rate they were quoted at."""
+
+    list_display = ("country", "rate", "label", "valid_from")
+    list_filter = ("country",)
 
 
 class PlanPriceInline(admin.TabularInline):  # type: ignore[type-arg]
@@ -208,7 +233,7 @@ class PlanAdmin(ImmutableCodeAdmin):
         (
             "Trial",
             {
-                "fields": ("trial_days", "trial_post_quota"),
+                "fields": ("trial_days", "trial_post_quota", "prepaid_grace_days"),
                 "description": (
                     "Two different trials. <em>trial days</em> is a clock, for the paid "
                     "plans. <em>trial post quota</em> is the quota trial that replaced "
@@ -430,3 +455,83 @@ class StripeEventAdmin(ReadOnlyAdmin):
     list_filter = ("event_type",)
     search_fields = ("event_id",)
     date_hierarchy = "received_at"
+
+
+# TN payments (`payments-tunisia.md`) ------------------------------------------
+@admin.register(TaxStamp)
+class TaxStampAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """The stamp duty on each TND invoice (1.000 TND). Change it with a new row."""
+
+    list_display = ("country", "amount_minor", "label", "valid_from")
+
+
+@admin.register(InvoiceIssuer)
+class InvoiceIssuerAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """The Tunisian company on every TND invoice. No invoice is issued while
+    legal name, address, matricule fiscal or RC is blank."""
+
+    list_display = ("__str__", "tax_id", "trade_register")
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return not InvoiceIssuer.objects.exists()
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+
+@admin.register(PrepaidOrder)
+class PrepaidOrderAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Read-only: an order changes only when the gateway is read back."""
+
+    list_display = (
+        "pk",
+        "organization",
+        "kind",
+        "state",
+        "amount_minor",
+        "currency",
+        "created_at",
+        "paid_at",
+    )
+    list_filter = ("state", "kind")
+    search_fields = ("gateway_ref", "organization__name")
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Issued invoices are frozen. A correction is a credit note (action)."""
+
+    list_display = ("number", "organization", "period", "total_minor", "corrects", "issued_at")
+    search_fields = ("number", "organization__name")
+    actions = ("credit_note",)
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    @admin.action(description="Issue a credit note cancelling the selected invoices")
+    def credit_note(self, request: HttpRequest, queryset: Any) -> None:
+        from billing.services.invoicing import issue_credit_note
+        from common.exceptions import StateConflict
+
+        for invoice in queryset:
+            try:
+                note = issue_credit_note(invoice, reason=f"Annulation par {request.user}")
+            except StateConflict as exc:
+                self.message_user(request, f"{invoice.number}: {exc.detail}", messages.WARNING)
+                continue
+            self.message_user(request, f"{invoice.number}: credit note {note.number} issued.")

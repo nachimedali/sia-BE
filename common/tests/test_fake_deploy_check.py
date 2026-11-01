@@ -67,3 +67,21 @@ def test_the_platform_adapter_is_left_to_the_providers_own_check(settings) -> No
     for value in (None, True):
         settings.USE_FAKE_PLATFORM_ADAPTER = value
         assert _ids() == []
+
+
+def test_the_konnect_fake_is_tolerated_only_when_it_refuses(settings) -> None:
+    """TN payments: like Stripe's, the Konnect fake would grant a forged payment."""
+    _all_off(settings)
+    settings.USE_FAKE_PREPAID = True
+
+    assert _ids() == ["common.E010"]
+
+    settings.FAKE_BILLING_REFUSES = True
+    assert _ids() == ["common.W013"]
+
+
+def test_no_invoice_pdf_engine_is_a_warning(settings) -> None:
+    _all_off(settings)
+    settings.USE_FAKE_PDF_RENDERER = True
+
+    assert _ids() == ["common.W014"]

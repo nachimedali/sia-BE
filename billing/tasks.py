@@ -49,3 +49,36 @@ def expire_addon_trials() -> int:
     from workspaces.services.addons import expire_addon_trials as sweep
 
     return sweep()
+
+
+# TND prepaid periods (`payments-tunisia.md` §5) --------------------------------
+@shared_task(name="billing.tasks.reconcile_prepaid")
+def reconcile_prepaid() -> int:
+    """Every 10 minutes: re-read unconfirmed Konnect payments (a lost notification)."""
+    from billing.services.prepaid import reread_pending
+
+    return reread_pending()
+
+
+@shared_task(name="billing.tasks.prepaid_lifecycle")
+def prepaid_lifecycle() -> dict[str, int]:
+    """Daily: renewal reminders, grace, then the default plan."""
+    from billing.services.prepaid import run_lifecycle
+
+    return run_lifecycle()
+
+
+@shared_task(name="billing.tasks.audit_prepaid")
+def audit_prepaid() -> int:
+    """Nightly: paid orders read back again. Reports, never repairs."""
+    from billing.services.prepaid import audit_paid
+
+    return len(audit_paid())
+
+
+@shared_task(name="billing.tasks.issue_invoices")
+def issue_invoices() -> int:
+    """Daily: last month's TND invoices, and any month a failed run missed."""
+    from billing.services.invoicing import issue_due
+
+    return issue_due()

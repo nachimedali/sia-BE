@@ -190,7 +190,16 @@ AD_TEMPLATES_S17 = "ad_templates_s17"
 #: is one plain draft, and the options endpoint answers 404.
 TEMPLATE_RULES_S18 = "template_rules_s18"
 
+#: TN payments (`payments-tunisia.md`): visitors connected from Tunisia see TND,
+#: and an organization locked to TND pays prepaid periods, packs and extra
+#: workspaces through Konnect, with monthly French invoices. Off restores
+#: pre-change behaviour: every price is the catalogue's, every checkout is
+#: Stripe's, and the prepaid, order and invoice endpoints answer 404. **Off by
+#: default** — beta is deployed, so this one is promoted deliberately.
+TN_PAYMENTS_V1 = "tn_payments_v1"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
+    TN_PAYMENTS_V1: False,
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
     PLANNING_V3: True,

@@ -16,6 +16,7 @@ failure modes.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from billing.gateways.base import CheckoutSession
 from billing.gateways.stripe import get_billing_gateway
@@ -34,7 +35,15 @@ PACK_CODE_KEY = "pack_code"
 
 
 def start_purchase(
-    workspace: Workspace, *, pack_code: str, success_url: str, cancel_url: str
+    workspace: Workspace,
+    *,
+    pack_code: str,
+    success_url: str,
+    cancel_url: str,
+    country: str = "",
+    user: Any = None,
+    buyer_name: str = "",
+    buyer_tax_id: str = "",
 ) -> CheckoutSession:
     pack = Pack.objects.filter(code=pack_code, is_public=True).first()
     if pack is None:
@@ -53,6 +62,18 @@ def start_purchase(
             raise StateConflict(
                 "Premium templates are already open for your organization.",
                 code="already_unlocked",
+            )
+
+    # TN payments: a TND organization pays for the pack through Konnect.
+    from billing.services import flags, market
+
+    if flags.flag_enabled(workspace.organization, flags.TN_PAYMENTS_V1):
+        market.lock_currency(workspace.organization, country)
+        if market.uses_prepaid(workspace.organization):
+            from billing.services import prepaid
+
+            return prepaid.start_pack(
+                workspace, pack=pack, user=user, buyer_name=buyer_name, buyer_tax_id=buyer_tax_id
             )
 
     # Resolved by the organization's billing currency (per-country pricing),

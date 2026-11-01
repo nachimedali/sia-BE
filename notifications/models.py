@@ -37,6 +37,8 @@ class EventKey(models.TextChoices):
     TEMPLATE_SLOT_AT_RISK = "template.slot_at_risk", "A template slot will not go out"
     #: S18: the organization's credits fell to one of its plan's alert levels.
     CREDITS_LOW = "credits.low", "Credits are running low"
+    #: TN payments: a prepaid (TND) period ends soon and does not renew itself.
+    BILLING_RENEWAL_DUE = "billing.renewal_due", "Your plan needs renewing"
 
 
 class Transport(models.TextChoices):
@@ -68,6 +70,8 @@ DEFAULT_TRANSPORTS: dict[str, list[str]] = {
     # S18: each one is a post that will not go out unless someone acts.
     EventKey.TEMPLATE_SLOT_SKIPPED: [Transport.IN_APP, Transport.EMAIL],
     EventKey.TEMPLATE_SLOT_AT_RISK: [Transport.IN_APP, Transport.EMAIL],
+    # Nothing renews a prepaid period but the customer: always worth an email.
+    EventKey.BILLING_RENEWAL_DUE: [Transport.IN_APP, Transport.EMAIL],
     EventKey.CREDITS_LOW: [Transport.IN_APP, Transport.EMAIL],
 }
 

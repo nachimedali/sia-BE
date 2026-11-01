@@ -6,6 +6,7 @@ the test cannot assume they are still there). What it asserts is the contract:
 the catalogue lands, a second run adds nothing, and an operator's edit survives.
 """
 
+from decimal import Decimal
 from importlib import import_module
 
 import pytest
@@ -13,7 +14,7 @@ from django.apps import apps
 from django.db.models import Model
 
 from ai.models import AIModelRoute, CreativeOption, GenerationCost
-from billing.models import Currency, Pack, Plan, PlanPrice
+from billing.models import Currency, Pack, Plan, PlanPrice, TaxRate
 from categories.models import Category
 from tools.models import ToolConfig
 from trends.models import TrendSource
@@ -33,6 +34,7 @@ SEEDS = [
     "billing.migrations.0022_packages_2026_10",
     "billing.migrations.0023_spark_free_videos",
     "billing.migrations.0026_discovery_package",
+    "billing.migrations.0031_seed_tnd",
     "ai.migrations.0008_seed_catalog",
     "ai.migrations.0009_revise_reason",
     "ai.migrations.0011_catalog_v2",
@@ -51,6 +53,7 @@ MODELS: list[type[Model]] = [
     Plan,
     PlanPrice,
     Pack,
+    TaxRate,
     CreativeOption,
     GenerationCost,
     AIModelRoute,
@@ -162,6 +165,23 @@ def test_discovery_never_moves_an_edited_order_or_route() -> None:
     assert Plan.objects.get(code="essential").sort_order == 40
     assert Plan.objects.get(code="discovery").display_name == "Edited"
     assert AIModelRoute.objects.get(task="video_start", plan__code="discovery").model == "edited"
+
+
+def test_tnd_lands_off_sale_until_staff_set_a_rate_and_an_edit_survives() -> None:
+    """TN-02: TND is sold through Konnect, rounded to the dinar, at 19% VAT —
+    and not sold at all until someone has typed the rate in admin."""
+    _run_all()
+    tnd = Currency.objects.get(code="TND")
+    assert (tnd.minor_units, tnd.gateway, tnd.round_to_minor) == (3, "konnect", 1000)
+    assert tnd.rate_from_usd is None
+    assert TaxRate.objects.get(country="TN").rate == Decimal("0.1900")
+
+    Currency.objects.filter(pk=tnd.pk).update(rate_from_usd=Decimal("3.1"))
+    TaxRate.objects.filter(country="TN").update(label="Edited")
+    _run_all()
+
+    assert Currency.objects.get(pk=tnd.pk).rate_from_usd == Decimal("3.1")
+    assert TaxRate.objects.get(country="TN").label == "Edited"
 
 
 def test_the_guard_keeps_the_suite_off_the_seed(settings) -> None:

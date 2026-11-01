@@ -78,11 +78,17 @@ from billing.views import (
     BillingPortalView,
     CreditLedgerView,
     EntitlementsView,
+    InvoiceDocumentView,
+    InvoiceListView,
+    KonnectWebhookView,
     PackListView,
     PlanListView,
+    PrepaidOrderView,
+    PrepaidSummaryView,
     PurchaseView,
     StripeWebhookView,
     SubscribeView,
+    TopUpView,
     VideoLedgerView,
 )
 from brand.avatar_views import (
@@ -338,6 +344,16 @@ urlpatterns = [
     path("billing/purchase/", PurchaseView.as_view(), name="billing-purchase"),
     path("billing/portal/", BillingPortalView.as_view(), name="billing-portal"),
     path("billing/webhook/stripe/", StripeWebhookView.as_view(), name="billing-webhook-stripe"),
+    path("billing/webhook/konnect/", KonnectWebhookView.as_view(), name="billing-webhook-konnect"),
+    path("billing/prepaid/", PrepaidSummaryView.as_view(), name="billing-prepaid"),
+    path("billing/topup/", TopUpView.as_view(), name="billing-topup"),
+    path("billing/orders/<int:pk>/", PrepaidOrderView.as_view(), name="billing-order"),
+    path("billing/invoices/", InvoiceListView.as_view(), name="billing-invoices"),
+    path(
+        "billing/invoices/<int:pk>/document/",
+        InvoiceDocumentView.as_view(),
+        name="billing-invoice-document",
+    ),
     # --- channels ---
     # A plain path, not a router action: `{platform}` is not a workspace-scoped
     # pk, so there is no object here for the tenancy sweep (A52) to walk — the

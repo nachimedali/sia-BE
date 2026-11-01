@@ -207,3 +207,20 @@ def credits_low_event(workspace: Any, *, level: int, balance: int) -> int:
             "subject": f"{EventKey.CREDITS_LOW.label}: {balance} credits left",
         },
     )
+
+
+def renewal_due_event(workspace: Any, *, ends_at: Any, days_left: int) -> int:
+    """TN payments: the organization's prepaid period ends in `days_left` days."""
+    when = ends_at.date().isoformat()
+    title = f"Your plan ends on {when}"
+    return notify(
+        users=_admins(workspace),
+        workspace=workspace,
+        event_key=EventKey.BILLING_RENEWAL_DUE,
+        payload={
+            "days_left": days_left,
+            "ends_at": when,
+            "title": title,
+            "subject": f"{EventKey.BILLING_RENEWAL_DUE.label}: {title}",
+        },
+    )

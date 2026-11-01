@@ -47,6 +47,8 @@ RATELIMIT_REDIS_URL = _test_redis_url
 USE_FAKE_MAIL = True
 SENTRY_DSN = ""  # the suite never reports
 USE_FAKE_BILLING = True
+USE_FAKE_PREPAID = True
+USE_FAKE_PDF_RENDERER = True
 USE_FAKE_STORAGE = True
 USE_FAKE_PLATFORM_ADAPTER = True
 # Hermetic: the suite never reads a real social-provider key from `.env`. The
