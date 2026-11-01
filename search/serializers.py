@@ -11,6 +11,8 @@ from rest_framework import serializers
 class SearchHitSerializer(serializers.Serializer[Any]):
     type = serializers.ChoiceField(choices=["post", "product", "campaign"])
     id = serializers.IntegerField()
+    #: A product's address (`<name>-<ref>`); blank for posts and campaigns.
+    slug = serializers.CharField(allow_blank=True)
     title = serializers.CharField()
     #: The full caption or description; the client cuts the snippet.
     text = serializers.CharField(allow_blank=True)

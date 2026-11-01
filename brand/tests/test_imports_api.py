@@ -51,7 +51,7 @@ def accept_all(client: APIClient, pk: int) -> None:
 
 
 # --- reading ---------------------------------------------------------------------------
-def test_an_import_reads_the_site_into_five_sections(
+def test_an_import_reads_the_site_into_four_sections(
     auth_client: Any, workspace: Any, web: Any
 ) -> None:
     response = start(auth_client, "https://www.DjerbaOlive.tn/some/page")
@@ -67,7 +67,7 @@ def test_an_import_reads_the_site_into_five_sections(
     assert len(sections["products"]["items"]) == 4
     assert {"role": "Primary", "hex": "#3F5A1E"}.items() <= sections["palette"]["colors"][0].items()
     assert sections["palette"]["fonts"]["display"]["name"] == "Playfair Display"
-    assert all(c["relationship"] == "inferred" for c in sections["competitors"]["items"])
+    assert "competitors" not in sections
     assert body["result"]["identity"]["name"]["value"] == "Djerba Olive Co."
     assert body["result"]["market"]["category"]["name"] == "Food & Drink"
     assert body["pages_read"] >= 4
@@ -122,7 +122,6 @@ def test_a_bare_site_yields_empty_sections_not_made_up_ones(
 
     assert sections["products"]["items"] == []
     assert sections["palette"]["colors"] == []
-    assert sections["competitors"]["items"] == []
 
 
 @pytest.mark.parametrize(
@@ -246,7 +245,7 @@ def test_apply_needs_every_section_reviewed(auth_client: Any, workspace: Any, we
     assert response.status_code == 409
     error = response.json()["error"]
     assert error["code"] == "review_incomplete"
-    assert set(error["detail"]["missing"]) == {"products", "audience", "competitors", "palette"}
+    assert set(error["detail"]["missing"]) == {"products", "audience", "palette"}
 
 
 def test_apply_writes_a_brand_core_and_fills_only_blank_fields(

@@ -197,6 +197,10 @@ class Post(models.Model):
         max_length=16, choices=DeliveryMode.choices, blank=True
     )
     proposed_scheduled_at = models.DateTimeField(null=True, blank=True)
+    #: The accounts a template chose for this post (S18). Empty is every
+    #: connected account the platform plan allows, as before; when set,
+    #: `build_targets` publishes to these only.
+    planned_accounts = models.JSONField(default=list, blank=True)
     #: Set when the last approval stage clears (P2-11). While it is set, every
     #: content mutation is a 409 at the **service** layer — otherwise "approved"
     #: describes content that nobody approved. Revisions stay readable; an
@@ -758,6 +762,10 @@ class RecurrenceRule(models.Model):
     rrule = models.TextField(help_text="RFC 5545 RRULE, without the DTSTART line.")
     timezone = models.CharField(max_length=64, default="UTC")
     horizon_days = models.PositiveSmallIntegerField(default=30)
+    #: S18: the first and last local day the rule may make a slot on, both
+    #: inclusive; blank is "from now" and "for as long as it is active".
+    starts_on = models.DateField(null=True, blank=True)
+    ends_on = models.DateField(null=True, blank=True)
     active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -784,14 +792,44 @@ class RecurrenceOccurrence(models.Model):
     #: UTC, as every stored instant is. The local time it means is
     #: reconstructed from `rule.timezone` at display.
     slot_at = models.DateTimeField()
-    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="recurrence_occurrences")
+    #: S18: the product this slot's draft is for — one occurrence per product
+    #: per slot. Blank on a template that names none.
+    product = models.ForeignKey(
+        "products.Product",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="recurrence_occurrences",
+    )
+    #: Blank while a slot that was skipped waits to be made (S18): the row is
+    #: what stops a skipped slot from being announced again on every scan.
+    post = models.ForeignKey(
+        Post,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="recurrence_occurrences",
+    )
+    #: Why a slot has no post yet (`credits`); blank once it has one.
+    skipped_reason = models.CharField(max_length=32, blank=True)
+    #: When the week-ahead "this slot will not go out" notice was sent.
+    warned_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering: ClassVar[list[str]] = ["slot_at"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
-            models.UniqueConstraint(fields=["rule", "slot_at"], name="unique_recurrence_slot")
+            models.UniqueConstraint(
+                fields=["rule", "slot_at"],
+                condition=models.Q(product__isnull=True),
+                name="unique_recurrence_slot",
+            ),
+            models.UniqueConstraint(
+                fields=["rule", "slot_at", "product"],
+                condition=models.Q(product__isnull=False),
+                name="unique_recurrence_product_slot",
+            ),
         ]
 
     def __str__(self) -> str:

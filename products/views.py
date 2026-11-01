@@ -26,7 +26,13 @@ from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 from rest_framework.views import APIView
 
-from ai.models import CreativeKind, CreativeOption
+from ai.models import (
+    CreativeKind,
+    CreativeOption,
+    GenerationKind,
+    GenerationStatus,
+    GenerationVariant,
+)
 from billing.permissions import HasFeature
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
@@ -40,6 +46,7 @@ from products.serializers import (
     AutopilotReadinessSerializer,
     CompletenessCheckSerializer,
     DraftRejectRequestSerializer,
+    GeneratedImageSerializer,
     ProductCompletenessSerializer,
     ProductReferenceImagesUploadSerializer,
     ProductSerializer,
@@ -57,6 +64,7 @@ from products.services.products import (
     detach_reference_image,
     update_product,
 )
+from taste.models import CandidateState
 
 AUTOPILOT_FEATURE = "autopilot"
 
@@ -69,6 +77,9 @@ PRODUCT_STATUS_FILTERS: dict[str, Q] = {
     "needs_reference": Q(is_generation_ready=False),
     "high_completeness": Q(completeness_score__gte=HIGH_COMPLETENESS),
     "autopilot_on": Q(autopilot__enabled=True),
+    "generated": Q(generations__status=GenerationStatus.SUCCEEDED),
+    "requires_check": Q(posts__status=PostStatus.PENDING_REVIEW)
+    | Q(candidates__state=CandidateState.PENDING_REVIEW),
 }
 
 
@@ -106,7 +117,14 @@ class ProductViewSet(
                 enum=list(PRODUCT_STATUS_FILTERS),
                 description="An unknown value is a 400 rather than a silently full page.",
             ),
-            OpenApiParameter("platform", str, enum=Platform.values),
+            OpenApiParameter(
+                "platform",
+                str,
+                enum=Platform.values,
+                many=True,
+                explode=True,
+                description="Repeat for several; a product on any of them matches.",
+            ),
         ]
     )
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
@@ -132,17 +150,25 @@ class ProductViewSet(
                     code="invalid_status",
                     detail={"status": [status]},
                 )
-            queryset = queryset.filter(PRODUCT_STATUS_FILTERS[status])
+            # The two joined filters fan out to one row per matching post,
+            # candidate or generation; `id__in` keeps a product once.
+            queryset = queryset.filter(
+                id__in=Product.objects.filter(PRODUCT_STATUS_FILTERS[status]).values("id")
+            )
 
-        platform = params.get("platform")
-        if platform:
-            if platform not in Platform.values:
+        platforms = [p for p in params.getlist("platform") if p]
+        if platforms:
+            unknown = [p for p in platforms if p not in Platform.values]
+            if unknown:
                 raise OCCSError(
-                    f"Unknown platform: {platform}.",
+                    f"Unknown platform: {unknown[0]}.",
                     code="invalid_platform",
-                    detail={"platform": [platform]},
+                    detail={"platform": unknown},
                 )
-            queryset = queryset.filter(platforms__contains=[platform])
+            any_of = Q()
+            for platform in platforms:
+                any_of |= Q(platforms__contains=[platform])
+            queryset = queryset.filter(any_of)
 
         return queryset
 
@@ -155,11 +181,43 @@ class ProductViewSet(
         a filter, so its number must not change when it is pressed.
         """
         products = Product.objects.filter(workspace=request_workspace(request))
+        # One count per tile rather than one aggregate: three filters join
+        # posts, candidates and generations, and joined together they multiply.
         counts = {
-            key: Count("id", filter=PRODUCT_STATUS_FILTERS[key])
-            for key in ("ready", "needs_reference", "autopilot_on")
+            key: products.filter(rule).distinct().count()
+            for key, rule in PRODUCT_STATUS_FILTERS.items()
+            if key != "high_completeness"
         }
-        return Response(products.aggregate(all=Count("id"), **counts))
+        return Response({"all": products.count(), **counts})
+
+    @extend_schema(responses={200: ProductSerializer}, summary="A product by its address ref")
+    @action(detail=False, methods=["get"], url_path=r"by-ref/(?P<ref>[0-9a-f]{8})")
+    def by_ref(self, request: Request, ref: str) -> Response:
+        """`/app/products/<slug>-<ref>` resolves here: the ref alone decides,
+        so a renamed product keeps its address working."""
+        product = get_object_or_404(self.get_queryset(), ref=ref)
+        return Response(self.get_serializer(product).data)
+
+    @extend_schema(
+        responses={200: GeneratedImageSerializer(many=True)},
+        summary="Images generated for a product",
+    )
+    @action(detail=True, methods=["get"], url_path="generated-images")
+    def generated_images(self, request: Request, pk: str | None = None) -> Response:
+        product = self.get_object()
+        variants = (
+            GenerationVariant.objects.filter(
+                generation__product=product,
+                generation__status=GenerationStatus.SUCCEEDED,
+                kind=GenerationKind.IMAGE,
+                media_asset__isnull=False,
+            )
+            .select_related("media_asset")
+            .order_by("-generation__created_at", "rank", "id")
+        )
+        assert self.paginator is not None  # `pagination_class` is set on the view
+        page = self.paginator.paginate_queryset(variants, request, view=self)
+        return self.get_paginated_response(GeneratedImageSerializer(page, many=True).data)
 
     def perform_create(self, serializer: BaseSerializer[Product]) -> None:
         assert isinstance(serializer, ProductSerializer)  # always this view's own serializer_class

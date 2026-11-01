@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from functools import partial
 from typing import Any
 
 from django.db import transaction
@@ -124,7 +125,30 @@ def debit_credits(
         "credits debited",
         extra={"workspace_id": workspace.pk, "cost": cost, "balance_after": entry.balance_after},
     )
+    if not unlimited:
+        _alert_on_crossing(workspace, before=balance, after=entry.balance_after)
     return entry
+
+
+def _alert_on_crossing(workspace: Workspace, *, before: int, after: int) -> None:
+    """S18: tell the workspace when this debit took the pooled balance down past
+    one of the plan's alert levels. A crossing happens once per way down, so a
+    top-up arms the level again; after commit, so a rolled-back debit says
+    nothing."""
+    from billing.services.flags import TEMPLATE_RULES_S18, flag_enabled
+    from notifications.services import credits_low_event
+
+    organization = workspace.organization
+    plan = organization.plan
+    levels = [
+        level
+        for level in (plan.credit_alert_levels if plan is not None else None) or []
+        if isinstance(level, int) and after <= level < before
+    ]
+    if not levels or not flag_enabled(organization, TEMPLATE_RULES_S18):
+        return
+    for level in sorted(levels, reverse=True):
+        transaction.on_commit(partial(credits_low_event, workspace, level=level, balance=after))
 
 
 @transaction.atomic

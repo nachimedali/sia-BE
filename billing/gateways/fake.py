@@ -13,6 +13,7 @@ from billing.gateways.base import (
     BillingGatewayError,
     CheckoutMode,
     CheckoutSession,
+    GatewayInvoice,
     PortalSession,
     WebhookVerificationError,
 )
@@ -36,6 +37,7 @@ class FakeBillingGateway:
         self.fail_quantity_update = False
         self.checkout_calls: list[dict[str, Any]] = []
         self.portal_calls: list[dict[str, Any]] = []
+        self.invoices: list[GatewayInvoice] = []
 
     def create_checkout_session(
         self,
@@ -76,6 +78,9 @@ class FakeBillingGateway:
             raise BillingGatewayError("The gateway refused the quantity update.")
         self.quantity_updates.append((subscription_item_id, quantity))
 
+    def list_invoices(self, *, customer_id: str) -> list[GatewayInvoice]:
+        return list(self.invoices)
+
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
         if not hmac.compare_digest(signature, self.sign(payload)):
             raise WebhookVerificationError("Bad signature.")
@@ -90,6 +95,7 @@ class FakeBillingGateway:
         self.checkout_calls.clear()
         self.portal_calls.clear()
         self.quantity_updates.clear()
+        self.invoices.clear()
         self.fail_quantity_update = False
 
 
@@ -123,6 +129,9 @@ class RefusingBillingGateway:
 
     def update_subscription_quantity(self, **_: Any) -> None:
         raise BillingGatewayError("Payments are not configured on this server.")
+
+    def list_invoices(self, **_: Any) -> list[GatewayInvoice]:
+        return []
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
         raise PaymentsNotConfiguredError()

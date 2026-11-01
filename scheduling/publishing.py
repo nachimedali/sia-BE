@@ -86,6 +86,9 @@ def build_targets(post: Post) -> list[PostTarget]:
     # post nobody narrowed was never meant to skip a channel.
     if post.planned_platforms:
         accounts = [account for account in accounts if account.platform in post.planned_platforms]
+    # S18: a template that chose its accounts publishes to those only.
+    if post.planned_accounts:
+        accounts = [account for account in accounts if account.pk in post.planned_accounts]
     if not accounts:
         raise NoConnectedAccountsError(detail={"workspace": post.workspace_id})
 

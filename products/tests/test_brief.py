@@ -13,7 +13,7 @@ import pytest
 from django.core.management import call_command
 
 from products import brief
-from products.models import HashtagStyle
+from products.models import EmojiStyle, HashtagStyle
 from products.services.products import attach_reference_images, create_product
 from taste.services.profiles import constraints_for
 
@@ -294,6 +294,51 @@ def test_the_prompt_carries_the_brief_and_only_the_brief(workspace: Any) -> None
     assert "no children" in text.lower()
     assert "Keep away from light." in text
     assert "Audience" not in text  # unset fields say nothing
+
+
+@pytest.mark.parametrize(
+    ("style", "expected"),
+    [
+        (HashtagStyle.MINIMAL, "1 to 3 hashtags"),
+        (HashtagStyle.MODERATE, "3 to 6 hashtags"),
+        (HashtagStyle.HEAVY, "up to 15 hashtags"),
+    ],
+)
+def test_every_hashtag_style_reaches_the_prompt(workspace: Any, style: str, expected: str) -> None:
+    product = create_product(workspace=workspace, name="Oil", hashtags_style=style)
+
+    assert expected in "\n".join(brief.prompt_lines(product))
+
+
+@pytest.mark.parametrize(
+    ("style", "expected"),
+    [
+        (EmojiStyle.NONE, "Use no emoji."),
+        (EmojiStyle.LIGHT, "one or two emoji"),
+        (EmojiStyle.EXPRESSIVE, "Emoji are welcome"),
+    ],
+)
+def test_every_emoji_style_reaches_the_prompt(workspace: Any, style: str, expected: str) -> None:
+    product = create_product(workspace=workspace, name="Oil", emoji_style=style)
+
+    assert expected in "\n".join(brief.prompt_lines(product))
+
+
+def test_ctas_formats_voice_and_moods_reach_the_prompt(workspace: Any) -> None:
+    product = create_product(
+        workspace=workspace,
+        name="Oil",
+        ctas=["Shop now", "Taste the harvest"],
+        formats=["carousel", "video"],
+        voice="Warm, plain-spoken",
+        moods=["Sunlit", "Calm"],
+    )
+    text = "\n".join(brief.prompt_lines(product))
+
+    assert '"Shop now"' in text and '"Taste the harvest"' in text
+    assert "carousel, video" in text
+    assert "Warm, plain-spoken" in text
+    assert "Sunlit, Calm" in text
 
 
 def test_an_empty_brief_adds_no_lines(workspace: Any) -> None:

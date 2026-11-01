@@ -62,7 +62,8 @@ def _product_row(workspace: Workspace) -> Requirement:
             else f"{len(products)} registered, none with a reference image"
         ),
         target_id=products[0].pk if products else None,
-        facts=facts,
+        # The product's address (`/app/products/<slug>`) — the pk never is one.
+        facts={**facts, "slug": products[0].slug} if products else facts,
     )
 
 
@@ -111,6 +112,7 @@ def _autopilot_row(workspace: Workspace) -> Requirement:
                 "weekdays": config.weekdays,
                 "time_window": config.time_window,
                 "lookahead_days": config.lookahead_days,
+                "slug": config.product.slug,
                 "enabled_products": AutopilotConfig.objects.filter(
                     product__workspace=workspace, enabled=True
                 ).count(),
@@ -129,7 +131,7 @@ def _autopilot_row(workspace: Workspace) -> Requirement:
         "autopilot",
         "Off on every product",
         target_id=candidate.pk if candidate else None,
-        facts={"enabled_products": 0},
+        facts={"enabled_products": 0, **({"slug": candidate.slug} if candidate else {})},
     )
 
 

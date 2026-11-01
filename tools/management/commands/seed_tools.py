@@ -1,4 +1,4 @@
-"""Seeds the six tool rows (design.md §8.10).
+"""Seeds the tool rows (design.md §8.10).
 
 Idempotent, like every other seed command: re-running updates in place rather
 than duplicating, so it is safe on every deploy. Operators edit `credits_cost`
@@ -23,11 +23,15 @@ TOOLS: list[dict[str, Any]] = [
     {"slug": Tool.HASHTAG, "display_name": "Hashtag ranker", "sort_order": 3},
     {"slug": Tool.THREAD_SPLITTER, "display_name": "Thread splitter", "sort_order": 4},
     {"slug": Tool.BEST_TIME, "display_name": "Best time to post", "sort_order": 5},
+    {"slug": Tool.CTA, "display_name": "CTA writer", "sort_order": 6},
+    {"slug": Tool.CAPTION_REWRITE, "display_name": "Caption rewriter", "sort_order": 7},
+    {"slug": Tool.TRANSLATE, "display_name": "Translate", "sort_order": 8},
+    {"slug": Tool.ALT_TEXT, "display_name": "Alt text", "sort_order": 9},
 ]
 
 
 class Command(BaseCommand):
-    help = "Seeds the six quick tools."
+    help = "Seeds the quick tools."
 
     def handle(self, *args: Any, **options: Any) -> None:
         for spec in TOOLS:

@@ -25,7 +25,6 @@ from analytics.models import (
     ReportShareLink,
     RepurposeCandidate,
 )
-from trends.models import TrendSource
 
 
 class TargetPerformanceSerializer(serializers.Serializer[Any]):
@@ -301,27 +300,6 @@ class AudienceDemographicSerializer(serializers.ModelSerializer[AudienceDemograp
             "captured_at",
         )
         read_only_fields = fields
-
-
-class CompetitorSerializer(serializers.ModelSerializer[TrendSource]):
-    class Meta:
-        model = TrendSource
-        fields = ("id", "platform", "handle", "label", "is_active", "created_at")
-        read_only_fields = ("id", "is_active", "created_at")
-
-
-class CompetitorComparisonSerializer(serializers.Serializer[dict[str, Any]]):
-    """Both sides are interactions over audience — the same calculation, which
-    is what makes the two numbers beside each other comparable at all.
-
-    Every rate is nullable and means it: an account whose follower count the
-    vendor did not report is unmeasured, not unengaging.
-    """
-
-    platform = serializers.CharField()
-    window_days = serializers.IntegerField()
-    us = serializers.JSONField()
-    competitors = serializers.JSONField()
 
 
 # --- the analytics page in one read (`analytics.services.summary`, SA-70) -------

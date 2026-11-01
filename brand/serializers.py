@@ -80,8 +80,6 @@ class BrandWroteSerializer(serializers.Serializer[Any]):
     products_skipped = BrandSkippedSerializer(many=True)
     taste_version = serializers.IntegerField(allow_null=True)
     taste_activated = serializers.BooleanField()
-    competitors_tracked = serializers.ListField(child=serializers.CharField())
-    competitors_skipped = BrandSkippedSerializer(many=True)
 
 
 class BrandApplyResponseSerializer(serializers.Serializer[Any]):

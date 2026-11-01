@@ -1,4 +1,4 @@
-"""What a website implies — audience, voice, category, competitors (S1-03).
+"""What a website implies — audience, voice, category (S1-03).
 
 A port with two adapters: the configured LLM (`ai.providers.llm_text`) and a
 deterministic fake. **Both answers are checked before anything uses them**:
@@ -7,9 +7,7 @@ deterministic fake. **Both answers are checked before anything uses them**:
   categories offered, the business type one of `BusinessType`;
 * the quote must appear **verbatim** in the text that was read — a model asked
   for a line "from the site" will otherwise write a plausible one, and a brand
-  kit quoting a sentence the brand never wrote is worse than no quote;
-* competitors are always `relationship: "inferred"` — the import never claims
-  to have verified who a brand competes with.
+  kit quoting a sentence the brand never wrote is worse than no quote.
 
 Anything that fails a check is dropped, never repaired into something else.
 """
@@ -33,13 +31,11 @@ _SYSTEM = (
     '{"audience": {"summary": str, "segments": [str]}, '
     '"voice": {"preset": "WARM"|"SHARP"|"PLAYFUL"|"EDITORIAL", '
     '"descriptors": [str, str, str], "quote": str}, '
-    '"category": str|null, "business_type": "D2C"|"SERVICE"|"CREATOR"|null, '
-    '"competitors": [{"name": str, "domain": str, "why": str}]}. '
+    '"category": str|null, "business_type": "D2C"|"SERVICE"|"CREATOR"|null}. '
     "Rules: the audience summary is one sentence about who buys, from what the text says. "
     "Segments are 2-5 short labels. Descriptors are three single adjectives for the tone. "
     "The quote MUST be one sentence copied exactly from the text. "
     "The category MUST be copied exactly from the list given, or null. "
-    "Competitors: at most 4 real brands you are confident exist in the same market; [] if unsure. "
     "Never invent facts, prices, numbers or customers."
 )
 
@@ -118,33 +114,6 @@ def validate(raw: Any, *, text: str, categories: list[str]) -> dict[str, Any]:
     if raw.get("business_type") in BusinessType.values:
         out["business_type"] = raw["business_type"]
 
-    competitors: list[dict[str, str]] = []
-    for row in raw.get("competitors") or []:
-        if not isinstance(row, dict):
-            continue
-        name = row.get("name")
-        domain = (
-            str(row.get("domain") or "")
-            .strip()
-            .lower()
-            .removeprefix("https://")
-            .removeprefix("http://")
-            .strip("/")
-        )
-        if not isinstance(name, str) or not name.strip():
-            continue
-        if domain and not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
-            domain = ""
-        competitors.append(
-            {
-                "name": name.strip()[:80],
-                "domain": domain,
-                "why": str(row.get("why") or "").strip()[:200],
-                "relationship": "inferred",
-            }
-        )
-    if competitors:
-        out["competitors"] = competitors[:4]
     return out
 
 

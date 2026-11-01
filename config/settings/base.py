@@ -98,6 +98,7 @@ MIDDLEWARE = [
     "common.middleware.ApiErrorEnvelopeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -159,6 +160,7 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
+LANGUAGES = [("en", "English"), ("fr", "Français"), ("it", "Italiano")]
 USE_TZ = True
 
 STATIC_URL = "static/"
@@ -419,6 +421,24 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=3, minute=15),
     },
     # 02:45, as BUILD-PLAN Phase 0 specifies, alongside the plan-trial sweep.
+    # TND prepaid periods (`payments-tunisia.md` §5): re-read unconfirmed
+    # payments, then remind and lapse periods, then the 1st's invoices.
+    "billing-reconcile-prepaid": {
+        "task": "billing.tasks.reconcile_prepaid",
+        "schedule": crontab(minute="*/10"),
+    },
+    "billing-prepaid-lifecycle": {
+        "task": "billing.tasks.prepaid_lifecycle",
+        "schedule": crontab(hour=6, minute=5),
+    },
+    "billing-audit-prepaid": {
+        "task": "billing.tasks.audit_prepaid",
+        "schedule": crontab(hour=3, minute=20),
+    },
+    "billing-issue-invoices": {
+        "task": "billing.tasks.issue_invoices",
+        "schedule": crontab(hour=4, minute=30),
+    },
     "billing-expire-addon-trials": {
         "task": "billing.tasks.expire_addon_trials",
         "schedule": crontab(hour=2, minute=45),
@@ -494,6 +514,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "content.tasks.recurrence_materialise",
         "schedule": crontab(minute=20),
     },
+    # S18: once a day, after the morning's scans, so a slot a week out is told
+    # about with a week to act.
+    "content-warn-recurrence": {
+        "task": "content.tasks.recurrence_warn",
+        "schedule": crontab(hour=7, minute=40),
+    },
 }
 
 # -----------------------------------------------------------------------------
@@ -507,6 +533,29 @@ USE_FAKE_BILLING = env.bool("USE_FAKE_BILLING", default=not STRIPE_SECRET_KEY)
 # True in prod.py only: there the fake gateway is swapped for one that refuses
 # every money path with a 503, because the fake's webhook secret is public (F1).
 FAKE_BILLING_REFUSES = False
+
+# -----------------------------------------------------------------------------
+# Konnect — TND prepaid periods (`payments-tunisia.md`). Fake until a key is
+# set; refusing (503) instead of faking on a deployment, like billing (F1).
+# -----------------------------------------------------------------------------
+KONNECT_API_KEY = env("KONNECT_API_KEY", default="")
+KONNECT_WALLET_ID = env("KONNECT_WALLET_ID", default="")
+# Sandbox: https://api.sandbox.konnect.network/api/v2
+KONNECT_BASE_URL = env("KONNECT_BASE_URL", default="https://api.konnect.network/api/v2")
+USE_FAKE_PREPAID = env.bool("USE_FAKE_PREPAID", default=not KONNECT_API_KEY)
+# Where Konnect calls back: the API's public origin (the nginx host that
+# serves /api/). Defaults to SITE_URL, which is the same host on beta.
+API_PUBLIC_URL = env("API_PUBLIC_URL", default="")
+PREPAID_PAYMENT_LIFESPAN_MINUTES = env.int("PREPAID_PAYMENT_LIFESPAN_MINUTES", default=60)
+# Days before a prepaid period ends that the admins are reminded to renew.
+PREPAID_REMINDER_DAYS = (7, 1)
+# The request header carrying the visitor's country (ISO 3166 alpha-2), set by
+# nginx from GeoIP and forwarded by the BFF. Absent means USD.
+COUNTRY_HEADER = env("COUNTRY_HEADER", default="HTTP_X_COUNTRY")
+
+# TND invoices (TN-12): WeasyPrint renders the PDF. Fake by default so a fresh
+# checkout needs no Pango; a deployment that keeps the fake issues no invoice.
+USE_FAKE_PDF_RENDERER = env.bool("USE_FAKE_PDF_RENDERER", default=True)
 
 # P6-05. No PDF engine ships yet — the real one needs a headless browser or a
 # typesetting library, which is a system dependency a fresh checkout must not

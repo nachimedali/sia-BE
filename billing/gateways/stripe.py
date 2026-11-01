@@ -19,6 +19,7 @@ from billing.gateways.base import (
     BillingGatewayError,
     CheckoutMode,
     CheckoutSession,
+    GatewayInvoice,
     PortalSession,
     WebhookVerificationError,
 )
@@ -96,6 +97,25 @@ class StripeBillingGateway:
             )
         except Exception as exc:
             raise BillingGatewayError(str(exc)) from exc
+
+    def list_invoices(self, *, customer_id: str) -> list[GatewayInvoice]:
+        stripe = _stripe()
+        try:
+            page = stripe.Invoice.list(customer=customer_id, limit=24)
+        except Exception as exc:  # stripe.error.StripeError and transport errors
+            raise BillingGatewayError(str(exc)) from exc
+        return [
+            GatewayInvoice(
+                id=str(row["id"]),
+                number=str(row.get("number") or ""),
+                created=int(row["created"]),
+                amount_minor=int(row.get("total") or 0),
+                currency=str(row.get("currency") or "").upper(),
+                pdf_url=str(row.get("invoice_pdf") or row.get("hosted_invoice_url") or ""),
+            )
+            for row in page["data"]
+            if row.get("status") in ("paid", "open")
+        ]
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:
         stripe = _stripe()

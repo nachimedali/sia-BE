@@ -14,7 +14,7 @@ than a 402 — reading your own numbers is not a paid feature, keeping two years
 them is.
 
 Since 2026-10-26 (owner) the analytics *page* is a plan feature, `analytics`,
-off on Spark: summary, best times, demographics, competitors and reports answer
+off on Spark: summary, best times, demographics and reports answer
 402 there. Overview, posts, sentiment and comments stay open on every plan,
 because home, the post page and the inbox read them.
 
@@ -58,8 +58,6 @@ from analytics.serializers import (
     CommentActionSerializer,
     CommentSerializer,
     CommentStateSerializer,
-    CompetitorComparisonSerializer,
-    CompetitorSerializer,
     OverviewSerializer,
     ReportRunRequestSerializer,
     ReportRunSerializer,
@@ -81,7 +79,6 @@ from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.throttling import IPTokenBucketThrottle
 from common.workspaces import authenticated_user, request_workspace
-from trends.services import competitors as competitor_service
 from workspaces.models import Permission, Workspace
 from workspaces.permissions import HasPermission
 
@@ -603,93 +600,3 @@ class AudienceDemographicsView(_AnalyticsView):
         for row in rows:
             newest.setdefault((row.social_account_id, row.dimension), row)
         return Response(AudienceDemographicSerializer(list(newest.values()), many=True).data)
-
-
-class _CompetitorView(_AnalyticsView):
-    """Shared permissions for the three competitor routes.
-
-    A base rather than one view inheriting another: subclassing a view that
-    already declares `get`/`post` would silently publish those verbs on the
-    child's URL too, which is how a detail route ends up answering a list.
-    """
-
-    permission_classes: list[Any] = [
-        IsAuthenticated,
-        HasFlag(ANALYTICS_V6),
-        HasPermission(Permission.ANALYZE),
-        HasFeature(ANALYTICS_FEATURE),
-    ]
-
-
-class CompetitorView(_CompetitorView):
-    """The competitors this workspace watches (P6-08).
-
-    A trend source kind behind the scenes — the same five stages, the same
-    per-kind scoring partition — which is why there is no second pipeline to
-    configure here.
-    """
-
-    @extend_schema(
-        responses={200: CompetitorSerializer(many=True)},
-        summary="Tracked competitor accounts",
-    )
-    def get(self, request: Request) -> Response:
-        rows = competitor_service.tracked(self.workspace(request))
-        return Response(CompetitorSerializer(rows, many=True).data)
-
-    @extend_schema(
-        request=CompetitorSerializer,
-        responses={201: CompetitorSerializer, 402: None},
-        summary="Start tracking a competitor",
-        description=(
-            "**402 at the plan's cap** — the number of tracked competitors is "
-            "an admin-editable row, and each one costs a vendor call per "
-            "refresh."
-        ),
-    )
-    def post(self, request: Request) -> Response:
-        payload = CompetitorSerializer(data=request.data)
-        payload.is_valid(raise_exception=True)
-        source = competitor_service.track(
-            self.workspace(request),
-            platform=payload.validated_data["platform"],
-            handle=payload.validated_data["handle"],
-            label=payload.validated_data.get("label", ""),
-        )
-        return Response(CompetitorSerializer(source).data, status=status.HTTP_201_CREATED)
-
-
-class CompetitorDetailView(_CompetitorView):
-    @extend_schema(
-        responses={204: None},
-        summary="Stop tracking a competitor",
-        description=(
-            "Deactivated, not deleted: what was already measured is what a past "
-            "comparison was computed from."
-        ),
-    )
-    def delete(self, request: Request, pk: int) -> Response:
-        source = get_object_or_404(competitor_service.tracked(self.workspace(request)), pk=pk)
-        competitor_service.untrack(source)
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class CompetitorComparisonView(_CompetitorView):
-    @extend_schema(
-        responses={200: CompetitorComparisonSerializer},
-        summary="This workspace against the competitors it tracks",
-        description=(
-            "Both sides are interactions over audience — the same calculation, "
-            "which is what makes them comparable. An unreported follower count "
-            "gives a **null** rate, never a zero one."
-        ),
-    )
-    def get(self, request: Request) -> Response:
-        workspace = self.workspace(request)
-        platform = request.query_params.get("platform", "")
-        if not platform:
-            raise ValidationError({"platform": "Name the platform to compare on."})
-
-        competitor_service.refresh(workspace, platform=platform)
-        result = competitor_service.comparison(workspace, platform=platform)
-        return Response(CompetitorComparisonSerializer(result).data)

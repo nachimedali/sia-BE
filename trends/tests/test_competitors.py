@@ -26,6 +26,14 @@ from trends.services import competitors, ingest
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _tracking_cap(plans: dict[str, Any]) -> None:
+    """Tracking is retired from every package (cap 0); the dormant service is
+    still tested, under a cap a plan could be given again."""
+    plans["pro"].max_tracked_competitors = 10
+    plans["pro"].save(update_fields=["max_tracked_competitors"])
+
+
 @pytest.fixture
 def rival_workspace(plans: dict[str, Any], category: Any) -> Any:
     """A second brand in the same category — the tenancy boundary under test.

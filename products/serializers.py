@@ -59,6 +59,7 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
     post_count = serializers.SerializerMethodField()
     published_count = serializers.SerializerMethodField()
     autopilot_enabled = serializers.SerializerMethodField()
+    slug = serializers.CharField(read_only=True)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         request = self.context.get("request")
@@ -69,6 +70,8 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
         model = Product
         fields: ClassVar[tuple[str, ...]] = (
             "id",
+            "ref",
+            "slug",
             "name",
             "description",
             "preferences",
@@ -127,6 +130,7 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
         )
         read_only_fields: ClassVar[tuple[str, ...]] = (
             "id",
+            "ref",
             "reference_images",
             "rules_reviewed_at",
             "completeness_score",
@@ -304,3 +308,17 @@ class ProductSummarySerializer(serializers.Serializer[Any]):
     ready = serializers.IntegerField(read_only=True)
     needs_reference = serializers.IntegerField(read_only=True)
     autopilot_on = serializers.IntegerField(read_only=True)
+    generated = serializers.IntegerField(read_only=True)
+    requires_check = serializers.IntegerField(read_only=True)
+
+
+class GeneratedImageSerializer(serializers.Serializer[Any]):
+    """`GET /products/{id}/generated-images/` — one image variant the
+    product's generations produced, whichever Studio run made it."""
+
+    id = serializers.IntegerField(read_only=True)
+    generation = serializers.IntegerField(source="generation_id", read_only=True)
+    headline = serializers.CharField(read_only=True)
+    was_selected = serializers.BooleanField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    media = MediaAssetSerializer(source="media_asset", read_only=True)

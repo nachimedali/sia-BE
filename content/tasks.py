@@ -24,3 +24,9 @@ def prune_post_revisions() -> int:
 @shared_task(name="content.tasks.recurrence_materialise")
 def recurrence_materialise() -> int:
     return recurrence.materialise_due()
+
+
+@shared_task(name="content.tasks.recurrence_warn")
+def recurrence_warn() -> int:
+    """S18: the week-ahead notice for template slots that will not go out."""
+    return recurrence.warn_due()

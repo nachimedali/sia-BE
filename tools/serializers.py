@@ -25,11 +25,16 @@ class ToolConfigSerializer(serializers.ModelSerializer[ToolConfig]):
 
 
 class ToolRunSerializer(serializers.Serializer[object]):
-    """Both optional: three of the six tools take no input at all, and which
+    """All optional: three of the tools take no input at all, and which
     is which is the client's business, not a per-slug serializer class."""
 
     topic = serializers.CharField(required=False, allow_blank=True, max_length=500)
     body = serializers.CharField(required=False, allow_blank=True, max_length=10_000)
+    #: `caption-rewrite` sizes to it; `translate` takes `language`, `alt-text`
+    #: an uploaded image. Each runner checks its own, as with `topic`/`body`.
+    platform = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    language = serializers.CharField(required=False, allow_blank=True, max_length=8)
+    media_id = serializers.IntegerField(required=False, min_value=1)
 
 
 class ToolUsageSerializer(serializers.ModelSerializer[ToolUsage]):

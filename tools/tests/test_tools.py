@@ -50,7 +50,7 @@ def test_the_seed_is_idempotent(tools: None) -> None:
 
     call_command("seed_tools", verbosity=0)
 
-    assert ToolConfig.objects.count() == 6
+    assert ToolConfig.objects.count() == len(Tool.values)
 
 
 def test_the_list_carries_what_the_card_renders(auth_client: Any, tools: None) -> None:
@@ -225,3 +225,182 @@ def test_running_through_the_api_charges_and_returns_the_output(
     body = response.json()
     assert body["credits_charged"] == 1
     assert body["output"]["variants"]
+
+
+# -----------------------------------------------------------------------------
+# The four added for the product page and the Studio: CTA, rewrite,
+# translate, alt text. Each is a model call, so each charges on success.
+# -----------------------------------------------------------------------------
+def test_the_cta_writer_returns_variants_and_charges(funded: Any, user: Any) -> None:
+    before = ledger.credit_balance(funded)
+
+    usage = run(workspace=funded, user=user, slug=Tool.CTA, payload={"topic": "olive oil"})
+
+    assert len(usage.output["variants"]) == 3
+    assert usage.credits_charged == 1
+    assert ledger.credit_balance(funded) == before - 1
+
+
+def test_the_rewriter_sizes_the_caption_to_the_platform(
+    funded: Any, user: Any, text_provider: Any
+) -> None:
+    from content.services.rules import PLATFORM_RULES
+
+    usage = run(
+        workspace=funded,
+        user=user,
+        slug=Tool.CAPTION_REWRITE,
+        payload={"body": "Our oil is good.", "platform": "x"},
+    )
+
+    assert len(usage.output["variants"]) == 3
+    assert usage.credits_charged == 1
+    call = text_provider.calls[-1]
+    assert "Our oil is good." in call["prompt"]
+    assert str(PLATFORM_RULES["x"].char_limit) in call["system"]
+
+
+def test_the_rewriter_needs_a_caption(funded: Any, user: Any) -> None:
+    from common.exceptions import OCCSError
+
+    with pytest.raises(OCCSError) as caught:
+        run(workspace=funded, user=user, slug=Tool.CAPTION_REWRITE, payload={})
+
+    assert caught.value.code == "body_required"
+    assert not ToolUsage.objects.exists()
+
+
+def test_the_rewriter_refuses_an_unknown_platform(funded: Any, user: Any) -> None:
+    from common.exceptions import OCCSError
+
+    with pytest.raises(OCCSError) as caught:
+        run(
+            workspace=funded,
+            user=user,
+            slug=Tool.CAPTION_REWRITE,
+            payload={"body": "x", "platform": "myspace"},
+        )
+
+    assert caught.value.code == "invalid_platform"
+
+
+@pytest.mark.parametrize("language", ["en", "fr", "it"])
+def test_translate_writes_one_version_in_the_language_asked(
+    funded: Any, user: Any, text_provider: Any, language: str
+) -> None:
+    usage = run(
+        workspace=funded,
+        user=user,
+        slug=Tool.TRANSLATE,
+        payload={"body": "Huile d'olive.", "language": language},
+    )
+
+    assert len(usage.output["variants"]) == 1
+    assert usage.credits_charged == 1
+    assert text_provider.calls[-1]["n"] == 1
+    assert {"en": "English", "fr": "French", "it": "Italian"}[language] in (
+        text_provider.calls[-1]["system"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        ({"language": "fr"}, "body_required"),
+        ({"body": "x", "language": "ar"}, "invalid_language"),  # L-6: three only
+        ({"body": "x"}, "invalid_language"),
+    ],
+)
+def test_translate_refuses_what_it_cannot_do(
+    funded: Any, user: Any, payload: dict[str, Any], code: str
+) -> None:
+    from common.exceptions import OCCSError
+
+    with pytest.raises(OCCSError) as caught:
+        run(workspace=funded, user=user, slug=Tool.TRANSLATE, payload=payload)
+
+    assert caught.value.code == code
+
+
+def test_alt_text_reads_the_image(
+    funded: Any, user: Any, text_provider: Any, media_asset: Any
+) -> None:
+    before = ledger.credit_balance(funded)
+
+    usage = run(
+        workspace=funded, user=user, slug=Tool.ALT_TEXT, payload={"media_id": media_asset.pk}
+    )
+
+    assert len(usage.output["variants"]) == 3
+    assert text_provider.captions[-1]["image_bytes"]  # the file was opened
+    assert ledger.credit_balance(funded) == before - 1
+
+
+def test_alt_text_needs_an_image(funded: Any, user: Any) -> None:
+    from common.exceptions import OCCSError
+
+    with pytest.raises(OCCSError) as caught:
+        run(workspace=funded, user=user, slug=Tool.ALT_TEXT, payload={})
+
+    assert caught.value.code == "media_required"
+
+
+def test_alt_text_on_another_workspaces_image_is_404(
+    funded: Any, user: Any, other_user: Any, make_png_upload: Any
+) -> None:
+    from rest_framework.exceptions import NotFound
+
+    from content.services.media import ingest_media
+    from workspaces.services.provisioning import provision_workspace
+
+    theirs = ingest_media(
+        workspace=provision_workspace(other_user, name="Not Yours"), upload=make_png_upload()
+    )
+
+    with pytest.raises(NotFound):
+        run(workspace=funded, user=user, slug=Tool.ALT_TEXT, payload={"media_id": theirs.pk})
+    assert not ToolUsage.objects.exists()
+
+
+def test_alt_text_on_a_sibling_workspaces_image_is_404(
+    funded: Any, user: Any, plans: Any, make_png_upload: Any
+) -> None:
+    from rest_framework.exceptions import NotFound
+
+    from content.services.media import ingest_media
+    from workspaces.services.provisioning import provision_extra_workspace
+
+    funded.organization.plan = plans["advanced"]
+    funded.organization.save(update_fields=["plan"])
+    sibling = provision_extra_workspace(user=user, name="Sister Brand")
+    theirs = ingest_media(workspace=sibling, upload=make_png_upload())
+
+    with pytest.raises(NotFound):
+        run(workspace=funded, user=user, slug=Tool.ALT_TEXT, payload={"media_id": theirs.pk})
+
+
+def test_the_new_fields_travel_through_the_api(auth_client: Any, funded: Any) -> None:
+    response = auth_client.post(
+        reverse("tool-run", args=[Tool.TRANSLATE]),
+        {"body": "Olive oil.", "language": "it"},
+        format="json",
+    )
+
+    assert response.status_code == 201, response.content
+    assert response.json()["credits_charged"] == 1
+
+
+def test_a_failed_model_call_charges_nothing(
+    funded: Any, user: Any, monkeypatch: Any, text_provider: Any
+) -> None:
+    def boom(**_: Any) -> Any:
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(text_provider, "generate", boom)
+    before = ledger.credit_balance(funded)
+
+    with pytest.raises(RuntimeError):
+        run(workspace=funded, user=user, slug=Tool.CTA, payload={"topic": "x"})
+
+    assert ledger.credit_balance(funded) == before
+    assert not ToolUsage.objects.exists()

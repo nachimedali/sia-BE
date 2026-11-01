@@ -13,11 +13,15 @@ market is an operator's to-do, not a customer's error page.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from billing.models import Currency, Pack, Plan
+from django.utils import timezone
+
+from billing.models import Currency, Pack, Plan, TaxRate
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,9 @@ class ResolvedPrice:
     currency: Currency
     stripe_price_id: str
     is_fallback: bool = False
+    #: Set on a converted (TND) price: `amount_minor` is net, and this VAT is
+    #: added at checkout and on the invoice. `None` for a price shown as is.
+    tax_rate: Decimal | None = None
 
     @property
     def display(self) -> str:
@@ -69,14 +76,25 @@ def _pick(rows: list[Any], wanted: Currency | None) -> tuple[Any | None, bool]:
     return (rows[0], wanted is not None) if rows else (None, False)
 
 
-def plan_price(plan: Plan, *, organization: Any = None, cycle: str = "monthly") -> ResolvedPrice:
+def plan_price(
+    plan: Plan,
+    *,
+    organization: Any = None,
+    cycle: str = "monthly",
+    currency: Currency | None = None,
+) -> ResolvedPrice:
     """What `plan` costs this organization, per billing cycle.
+
+    `currency` overrides the organization's (a visitor's market before one is
+    locked). A converted currency (TND) is the USD price converted, net of VAT.
 
     Falls back to the legacy columns on `Plan` itself when the plan has no
     price rows — the dual-read half of the migration, so a deployment part-way
     through the backfill still quotes a price rather than zero.
     """
-    wanted = currency_for(organization)
+    wanted = currency or currency_for(organization)
+    if wanted is not None and _converts(wanted):
+        return _converted(plan_price(plan, cycle=cycle), wanted)
     rows = list(plan.prices.select_related("currency"))
     row, is_fallback = _pick(rows, wanted)
 
@@ -100,9 +118,13 @@ def plan_price(plan: Plan, *, organization: Any = None, cycle: str = "monthly") 
     )
 
 
-def plan_per_workspace_price(plan: Plan, *, organization: Any = None) -> ResolvedPrice:
+def plan_per_workspace_price(
+    plan: Plan, *, organization: Any = None, currency: Currency | None = None
+) -> ResolvedPrice:
     """What each additional workspace costs (P0-17)."""
-    wanted = currency_for(organization)
+    wanted = currency or currency_for(organization)
+    if wanted is not None and _converts(wanted):
+        return _converted(plan_per_workspace_price(plan), wanted)
     row, is_fallback = _pick(list(plan.prices.select_related("currency")), wanted)
 
     if row is None:
@@ -115,8 +137,12 @@ def plan_per_workspace_price(plan: Plan, *, organization: Any = None) -> Resolve
     )
 
 
-def pack_price(pack: Pack, *, organization: Any = None) -> ResolvedPrice:
-    wanted = currency_for(organization)
+def pack_price(
+    pack: Pack, *, organization: Any = None, currency: Currency | None = None
+) -> ResolvedPrice:
+    wanted = currency or currency_for(organization)
+    if wanted is not None and _converts(wanted):
+        return _converted(pack_price(pack), wanted)
     rows = list(pack.prices.select_related("currency"))
     row, is_fallback = _pick(rows, wanted)
 
@@ -131,6 +157,30 @@ def pack_price(pack: Pack, *, organization: Any = None) -> ResolvedPrice:
         currency=row.currency,
         stripe_price_id=row.stripe_price_id or pack.stripe_price_id,
         is_fallback=is_fallback,
+    )
+
+
+def _converts(currency: Currency) -> bool:
+    return currency.rate_from_usd is not None
+
+
+def _converted(base: ResolvedPrice, target: Currency) -> ResolvedPrice:
+    """`base` (the catalogue default) shown in a converted currency, net.
+
+    A default price that is not in USD cannot convert; it is quoted as is and
+    marked a fallback — the same quiet answer an unpriced market gets.
+    """
+    if base.currency.code != FALLBACK_CURRENCY_CODE:
+        return ResolvedPrice(base.amount_minor, base.currency, "", is_fallback=True)
+    try:
+        tax: Decimal | None = tax_rate_for(target.market_country) if target.market_country else None
+    except CurrencyNotOnSaleError:
+        tax = None
+    return ResolvedPrice(
+        amount_minor=convert_net(base.amount_minor, source=base.currency, target=target),
+        currency=target,
+        stripe_price_id="",
+        tax_rate=tax,
     )
 
 
@@ -161,6 +211,72 @@ def _fallback_currency(code: str) -> Currency:
     if created:
         logger.warning("created a Currency row on demand", extra={"code": currency.code})
     return currency
+
+
+# -----------------------------------------------------------------------------
+# Converted prices (TND, BUILD-PLAN L-4 amended 2026-11-01)
+# -----------------------------------------------------------------------------
+class CurrencyNotOnSaleError(Exception):
+    """A converted price cannot be quoted: no rate set, or no tax rate in force.
+
+    Refused rather than quoted at zero — a missing rate or VAT is an operator's
+    to-do, and charging without it is the one outcome that cannot be undone.
+    """
+
+
+@dataclass(frozen=True)
+class ConvertedQuote:
+    """Everything a TND order freezes at creation, in the target's minor units."""
+
+    rate_from_usd: Decimal
+    net_minor: int
+    vat_rate: Decimal
+    vat_minor: int
+
+    @property
+    def total_minor(self) -> int:
+        return self.net_minor + self.vat_minor
+
+
+def tax_rate_for(country: str, *, on: dt.date | None = None) -> Decimal:
+    """The newest rate for `country` in force on `on` (today by default)."""
+    row = (
+        TaxRate.objects.filter(country=country.upper(), valid_from__lte=on or timezone.localdate())
+        .order_by("-valid_from")
+        .first()
+    )
+    if row is None:
+        raise CurrencyNotOnSaleError(f"no tax rate in force for {country}")
+    return row.rate
+
+
+def convert_net(usd_minor: int, *, source: Currency, target: Currency) -> int:
+    """The USD price x the target's rate, rounded half up to `round_to_minor`."""
+    if source.code != FALLBACK_CURRENCY_CODE:
+        raise ValueError(f"only {FALLBACK_CURRENCY_CODE} prices convert, not {source.code}")
+    if target.rate_from_usd is None:
+        raise CurrencyNotOnSaleError(f"{target.code} has no rate set")
+    major = Decimal(usd_minor) / 10**source.minor_units * target.rate_from_usd
+    step = Decimal(target.round_to_minor)
+    steps = (major * 10**target.minor_units / step).quantize(Decimal(1), ROUND_HALF_UP)
+    return int(steps * step)
+
+
+def converted_quote(
+    usd_minor: int, *, source: Currency, target: Currency, country: str
+) -> ConvertedQuote:
+    """The USD price x the target's rate, rounded half up to `round_to_minor`,
+    plus VAT rounded half up to the minor unit."""
+    net_minor = convert_net(usd_minor, source=source, target=target)
+    vat_rate = tax_rate_for(country)
+    vat_minor = int((net_minor * vat_rate).quantize(Decimal(1), ROUND_HALF_UP))
+    assert target.rate_from_usd is not None  # convert_net refused otherwise
+    return ConvertedQuote(
+        rate_from_usd=target.rate_from_usd,
+        net_minor=net_minor,
+        vat_rate=vat_rate,
+        vat_minor=vat_minor,
+    )
 
 
 # -----------------------------------------------------------------------------

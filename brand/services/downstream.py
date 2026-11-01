@@ -1,17 +1,16 @@
 """What applying a reviewed import does beyond writing the kit (S1-04, S1-05).
 
-Four things, each of them a proposal a person has already accepted by finishing
+Three things, each of them a proposal a person has already accepted by finishing
 the review, and each one stopping short of overriding what a person did by hand:
 
 * `diff_sections`   the field-level difference between this version and the last;
 * `create_product_drafts`  products the site lists that the workspace lacks;
 * `propose_taste`   a new `TasteProfile` version from the voice (versioned,
                     never edited — rule 12), activated only if it replaces
-                    nothing a person wrote;
-* `track_competitors`  verified competitors become competitor trend sources.
+                    nothing a person wrote.
 
-None of these raises into the apply: a refused product (plan cap) or a
-competitor with no handle is reported back with its reason, because a
+None of these raises into the apply: a refused product (plan cap) is
+reported back with its reason, because a
 half-finished apply that rolled back the kit over a plan limit would lose the
 review the user just did.
 """
@@ -21,7 +20,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
 
 from django.db import transaction
 
@@ -32,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 MAX_CHANGES = 60
 MAX_DRAFTS = 12
-MAX_TRACKED = 4
 IMPORT_VOICE_SOURCE = "brand_import"
 
 
@@ -60,12 +57,6 @@ def _flat(section: str, value: dict[str, Any]) -> dict[str, tuple[str, str]]:
         out["summary"] = ("Audience summary", str(value.get("summary") or ""))
         for segment in value.get("segments") or []:
             out[f"segment:{str(segment).casefold()}"] = (f"Audience segment “{segment}”", "listed")
-    elif section == "competitors":
-        for row in value.get("items") or []:
-            out[f"c:{str(row.get('name', '')).casefold()}"] = (
-                f"Competitor “{row.get('name', '')}”",
-                str(row.get("relationship") or ""),
-            )
     elif section == "voice":
         out["preset"] = ("Voice", str(value.get("preset") or ""))
         out["quote"] = ("Voice quote", str(value.get("quote") or ""))
@@ -120,8 +111,6 @@ class Downstream:
     products_skipped: list[dict[str, str]] = field(default_factory=list)
     taste_version: int | None = None
     taste_activated: bool = False
-    competitors_tracked: list[str] = field(default_factory=list)
-    competitors_skipped: list[dict[str, str]] = field(default_factory=list)
 
 
 def create_product_drafts(
@@ -186,44 +175,3 @@ def propose_taste(workspace: Workspace, voice: dict[str, Any], user: User, out: 
     if replaces_nothing_written:
         profiles.activate(created)
         out.taste_activated = True
-
-
-# --- S1-04: competitor trend sources ------------------------------------------------------------
-def _handle(url: str) -> str:
-    parts = [p for p in urlsplit(url).path.split("/") if p]
-    return parts[-1].lstrip("@") if parts else ""
-
-
-def track_competitors(workspace: Workspace, items: list[dict[str, Any]], out: Downstream) -> None:
-    """Only **verified** competitors, and only through the handle their own
-    website shows — an inferred name is a guess, and watching a guess would put
-    some stranger's account in the workspace's comparisons."""
-    from trends.services import competitors
-
-    wanted = set(workspace.platforms or [])
-    for row in items:
-        if len(out.competitors_tracked) >= MAX_TRACKED:
-            break
-        name = str(row.get("name") or "")
-        if row.get("relationship") != "verified":
-            continue
-        socials = [s for s in row.get("socials") or [] if _handle(str(s.get("url") or ""))]
-        pick = next(
-            (s for s in socials if s.get("platform") in wanted), socials[0] if socials else None
-        )
-        if pick is None:
-            out.competitors_skipped.append(
-                {"name": name, "reason": "Its website shows no account to watch."}
-            )
-            continue
-        try:
-            with transaction.atomic():
-                competitors.track(
-                    workspace, platform=pick["platform"], handle=_handle(pick["url"]), label=name
-                )
-        except Exception as error:  # a plan cap (OCCSError), no category (ValidationError)…
-            logger.info("competitor %s not tracked: %s", name, error)
-            reason = str(getattr(error, "detail", error))[:160]
-            out.competitors_skipped.append({"name": name, "reason": reason})
-            continue
-        out.competitors_tracked.append(name)

@@ -8,7 +8,7 @@ endpoints, OpenGraph product tags, `theme-color`, CSS. A value that is not on
 the page is **absent**, never filled with something plausible.
 
 What a page only *implies* — who the audience is, how the voice sounds, which
-category it belongs to, who the competitors are — is left to
+category it belongs to — is left to
 `brand.inference`, and labelled as inferred there.
 
 Every extracted value carries the URL it was read from.

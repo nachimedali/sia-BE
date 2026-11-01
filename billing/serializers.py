@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from billing.models import CreditLedger, Pack, Plan, VideoLedger
+from billing.models import CreditLedger, Pack, Plan, PrepaidOrder, VideoLedger
 
 
 class ResolvedPriceSerializer(serializers.Serializer[Any]):
@@ -32,6 +32,25 @@ class ResolvedPriceSerializer(serializers.Serializer[Any]):
     currency = serializers.CharField(source="currency.code", read_only=True)
     display = serializers.CharField(read_only=True)
     is_fallback = serializers.BooleanField(read_only=True)
+    #: Converted (TND) prices only: `amount_minor` is net, and this VAT is
+    #: added at checkout. Null where the price is shown as charged.
+    tax_rate = serializers.DecimalField(
+        max_digits=5, decimal_places=4, read_only=True, allow_null=True
+    )
+
+
+def _market_currency(serializer: Any, organization: Any) -> Any:
+    """Cached per serializer: one lookup for a whole plan list, not one per row."""
+    if not hasattr(serializer, "_market"):
+        from billing.services import market
+
+        root = serializer.root if serializer.root is not None else serializer
+        if not hasattr(root, "_market"):
+            root._market = market.market_currency(
+                organization, market.request_country(root.context.get("request"))
+            )
+        serializer._market = root._market
+    return serializer._market
 
 
 class PlanSerializer(serializers.ModelSerializer[Plan]):
@@ -88,12 +107,16 @@ class PlanSerializer(serializers.ModelSerializer[Plan]):
             # answer an anonymous visitor gets.
             return None
 
+    def _currency(self) -> Any:
+        """The organization's locked currency, else its visitor's market (TN-13)."""
+        return _market_currency(self, self._organization())
+
     @extend_schema_field(ResolvedPriceSerializer)
     def get_price(self, obj: Plan) -> dict[str, Any]:
         from billing.services import pricing
 
         return ResolvedPriceSerializer(
-            pricing.plan_price(obj, organization=self._organization())
+            pricing.plan_price(obj, organization=self._organization(), currency=self._currency())
         ).data
 
     @extend_schema_field(ResolvedPriceSerializer)
@@ -101,7 +124,9 @@ class PlanSerializer(serializers.ModelSerializer[Plan]):
         from billing.services import pricing
 
         return ResolvedPriceSerializer(
-            pricing.plan_price(obj, organization=self._organization(), cycle="annual")
+            pricing.plan_price(
+                obj, organization=self._organization(), cycle="annual", currency=self._currency()
+            )
         ).data
 
     def get_quotas(self, obj: Plan) -> dict[str, int]:
@@ -168,6 +193,9 @@ class PackSerializer(serializers.ModelSerializer[Pack]):
     """Same rule as `PlanSerializer` (I8): the size and the price the user is
     shown are the row that will be charged and credited."""
 
+    #: What this caller pays, in their currency (TND net of VAT, TN-13).
+    price = serializers.SerializerMethodField()
+
     class Meta:
         model = Pack
         fields = (
@@ -178,18 +206,92 @@ class PackSerializer(serializers.ModelSerializer[Pack]):
             "units",
             "price_cents",
             "currency",
+            "price",
             "sort_order",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = fields
 
+    @extend_schema_field(ResolvedPriceSerializer)
+    def get_price(self, obj: Pack) -> dict[str, Any]:
+        from billing.services import pricing
+        from common.workspaces import request_workspace
 
-class PurchaseRequestSerializer(serializers.Serializer[Any]):
+        organization = request_workspace(self.context["request"]).organization
+        return ResolvedPriceSerializer(
+            pricing.pack_price(
+                obj, organization=organization, currency=_market_currency(self, organization)
+            )
+        ).data
+
+
+class BuyerSerializer(serializers.Serializer[Any]):
+    """Who the TND invoice is made out to. Ignored on Stripe, which asks itself."""
+
+    buyer_name = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
+    buyer_tax_id = serializers.CharField(
+        max_length=32, required=False, allow_blank=True, default=""
+    )
+
+
+class PurchaseRequestSerializer(BuyerSerializer):
     pack_code = serializers.SlugField()
 
 
-class CheckoutRequestSerializer(serializers.Serializer[Any]):
+class CheckoutRequestSerializer(BuyerSerializer):
     plan_code = serializers.SlugField()
     cycle = serializers.ChoiceField(choices=("monthly", "annual"), default="monthly")
+
+
+class PrepaidOrderSerializer(serializers.ModelSerializer[PrepaidOrder]):
+    """An order's state, for the page the customer returns to after paying."""
+
+    total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PrepaidOrder
+        fields = ("id", "kind", "state", "total", "created_at", "paid_at")
+        read_only_fields: ClassVar[tuple[str, ...]] = fields
+
+    def get_total(self, obj: PrepaidOrder) -> str:
+        return obj.currency.format(obj.amount_minor)
+
+
+class PrepaidPeriodSerializer(serializers.Serializer[Any]):
+    plan_code = serializers.CharField()
+    plan_name = serializers.CharField()
+    status = serializers.CharField()
+    period_end = serializers.DateTimeField(allow_null=True)
+    grace_until = serializers.DateTimeField(allow_null=True)
+    extra_workspaces = serializers.IntegerField()
+
+
+class PrepaidTopupSerializer(serializers.Serializer[Any]):
+    workspaces = serializers.IntegerField()
+    days_left = serializers.IntegerField()
+    net_minor = serializers.IntegerField()
+    display = serializers.CharField()
+
+
+class PrepaidSummarySerializer(serializers.Serializer[Any]):
+    currency = serializers.CharField()
+    period = PrepaidPeriodSerializer(allow_null=True)
+    topup = PrepaidTopupSerializer(allow_null=True)
+
+
+class InvoiceRowSerializer(serializers.Serializer[Any]):
+    """Ours (TND, `origin=composevision`) or Stripe's (USD, `origin=stripe`)."""
+
+    id = serializers.CharField()
+    origin = serializers.ChoiceField(choices=("composevision", "stripe"))
+    number = serializers.CharField()
+    date = serializers.DateField()
+    period = serializers.DateField(allow_null=True)
+    total_minor = serializers.IntegerField()
+    currency = serializers.CharField()
+    total = serializers.CharField()
+    is_credit_note = serializers.BooleanField()
+    #: Stripe's hosted PDF; blank for ours, which is downloaded by id.
+    pdf_url = serializers.CharField(allow_blank=True)
 
 
 class CheckoutResponseSerializer(serializers.Serializer[Any]):

@@ -61,7 +61,16 @@ STRIPE_STATUS = {
 # Checkout
 # -----------------------------------------------------------------------------
 def start_checkout(
-    workspace: Workspace, *, plan_code: str, cycle: str, success_url: str, cancel_url: str
+    workspace: Workspace,
+    *,
+    plan_code: str,
+    cycle: str,
+    success_url: str,
+    cancel_url: str,
+    country: str = "",
+    user: Any = None,
+    buyer_name: str = "",
+    buyer_tax_id: str = "",
 ) -> CheckoutSession:
     if cycle not in BILLING_CYCLES:
         raise OCCSError(f"Billing cycle must be one of {BILLING_CYCLES}.", code="invalid_cycle")
@@ -70,6 +79,24 @@ def start_checkout(
     # Free plans are not sold; the default plan is free by `Plan.clean`.
     if plan is None or not (plan.price_monthly_cents or plan.price_annual_cents):
         raise OCCSError("That plan cannot be subscribed to.", code="invalid_plan")
+
+    # TN payments: the currency is locked at the first checkout, and a TND
+    # organization buys a prepaid period through Konnect instead of Stripe.
+    from billing.services import flags, market
+
+    if flags.flag_enabled(workspace.organization, flags.TN_PAYMENTS_V1):
+        market.lock_currency(workspace.organization, country)
+        if market.uses_prepaid(workspace.organization):
+            from billing.services import prepaid
+
+            return prepaid.start_plan(
+                workspace,
+                plan=plan,
+                cycle=cycle,
+                user=user,
+                buyer_name=buyer_name,
+                buyer_tax_id=buyer_tax_id,
+            )
 
     # Resolved rather than read off the plan: the price and the Stripe id both
     # depend on which currency this organization is billed in (per-country
@@ -288,10 +315,18 @@ def current_period_start(workspace: Workspace) -> dt.datetime:
     """
     subscription = Subscription.current_for(workspace)
     if subscription is not None and subscription.period_start is not None:
-        return subscription.period_start
+        if subscription.gateway != "konnect":
+            return subscription.period_start
+        # A prepaid stretch can run 12 months; its allowance is still monthly,
+        # anchored on the day the stretch began.
+        return _monthly_anchor(subscription.period_start)
+    return _monthly_anchor(workspace.created_at)
 
+
+def _monthly_anchor(anchor: dt.datetime) -> dt.datetime:
+    """The latest monthly anniversary of `anchor` that is not in the future."""
     now = timezone.now()
-    anchor_day = workspace.created_at.day
+    anchor_day = anchor.day
     # Clamp for short months: a workspace created on the 31st renews on the 28th
     # in February rather than skipping the month entirely.
     day = min(anchor_day, _days_in_month(now.year, now.month))
@@ -302,7 +337,7 @@ def current_period_start(workspace: Workspace) -> dt.datetime:
         candidate = candidate.replace(
             year=year, month=month, day=min(anchor_day, _days_in_month(year, month))
         )
-    return max(candidate, workspace.created_at)
+    return max(candidate, anchor)
 
 
 def _days_in_month(year: int, month: int) -> int:
@@ -481,6 +516,15 @@ def sync_workspace_quantity(organization: Any) -> bool:
     from workspaces.models import Workspace, WorkspaceStatus
 
     subscription = live_subscription(organization)
+    if subscription is not None and subscription.gateway == "konnect":
+        # Prepaid: extra workspaces are active once paid for until the period
+        # ends (a top-up, `billing.services.prepaid`); until then, pending.
+        if billable_overage(organization) > subscription.prepaid_workspaces:
+            return False
+        Workspace.objects.filter(
+            organization=organization, status=WorkspaceStatus.PENDING_BILLING
+        ).update(status=WorkspaceStatus.ACTIVE)
+        return True
     if subscription is None or not subscription.stripe_subscription_item_id:
         # Nothing to bill against yet — a trial organization. The workspaces
         # are real and usable; there is simply no quantity to move.

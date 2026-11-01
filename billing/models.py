@@ -114,6 +114,21 @@ class Currency(models.Model):
     #: differs by locale and is cheaper to store than to special-case.
     symbol_first = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
+    #: Which payment gateway takes this currency (`payments-tunisia.md`): Stripe,
+    #: or Konnect for TND, which no Stripe account can be paid in from Tunisia.
+    gateway = models.CharField(
+        max_length=16, choices=[("stripe", "Stripe"), ("konnect", "Konnect")], default="stripe"
+    )
+    #: TND only (L-4, amended 2026-11-01): the price is the USD price x this
+    #: staff-set rate — the one currency priced by conversion, not by row. Null
+    #: means not on sale, never a rate of zero.
+    rate_from_usd = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    #: A converted price is rounded half up to a multiple of this many minor
+    #: units: 1000 is the whole dinar. 1 leaves it to the millime.
+    round_to_minor = models.PositiveIntegerField(default=1)
+    #: The country whose visitors are shown this currency before their
+    #: organization has locked one (TND: TN). Blank for the rest.
+    market_country = models.CharField(max_length=2, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -142,6 +157,33 @@ class Currency(models.Model):
             amount = f"{'-' if minor < 0 else ''}{major}.{remainder:0{self.minor_units}d}"
         symbol = self.symbol or self.code
         return f"{symbol}{amount}" if self.symbol_first else f"{amount} {symbol}"
+
+
+class TaxRate(models.Model):
+    """The VAT added to a converted price, per country (TN: 19%).
+
+    A row, never a constant (Part 7 rule 10). A change is a new row with a
+    later `valid_from`, so the rate an order was quoted at stays explainable;
+    each order also freezes the rate it used.
+    """
+
+    country = models.CharField(max_length=2)
+    rate = models.DecimalField(max_digits=5, decimal_places=4)
+    label = models.CharField(max_length=32, default="VAT")
+    valid_from = models.DateField()
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["country", "-valid_from"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["country", "valid_from"], name="tax_rate_once_per_day")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.country} {(self.rate * 100).normalize()}% from {self.valid_from}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.country = self.country.upper()
+        super().save(*args, **kwargs)
 
 
 class CataloguePrice(models.Model):
@@ -249,6 +291,11 @@ class ReactionDetail(models.TextChoices):
     REACTORS = "REACTORS", "Per-type plus reactor identities"
 
 
+def default_credit_alert_levels() -> list[int]:
+    """The seeded starting point (owner, 2026-10-31); every row is edited in admin."""
+    return [50, 20]
+
+
 class Plan(CatalogueItem):
     #: The plan a new organization starts on and a lapsed subscription returns
     #: to — one row, chosen in admin (pricing.plan.md D-2). It used to be the
@@ -272,6 +319,10 @@ class Plan(CatalogueItem):
     max_workspace_members = models.IntegerField(default=1)
     max_products = models.IntegerField(default=1)
     trial_days = models.IntegerField(default=0)
+    #: Prepaid (TND, Konnect) only: days a lapsed period stays live as
+    #: `PAST_DUE` before the organization drops to the default plan. Stripe
+    #: runs its own dunning and never reads this.
+    prepaid_grace_days = models.PositiveSmallIntegerField(default=3)
 
     # --- organization tier (BUILD-PLAN L-1/L-4) ---
     #: The quota trial that replaced Free-forever: N posts, no expiry, no card.
@@ -289,6 +340,9 @@ class Plan(CatalogueItem):
     max_tracked_competitors = models.IntegerField(default=0)
     storage_bytes = models.BigIntegerField(default=0)
     version_history_days = models.IntegerField(default=0)
+    #: S18: the credit balances that alert the organization on the way down,
+    #: each once per crossing. Admin-edited per plan; empty alerts on none.
+    credit_alert_levels = models.JSONField(default=default_credit_alert_levels, blank=True)
 
     # --- audience engagement (BUILD-PLAN L-4a) ---
     #: Minutes between audience-comment captures. `0` means this plan is
@@ -557,6 +611,13 @@ class Subscription(models.Model):
     #: item rather than a quantity on the line above: charging the base line
     #: per workspace would bill for the ones the plan already includes.
     stripe_overage_item_id = models.CharField(max_length=64, blank=True)
+    #: Which gateway bills it. A Konnect row is a **prepaid period**, not a
+    #: recurring subscription: its id is `prepaid:<organization id>`, one row
+    #: per organization, extended by each paid `PrepaidOrder`.
+    gateway = models.CharField(max_length=16, default="stripe")
+    #: Prepaid only: workspaces beyond the plan's allowance paid for up to
+    #: `period_end`. Stripe bills that as a quantity on the overage line.
+    prepaid_workspaces = models.PositiveIntegerField(default=0)
     #: Written alongside `workspace` during the org migration. Nullable until
     #: the backfill has run everywhere; nothing reads it during expand.
     organization = models.ForeignKey(
@@ -783,6 +844,187 @@ class ReplyLedger(LedgerEntry):
         on_delete=models.SET_NULL,
         related_name="reply_ledger_entries",
     )
+
+
+class PrepaidKind(models.TextChoices):
+    PLAN_PERIOD = "PLAN_PERIOD", "Plan period"
+    PACK = "PACK", "Pack"
+    WORKSPACE_TOPUP = "WORKSPACE_TOPUP", "Extra workspaces"
+
+
+class PrepaidState(models.TextChoices):
+    PENDING = "PENDING", "Waiting for payment"
+    PAID = "PAID", "Paid"
+    FAILED = "FAILED", "Failed"
+    EXPIRED = "EXPIRED", "Expired unpaid"
+    #: The gateway said paid, but not what we asked for (amount, currency,
+    #: order id). Nothing is granted; staff look (`payments-tunisia.md` §4).
+    MISMATCH = "MISMATCH", "Paid amount does not match"
+
+
+class PrepaidOrder(models.Model):
+    """One hosted one-off payment (Konnect, TND) and what it buys.
+
+    **Every amount is frozen when the order is created** — the USD price, the
+    rate, the VAT rate and the stamp — so a rate edited in admin never changes
+    a pending order, a paid one or its invoice. The gateway's answer is only
+    ever compared against these columns; it never sets one.
+    """
+
+    organization = models.ForeignKey(
+        "workspaces.Organization", on_delete=models.PROTECT, related_name="prepaid_orders"
+    )
+    #: The workspace that started it: a pack is credited to it, a period is
+    #: recorded against it, as Stripe's checkout does.
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.PROTECT, related_name="prepaid_orders"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    kind = models.CharField(max_length=16, choices=PrepaidKind.choices)
+    plan = models.ForeignKey(Plan, null=True, blank=True, on_delete=models.PROTECT)
+    months = models.PositiveSmallIntegerField(default=0)
+    pack = models.ForeignKey("Pack", null=True, blank=True, on_delete=models.PROTECT)
+    #: Extra workspaces paid for: the overage on a period, or a top-up's count.
+    workspaces = models.PositiveIntegerField(default=0)
+
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT)
+    usd_amount_minor = models.IntegerField()
+    rate_from_usd = models.DecimalField(max_digits=12, decimal_places=6)
+    net_minor = models.IntegerField()
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=4)
+    vat_minor = models.IntegerField()
+    stamp_minor = models.IntegerField(default=0)
+    #: net + VAT + stamp: what the gateway is asked to charge, and must report.
+    amount_minor = models.IntegerField()
+
+    buyer_name = models.CharField(max_length=160, blank=True)
+    buyer_tax_id = models.CharField(max_length=32, blank=True)
+
+    gateway_key = models.CharField(max_length=16)
+    gateway_ref = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    pay_url = models.URLField(max_length=500, blank=True)
+    state = models.CharField(
+        max_length=16, choices=PrepaidState.choices, default=PrepaidState.PENDING
+    )
+    note = models.CharField(max_length=280, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["organization", "state", "paid_at"]),
+            models.Index(fields=["state", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"order {self.pk} {self.kind} {self.state}"
+
+
+class TaxStamp(models.Model):
+    """The fixed stamp duty printed on an invoice (TN: 1.000 TND), per country.
+
+    Like `TaxRate`, a change is a new row with a later `valid_from`.
+    """
+
+    country = models.CharField(max_length=2)
+    amount_minor = models.IntegerField()
+    label = models.CharField(max_length=32, default="Droit de timbre")
+    valid_from = models.DateField()
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["country", "-valid_from"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(fields=["country", "valid_from"], name="tax_stamp_once_per_day")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.country} {self.amount_minor} from {self.valid_from}"
+
+
+class InvoiceIssuer(models.Model):
+    """The Tunisian company printed on every TND invoice. One row.
+
+    Invoicing refuses to run while a required field is blank: an invoice that
+    went out without the seller's tax id cannot be unsent.
+    """
+
+    legal_name = models.CharField(max_length=160, blank=True)
+    address = models.TextField(blank=True)
+    tax_id = models.CharField("matricule fiscal", max_length=32, blank=True)
+    trade_register = models.CharField("registre de commerce", max_length=64, blank=True)
+    email = models.EmailField(blank=True)
+    #: `{year}` and `{seq}` are filled in; `seq` restarts every year.
+    number_format = models.CharField(max_length=40, default="CV-{year}-{seq:05d}")
+
+    REQUIRED = ("legal_name", "address", "tax_id", "trade_register")
+
+    def __str__(self) -> str:
+        return self.legal_name or "Invoice issuer (incomplete)"
+
+    @classmethod
+    def get(cls) -> InvoiceIssuer:
+        issuer, _ = cls.objects.get_or_create(pk=1)
+        return issuer
+
+    @property
+    def missing(self) -> list[str]:
+        return [name for name in self.REQUIRED if not str(getattr(self, name)).strip()]
+
+
+class Invoice(AppendOnly):
+    """A month's TND payments for one organization (`payments-tunisia.md` D-5).
+
+    Issued once, frozen: the issuer and buyer are copied in and the PDF is
+    rendered at issue and stored, so editing the issuer or the template never
+    changes an invoice already sent. A correction is a credit note.
+    """
+
+    append_only_hint = "issue a credit note instead of editing an invoice."
+
+    organization = models.ForeignKey(
+        "workspaces.Organization", on_delete=models.PROTECT, related_name="invoices"
+    )
+    #: The first day of the month invoiced (Africa/Tunis).
+    period = models.DateField()
+    number = models.CharField(max_length=40, unique=True)
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT)
+    issuer = models.JSONField()
+    buyer_name = models.CharField(max_length=160, blank=True)
+    buyer_tax_id = models.CharField(max_length=32, blank=True)
+    net_minor = models.IntegerField()
+    vat_minor = models.IntegerField()
+    stamp_minor = models.IntegerField()
+    total_minor = models.IntegerField()
+    #: Set for a credit note: the invoice it corrects. Amounts are negative.
+    corrects = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="credit_notes"
+    )
+    document = models.FileField(upload_to="invoices/")
+    issued_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-period", "-number"]
+
+    def __str__(self) -> str:
+        return self.number
+
+
+class InvoiceLine(AppendOnly):
+    append_only_hint = "issue a credit note instead of editing an invoice."
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="lines")
+    order = models.ForeignKey(PrepaidOrder, on_delete=models.PROTECT, related_name="invoice_lines")
+    label = models.CharField(max_length=200)
+    net_minor = models.IntegerField()
+    vat_minor = models.IntegerField()
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["pk"]
 
 
 class StripeEvent(models.Model):

@@ -38,6 +38,18 @@ class PortalSession:
     url: str
 
 
+@dataclass(frozen=True)
+class GatewayInvoice:
+    """An invoice the gateway issued (USD accounts: Stripe's own, TN-14)."""
+
+    id: str
+    number: str
+    created: int  # epoch seconds, as Stripe gives it
+    amount_minor: int
+    currency: str
+    pdf_url: str
+
+
 class BillingGateway(Protocol):
     def create_checkout_session(
         self,
@@ -76,6 +88,10 @@ class BillingGateway(Protocol):
         `subscriptions.sync_workspace_quantity`: the webhook is the source of
         truth for what was granted, and this call is how we ask.
         """
+        ...
+
+    def list_invoices(self, *, customer_id: str) -> list[GatewayInvoice]:
+        """The customer's invoices, newest first. Raises `BillingGatewayError`."""
         ...
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, Any]:

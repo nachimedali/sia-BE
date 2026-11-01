@@ -79,6 +79,7 @@ def _post_hit(post: Post) -> dict[str, Any]:
     return {
         "type": "post",
         "id": post.pk,
+        "slug": "",
         "title": _first_line(post.master_body) or "Untitled post",
         "text": post.master_body,
         "status": post.status,
@@ -92,6 +93,7 @@ def _product_hit(product: Product) -> dict[str, Any]:
     return {
         "type": "product",
         "id": product.pk,
+        "slug": product.slug,
         "title": product.name,
         "text": product.description,
         "status": "READY" if product.is_generation_ready else "NEEDS_REFERENCE",
@@ -112,6 +114,7 @@ def _campaign_hit(campaign: Campaign) -> dict[str, Any]:
     return {
         "type": "campaign",
         "id": campaign.pk,
+        "slug": "",
         "title": campaign.name,
         "text": "",
         "status": campaign.status,

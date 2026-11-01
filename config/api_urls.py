@@ -59,9 +59,6 @@ from analytics.views import (
     AudienceCommentActionView,
     AudienceCommentReplyView,
     AudienceDemographicsView,
-    CompetitorComparisonView,
-    CompetitorDetailView,
-    CompetitorView,
     ReportRunShareView,
     ReportShareRevokeView,
     ReportViewSet,
@@ -81,11 +78,17 @@ from billing.views import (
     BillingPortalView,
     CreditLedgerView,
     EntitlementsView,
+    InvoiceDocumentView,
+    InvoiceListView,
+    KonnectWebhookView,
     PackListView,
     PlanListView,
+    PrepaidOrderView,
+    PrepaidSummaryView,
     PurchaseView,
     StripeWebhookView,
     SubscribeView,
+    TopUpView,
     VideoLedgerView,
 )
 from brand.avatar_views import (
@@ -128,6 +131,7 @@ from content.views import (
     PostTemplateViewSet,
     PostViewSet,
     RecurrenceRuleViewSet,
+    TemplateOptionsView,
 )
 from inbox.views import (
     InboxCommentDetailView,
@@ -340,6 +344,16 @@ urlpatterns = [
     path("billing/purchase/", PurchaseView.as_view(), name="billing-purchase"),
     path("billing/portal/", BillingPortalView.as_view(), name="billing-portal"),
     path("billing/webhook/stripe/", StripeWebhookView.as_view(), name="billing-webhook-stripe"),
+    path("billing/webhook/konnect/", KonnectWebhookView.as_view(), name="billing-webhook-konnect"),
+    path("billing/prepaid/", PrepaidSummaryView.as_view(), name="billing-prepaid"),
+    path("billing/topup/", TopUpView.as_view(), name="billing-topup"),
+    path("billing/orders/<int:pk>/", PrepaidOrderView.as_view(), name="billing-order"),
+    path("billing/invoices/", InvoiceListView.as_view(), name="billing-invoices"),
+    path(
+        "billing/invoices/<int:pk>/document/",
+        InvoiceDocumentView.as_view(),
+        name="billing-invoice-document",
+    ),
     # --- channels ---
     # A plain path, not a router action: `{platform}` is not a workspace-scoped
     # pk, so there is no object here for the tenancy sweep (A52) to walk — the
@@ -375,25 +389,13 @@ urlpatterns = [
     ),
     path("inbox/summary/", InboxSummaryView.as_view(), name="inbox-summary"),
     path("analytics/repurpose/", RepurposeQueueView.as_view(), name="analytics-repurpose"),
-    # --- Phase 6: demographics and competitors ---
-    # Both answer for the caller's own workspace, so there is no id for the
-    # tenancy sweep to walk; the competitor detail route resolves its pk
-    # through `competitors.tracked`, which is workspace-filtered.
+    # --- Phase 6: demographics ---
+    # Answers for the caller's own workspace, so there is no id for the
+    # tenancy sweep to walk.
     path(
         "analytics/demographics/",
         AudienceDemographicsView.as_view(),
         name="analytics-demographics",
-    ),
-    path("analytics/competitors/", CompetitorView.as_view(), name="analytics-competitors"),
-    path(
-        "analytics/competitors/<int:pk>/",
-        CompetitorDetailView.as_view(),
-        name="analytics-competitor-detail",
-    ),
-    path(
-        "analytics/competitors/comparison/",
-        CompetitorComparisonView.as_view(),
-        name="analytics-competitor-comparison",
     ),
     # --- Phase 6: report shares ---
     # `{pk}` is a run, resolved through a workspace-filtered queryset inside
@@ -515,6 +517,8 @@ urlpatterns = [
     # asks. Served rather than mirrored in the frontend so `rules.py`
     # stays the one declaration (P1-05).
     path("platform-rules/", PlatformRuleListView.as_view(), name="platform-rules"),
+    # S18. Ahead of the router, which would read "options" as a template id.
+    path("post-templates/options/", TemplateOptionsView.as_view(), name="post-template-options"),
     # --- ai ---
     path("ai/generate/", GenerateView.as_view(), name="ai-generate"),
     # A read, not a generation (P1-13): the corpus is category-shared, so

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -24,7 +24,7 @@ from rest_framework.views import APIView
 
 from ai.serializers import GenerationSerializer
 from billing.permissions import HasFeature, HasFlag
-from billing.services.flags import CHECKS_S4, CONTENT_MODEL_V2, flag_enabled
+from billing.services.flags import CHECKS_S4, CONTENT_MODEL_V2, TEMPLATE_RULES_S18, flag_enabled
 from checks import queries as check_queries
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
@@ -70,6 +70,7 @@ from content.serializers import (
     PostTemplateSerializer,
     PostUploadSerializer,
     RecurrenceRuleSerializer,
+    TemplateOptionsSerializer,
     TrimRequestSerializer,
 )
 from content.services import calendar as calendar_service
@@ -88,7 +89,14 @@ from content.services.posts import (
     update_post,
 )
 from content.services.rules import PLATFORM_RULES
-from content.services.templates import apply_template
+from content.services.templates import (
+    IMAGE_MODES,
+    PLACEHOLDERS,
+    TEXT_MODES,
+    apply_template,
+    rules_enabled,
+    template_products,
+)
 from scheduling.services import cancel_post, schedule_post, unschedule_post
 from workspaces.models import Permission
 from workspaces.permissions import HasPermission
@@ -983,10 +991,64 @@ class PostTemplateViewSet(WorkspaceScopedQuerySetMixin, viewsets.ModelViewSet[Po
     )
     @action(detail=True, methods=["post"])
     def apply(self, request: Request, pk: str | None = None) -> Response:
-        post = apply_template(self.get_object(), author=authenticated_user(request))
+        template = self.get_object()
+        # S18: a template with products starts its post for the first one,
+        # placeholders filled; the others come from its rhythm.
+        products = template_products(template) if rules_enabled(request_workspace(request)) else []
+        post = apply_template(
+            template,
+            author=authenticated_user(request),
+            product=products[0] if products else None,
+        )
         return Response(
             PostSerializer(post, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class TemplateOptionsView(APIView):
+    """S18 — what the template form can choose from. 404 with the flag off,
+    which is how the form knows to stay as it was."""
+
+    permission_classes: list[Any] = [
+        IsAuthenticated,
+        HasFlag(CONTENT_MODEL_V2),
+        HasFlag(TEMPLATE_RULES_S18),
+        HasFeature(TEMPLATES_FEATURE),
+    ]
+
+    @extend_schema(responses={200: TemplateOptionsSerializer}, summary="Template form options")
+    def get(self, request: Request) -> Response:
+        from channels.services import active_accounts
+        from products.models import Product
+
+        workspace = request_workspace(request)
+        products = (
+            Product.objects.filter(workspace=workspace)
+            .annotate(photos=Count("reference_images"))
+            .order_by("pk")
+        )
+
+        def choices(table: dict[str, str]) -> list[dict[str, str]]:
+            return [{"key": key, "label": label} for key, label in table.items()]
+
+        return Response(
+            {
+                "placeholders": choices(PLACEHOLDERS),
+                "products": [
+                    {"id": p.pk, "name": p.name, "has_photo": p.photos > 0} for p in products
+                ],
+                "accounts": [
+                    {
+                        "id": a.pk,
+                        "platform": a.platform,
+                        "label": a.display_name or a.handle or a.get_platform_display(),
+                    }
+                    for a in active_accounts(workspace)
+                ],
+                "image_modes": choices(IMAGE_MODES),
+                "text_modes": choices(TEXT_MODES),
+            }
         )
 
 

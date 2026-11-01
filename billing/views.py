@@ -5,39 +5,59 @@ Views parse and serialise; `billing.services` decides (implementation.md §4.1).
 
 from __future__ import annotations
 
+import datetime as dt
+import logging
 from typing import Any
 
 from django.conf import settings
 from django.db.models import Q
+from django.http import FileResponse, HttpResponseRedirect
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from billing.gateways.base import WebhookVerificationError
+from billing.gateways.base import BillingGatewayError, WebhookVerificationError
 from billing.gateways.stripe import get_billing_gateway
-from billing.models import CreditLedger, Pack, Plan, VideoLedger
+from billing.models import (
+    CreditLedger,
+    Currency,
+    Invoice,
+    Pack,
+    Plan,
+    PrepaidOrder,
+    VideoLedger,
+)
+from billing.permissions import HasFlag
 from billing.serializers import (
+    BuyerSerializer,
     CheckoutRequestSerializer,
     CheckoutResponseSerializer,
     CreditLedgerSerializer,
     EntitlementsSerializer,
+    InvoiceRowSerializer,
     PackSerializer,
     PlanSerializer,
     PortalResponseSerializer,
+    PrepaidOrderSerializer,
+    PrepaidSummarySerializer,
     PurchaseRequestSerializer,
     VideoLedgerSerializer,
 )
-from billing.services import purchases, subscriptions, webhooks
+from billing.services import market, prepaid, purchases, subscriptions, webhooks
 from billing.services.entitlements import entitlements_for
+from billing.services.flags import TN_PAYMENTS_V1
 from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import request_workspace
+
+logger = logging.getLogger(__name__)
 
 
 def _billing_page() -> str:
@@ -148,6 +168,10 @@ class SubscribeView(APIView):
             cycle=payload.validated_data["cycle"],
             success_url=success_url,
             cancel_url=cancel_url,
+            country=market.request_country(request),
+            user=request.user,
+            buyer_name=payload.validated_data["buyer_name"],
+            buyer_tax_id=payload.validated_data["buyer_tax_id"],
         )
         return Response({"checkout_url": session.url})
 
@@ -192,6 +216,10 @@ class PurchaseView(APIView):
             pack_code=payload.validated_data["pack_code"],
             success_url=success_url,
             cancel_url=cancel_url,
+            country=market.request_country(request),
+            user=request.user,
+            buyer_name=payload.validated_data["buyer_name"],
+            buyer_tax_id=payload.validated_data["buyer_tax_id"],
         )
         return Response({"checkout_url": session.url})
 
@@ -235,3 +263,150 @@ class StripeWebhookView(APIView):
 
         processed = webhooks.process_event(event)
         return Response({"received": True, "processed": processed}, status=status.HTTP_200_OK)
+
+
+# -----------------------------------------------------------------------------
+# TND prepaid (Konnect) and invoices — `payments-tunisia.md`, flag tn_payments_v1
+# -----------------------------------------------------------------------------
+_TN: list[Any] = [IsAuthenticated, HasFlag(TN_PAYMENTS_V1)]
+
+
+class KonnectWebhookView(APIView):
+    """Konnect's notification: an unsigned `GET ?payment_ref=…`.
+
+    Proves nothing by itself — `prepaid.settle` reads the payment back and
+    grants only an order we created, paid in full. Konnect also sends the
+    payer's browser here after paying, so it always answers with a redirect to
+    the page that shows the order's state; a gateway that cannot be read now is
+    read again by the sweep.
+    """
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+
+    @extend_schema(request=None, responses={302: None}, summary="Konnect payment notification")
+    def get(self, request: Request) -> HttpResponseRedirect:
+        ref = str(request.query_params.get("payment_ref", ""))[:64]
+        order = None
+        if ref:
+            try:
+                order = prepaid.settle(ref)
+            except BillingGatewayError:
+                logger.warning("Konnect notification could not be verified yet", exc_info=True)
+                order = PrepaidOrder.objects.filter(gateway_ref=ref).first()
+        target = f"{_billing_page()}/return"
+        return HttpResponseRedirect(f"{target}?order={order.pk}" if order else target)
+
+
+class PrepaidOrderView(APIView):
+    permission_classes = _TN
+
+    @extend_schema(responses={200: PrepaidOrderSerializer}, summary="A TND order's state")
+    def get(self, request: Request, pk: int) -> Response:
+        workspace = request_workspace(request)
+        order = (
+            PrepaidOrder.objects.filter(pk=pk, organization=workspace.organization)
+            .select_related("currency")
+            .first()
+        )
+        if order is None:
+            raise NotFound
+        return Response(PrepaidOrderSerializer(order).data)
+
+
+class PrepaidSummaryView(APIView):
+    permission_classes = _TN
+
+    @extend_schema(responses={200: PrepaidSummarySerializer}, summary="The TND prepaid period")
+    def get(self, request: Request) -> Response:
+        organization = request_workspace(request).organization
+        if not market.uses_prepaid(organization):
+            raise NotFound
+        return Response(PrepaidSummarySerializer(prepaid.summary(organization)).data)
+
+
+class TopUpView(APIView):
+    permission_classes = _TN
+
+    @extend_schema(
+        request=BuyerSerializer,
+        responses={200: CheckoutResponseSerializer},
+        summary="Pay for extra workspaces until the period ends",
+    )
+    def post(self, request: Request) -> Response:
+        payload = BuyerSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        workspace = request_workspace(request)
+        if not market.uses_prepaid(workspace.organization):
+            raise NotFound
+        session = prepaid.start_topup(workspace, user=request.user, **payload.validated_data)
+        return Response({"checkout_url": session.url})
+
+
+class InvoiceListView(APIView):
+    """Ours for a TND organization; Stripe's own for everyone else."""
+
+    permission_classes = _TN
+
+    @extend_schema(responses={200: InvoiceRowSerializer(many=True)}, summary="Invoices")
+    def get(self, request: Request) -> Response:
+        organization = request_workspace(request).organization
+        rows: list[dict[str, Any]] = []
+        if market.uses_prepaid(organization):
+            for invoice in Invoice.objects.filter(organization=organization).select_related(
+                "currency"
+            ):
+                rows.append(
+                    {
+                        "id": str(invoice.pk),
+                        "origin": "composevision",
+                        "number": invoice.number,
+                        "date": invoice.issued_at.date(),
+                        "period": invoice.period,
+                        "total_minor": invoice.total_minor,
+                        "currency": invoice.currency.code,
+                        "total": invoice.currency.format(invoice.total_minor),
+                        "is_credit_note": invoice.corrects_id is not None,
+                        "pdf_url": "",
+                    }
+                )
+        elif organization.stripe_customer_id:
+            try:
+                found = get_billing_gateway().list_invoices(
+                    customer_id=organization.stripe_customer_id
+                )
+            except BillingGatewayError:
+                logger.warning("Stripe invoices could not be listed", exc_info=True)
+                found = []
+            for row in found:
+                currency = Currency.objects.filter(code=row.currency).first()
+                rows.append(
+                    {
+                        "id": row.id,
+                        "origin": "stripe",
+                        "number": row.number,
+                        "date": dt.datetime.fromtimestamp(row.created, tz=dt.UTC).date(),
+                        "period": None,
+                        "total_minor": row.amount_minor,
+                        "currency": row.currency,
+                        "total": currency.format(row.amount_minor)
+                        if currency
+                        else f"{row.amount_minor} {row.currency}",
+                        "is_credit_note": False,
+                        "pdf_url": row.pdf_url,
+                    }
+                )
+        return Response(InvoiceRowSerializer(rows, many=True).data)
+
+
+class InvoiceDocumentView(APIView):
+    permission_classes = _TN
+
+    @extend_schema(responses={(200, "application/pdf"): bytes}, summary="An invoice's PDF")
+    def get(self, request: Request, pk: int) -> FileResponse:
+        organization = request_workspace(request).organization
+        invoice = Invoice.objects.filter(pk=pk, organization=organization).first()
+        if invoice is None or not invoice.document:
+            raise NotFound
+        name = str(invoice.document.name).rsplit("/", 1)[-1]
+        return FileResponse(invoice.document.open("rb"), as_attachment=True, filename=name)

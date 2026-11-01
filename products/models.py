@@ -9,10 +9,12 @@ product, not a separate domain.
 
 from __future__ import annotations
 
+import secrets
 from typing import ClassVar
 
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils.text import slugify
 
 
 class ProductFormat(models.TextChoices):
@@ -68,6 +70,12 @@ class CampaignGoal(models.TextChoices):
     SALES = "sales", "Sales"
 
 
+def new_product_ref() -> str:
+    """Eight hex characters: the product's id in its address
+    (`/app/products/olive-oil-3f9a2c1e`), so the row's integer pk never shows."""
+    return secrets.token_hex(4)
+
+
 class Product(models.Model):
     """design.md §6.4. `reference_images` is the only hard requirement (I7) —
     every other field feeds the completeness scorer
@@ -82,6 +90,9 @@ class Product(models.Model):
         "workspaces.Workspace", on_delete=models.CASCADE, related_name="products"
     )
     name = models.CharField(max_length=200)
+    # shortcut: 4 bytes of randomness, a unique collision raises IntegrityError on create;
+    # widen the column if catalogues ever reach the millions.
+    ref = models.CharField(max_length=8, unique=True, default=new_product_ref, editable=False)
     description = models.TextField(blank=True)
     # Free-form studio defaults (e.g. a preferred aspect ratio) — nothing here
     # feeds the completeness scorer or a hard constraint, unlike `restrictions`.
@@ -186,6 +197,11 @@ class Product(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def slug(self) -> str:
+        """`olive-oil-3f9a2c1e`: the name for people, the `ref` for the lookup."""
+        return f"{slugify(self.name)[:60].strip('-') or 'product'}-{self.ref}"
 
 
 class AutopilotStrategy(models.TextChoices):

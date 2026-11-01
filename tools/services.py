@@ -1,4 +1,4 @@
-"""The six tools (design.md §8.10, C-11 / P0-04).
+"""The quick tools (design.md §8.10, C-11 / P0-04).
 
 Three of them call the language provider; three do not, and that split is the
 interesting part. `hashtag` ranks against the trend corpus this workspace's
@@ -112,7 +112,14 @@ _SYSTEMS: dict[str, str] = {
         "You write opening lines that earn the second line. Concrete, never "
         "clickbait, never a question the post does not answer."
     ),
+    Tool.CTA: (
+        "You write calls to action of at most six words. One clear verb, no "
+        "false urgency, never a promise the product cannot keep."
+    ),
 }
+
+#: L-6: the content languages, and nothing else.
+LANGUAGES = {"en": "English", "fr": "French", "it": "Italian"}
 
 
 def _write(workspace: Any, payload: dict[str, Any], *, tool: str) -> ToolResult:
@@ -132,6 +139,95 @@ def _write(workspace: Any, payload: dict[str, Any], *, tool: str) -> ToolResult:
     # rationale is prompt-engineering telemetry rather than something the card
     # renders.
     return ToolResult(output={"variants": [variant.body for variant in result.variants]})
+
+
+def _rewrite(workspace: Any, payload: dict[str, Any]) -> ToolResult:
+    """Sized to the platform's rules row, so a rewrite for X fits X."""
+    from ai.models import AITask
+    from ai.providers.llm_text import get_text_provider
+    from content.services.rules import PLATFORM_RULES
+
+    body = _body(payload)
+    platform = str(payload.get("platform", "")).strip()
+    limit = ""
+    if platform:
+        if platform not in PLATFORM_RULES:
+            raise OCCSError(f"Unknown platform: {platform}.", code="invalid_platform")
+        limit = f" Keep it under {PLATFORM_RULES[platform].char_limit} characters for {platform}."
+
+    result = get_text_provider(AITask.TOOLS, workspace=workspace).generate(
+        system=(
+            "You rewrite social captions: same facts, sharper words, the brand's own "
+            "voice. Never add a claim the original does not make." + limit
+        ),
+        prompt=f"Brand: {workspace.name}. Caption:\n{body}",
+        n=VARIANTS,
+    )
+    return ToolResult(output={"variants": [variant.body for variant in result.variants]})
+
+
+def _translate(workspace: Any, payload: dict[str, Any]) -> ToolResult:
+    """One version, not three: a translation is a rendering, not a choice."""
+    from ai.models import AITask
+    from ai.providers.llm_text import get_text_provider
+
+    body = _body(payload)
+    language = str(payload.get("language", "")).strip().lower()
+    if language not in LANGUAGES:
+        raise OCCSError(
+            "Translate into English, French or Italian.",
+            code="invalid_language",
+            detail={"language": sorted(LANGUAGES)},
+        )
+
+    result = get_text_provider(AITask.TOOLS, workspace=workspace).generate(
+        system=(
+            f"Translate the caption into {LANGUAGES[language]}. Keep hashtags, "
+            "@mentions, links and emoji exactly as they are. Reply with the translation only."
+        ),
+        prompt=body,
+        n=1,
+    )
+    return ToolResult(output={"variants": [variant.body for variant in result.variants]})
+
+
+def _alt_text(workspace: Any, payload: dict[str, Any]) -> ToolResult:
+    """Reads the picture through the vision call captions already use."""
+    from rest_framework.exceptions import NotFound
+
+    from ai.models import AITask
+    from ai.providers.llm_text import get_text_provider
+    from content.models import MediaAsset, MediaKind
+
+    media_id = payload.get("media_id")
+    if not media_id:
+        raise OCCSError("This tool needs an image.", code="media_required")
+    # Another workspace's image does not exist from here: 404, never 403.
+    asset = MediaAsset.objects.filter(
+        pk=media_id, workspace=workspace, kind=MediaKind.IMAGE
+    ).first()
+    if asset is None:
+        raise NotFound("No such image.")
+    with asset.file.open("rb") as handle:
+        image_bytes = handle.read()
+
+    result = get_text_provider(AITask.TOOLS, workspace=workspace).caption(
+        system=(
+            "You write alt text for screen readers: what is in the picture, in one "
+            "sentence of at most 125 characters. No 'image of', no hashtags."
+        ),
+        prompt="Describe this image.",
+        image_bytes=image_bytes,
+        n=VARIANTS,
+    )
+    return ToolResult(output={"variants": [variant.body for variant in result.variants]})
+
+
+def _body(payload: dict[str, Any]) -> str:
+    body = str(payload.get("body", "")).strip()
+    if not body:
+        raise OCCSError("This tool needs some text.", code="body_required")
+    return body
 
 
 # -----------------------------------------------------------------------------
@@ -214,4 +310,8 @@ _RUNNERS: dict[str, Any] = {
     Tool.HASHTAG: _hashtags,
     Tool.THREAD_SPLITTER: _thread,
     Tool.BEST_TIME: _best_time,
+    Tool.CTA: lambda w, p: _write(w, p, tool=Tool.CTA),
+    Tool.CAPTION_REWRITE: _rewrite,
+    Tool.TRANSLATE: _translate,
+    Tool.ALT_TEXT: _alt_text,
 }

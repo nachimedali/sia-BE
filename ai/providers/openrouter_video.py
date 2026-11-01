@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 #: Swapped in tests; the suite never sleeps (implementation.md §5).
 _sleep = time.sleep
 
+#: Ratios the routed models (Wan 3.0, Grok, Kling) refuse, sent as the nearest
+#: one they take; the reel composer crops back to the row's own size.
+_VENDOR_ASPECT = {"4:5": "3:4"}
+
 _DONE = "completed"
 _FAILED = {"failed", "cancelled", "expired"}
 
@@ -152,7 +156,7 @@ class OpenRouterVideoProvider:
             "prompt": prompt,
             # The vendors take whole seconds; the length rows are whole already.
             "duration": max(1, round(duration_seconds)),
-            "aspect_ratio": aspect,
+            "aspect_ratio": _VENDOR_ASPECT.get(aspect, aspect),
         }
         if resolution:
             body["resolution"] = resolution

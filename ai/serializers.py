@@ -296,6 +296,12 @@ class CreativeOptionSerializer(serializers.ModelSerializer[CreativeOption]):
         )
         read_only_fields = fields
 
+    def to_representation(self, instance: CreativeOption) -> dict[str, Any]:
+        data = super().to_representation(instance)
+        data["label"] = instance.localized("label")
+        data["description"] = instance.localized("description")
+        return data
+
 
 class CreativePricingSerializer(serializers.Serializer[Any]):
     credits = serializers.IntegerField()

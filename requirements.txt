@@ -13,6 +13,8 @@ django-environ
 
 cryptography
 stripe
+# HTML to PDF for TND invoices (TN-12); needs Pango on the server.
+weasyprint
 pillow
 django-storages[s3]
 

@@ -182,7 +182,24 @@ PLAYBOOK_V1 = "playbook_v1"
 #: organization row of `enabled=False` restores pre-step behaviour.
 AD_TEMPLATES_S17 = "ad_templates_s17"
 
+#: S18 — product templates on a rhythm (`todo-steps.md` S18): a template names
+#: products, accounts and how each slot's text and image are made; every slot
+#: makes one draft per product carrying its slot time, submitted for review, and
+#: credits-low and week-ahead alerts tell the workspace before a slot is lost.
+#: Off restores pre-step behaviour: the rule fields are dropped on save, a slot
+#: is one plain draft, and the options endpoint answers 404.
+TEMPLATE_RULES_S18 = "template_rules_s18"
+
+#: TN payments (`payments-tunisia.md`): visitors connected from Tunisia see TND,
+#: and an organization locked to TND pays prepaid periods, packs and extra
+#: workspaces through Konnect, with monthly French invoices. Off restores
+#: pre-change behaviour: every price is the catalogue's, every checkout is
+#: Stripe's, and the prepaid, order and invoice endpoints answer 404. **Off by
+#: default** — beta is deployed, so this one is promoted deliberately.
+TN_PAYMENTS_V1 = "tn_payments_v1"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
+    TN_PAYMENTS_V1: False,
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
     PLANNING_V3: True,
@@ -209,6 +226,8 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     # On from deploy (owner, 2026-10-27), although it moves video from credits
     # to video units: every user must see and use the templates.
     AD_TEMPLATES_S17: True,
+    # On from deploy (owner, 2026-10-31), as S17 was.
+    TEMPLATE_RULES_S18: True,
     # Off until trendgen serves them; see the declarations above.
     TRENDGEN_FEED: False,
     TRENDGEN_GENERATION: False,

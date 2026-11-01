@@ -133,6 +133,17 @@ def test_a_first_frame_clip_is_submitted_polled_and_downloaded(monkeypatch, no_s
 
 
 @override_settings(**VIDEO_KEY)
+def test_a_feed_clip_is_asked_for_at_3_4_which_the_vendors_take(monkeypatch, no_sleep) -> None:
+    captured = _video_transport(monkeypatch, statuses=["completed"])
+
+    OpenRouterVideoProvider().animate(
+        image=b"\x89PNG still", role="start", prompt="p", aspect="4:5", duration_seconds=5
+    )
+
+    assert json.loads(captured[0].content)["aspect_ratio"] == "3:4"
+
+
+@override_settings(**VIDEO_KEY)
 def test_a_last_frame_clip_asks_for_the_last_frame_and_audio(monkeypatch, no_sleep) -> None:
     captured = _video_transport(monkeypatch, statuses=["completed"])
 
