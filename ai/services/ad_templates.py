@@ -357,6 +357,7 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         "categories": [{"key": key, "label": label} for key, label in _category_labels()],
         "locations": [{"key": key, "label": key.capitalize()} for key in _location_keys(out)],
         "rerolls": entitlements.int_feature("ad_rerolls"),
+        "prompt_edit": bool(entitlements.feature("ad_prompt_edit")),
         "avatars_per_ad": cast_limits(entitlements)["avatars"],
         "products_per_ad": cast_limits(entitlements)["products"],
         "references_cap": references_cap(workspace, entitlements),
@@ -601,6 +602,19 @@ def check_reroll(workspace: Workspace, root: Generation) -> None:
         )
 
 
+#: The longest free-text direction an ad may carry on top of its controls.
+DIRECTION_MAX = 400
+
+
+def clean_prompt(workspace: Workspace, raw: Any) -> str:
+    """The person's own words for the render, or "". Writing any is a plan
+    feature (`ad_prompt_edit`): 402 on a plan without it, never ignored."""
+    text = " ".join(str(raw or "").split())[:DIRECTION_MAX]
+    if text:
+        entitlements_for(workspace).require_feature("ad_prompt_edit")
+    return text
+
+
 def create_keyframe(
     workspace: Workspace,
     *,
@@ -612,6 +626,8 @@ def create_keyframe(
     reroll_of: Generation | None = None,
     extra_avatars: list[Any] | None = None,
     extra_products: list[Product] | None = None,
+    look: dict[str, Any] | None = None,
+    prompt: str = "",
 ) -> Generation:
     """The first frame as a PENDING image generation; the caller queues it.
 
@@ -666,16 +682,22 @@ def create_keyframe(
         user=user,
         kind=GenerationKind.IMAGE,
         mode=GenerationMode.PRODUCT,
-        prompt=keyframe_prompt(
-            row,
-            product=product,
-            location=location,
-            person=person,
-            also=tuple(item.name for item in others),
-        ),
+        prompt=" ".join(
+            [
+                keyframe_prompt(
+                    row,
+                    product=product,
+                    location=location,
+                    person=person,
+                    also=tuple(item.name for item in others),
+                ),
+                prompt,
+            ]
+        ).strip(),
         product=product,
         aspect=KEYFRAME_ASPECT,
         creative={
+            **(look or {}),
             **({"assets": assets} if assets else {}),
             "ad_template": marker,
             **({"avatar": avatar.pk} if avatar else {}),

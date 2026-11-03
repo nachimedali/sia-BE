@@ -312,3 +312,23 @@ def test_batch_routing_for_autopilot_sync_for_studio(
     )
     run_generation(autopilot_workspace_generation, n=1)
     assert _fake_image_provider.calls[-1]["batch"] is True
+
+
+def test_a_task_past_its_time_limit_fails_the_generation(
+    monkeypatch: pytest.MonkeyPatch, workspace: Any, user: Any, plans: Any, generation_costs: Any
+) -> None:
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from ai import tasks
+
+    generation = _text_generation(_on_plan(workspace, plans, "pro"), user)
+
+    def hang(*args: Any, **kwargs: Any) -> None:
+        raise SoftTimeLimitExceeded
+
+    monkeypatch.setattr(tasks, "run_generation", hang)
+    tasks.run_generation_task(generation.pk)
+
+    generation.refresh_from_db()
+    assert generation.status == GenerationStatus.FAILED
+    assert generation.error_detail == {"reason": "timeout"}

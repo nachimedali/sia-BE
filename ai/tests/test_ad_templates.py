@@ -626,3 +626,55 @@ def test_language_matters_only_when_the_person_speaks(
         ESTIMATE, template_clip(oil, avatar=lina.pk, language="it"), format="json"
     )
     assert ok.status_code == 200, ok.json()
+
+
+# -----------------------------------------------------------------------------
+# The person's own direction and look controls (plan `ad_prompt_edit`)
+# -----------------------------------------------------------------------------
+def test_look_controls_and_a_prompt_reach_the_keyframe(auth_client: Any, oil: Any) -> None:
+    scene = CreativeOption.objects.filter(kind=CreativeKind.SCENE, is_active=True).first()
+    assert scene is not None
+    response = auth_client.post(
+        KEYFRAME,
+        {
+            "template": "pour-shot",
+            "product": oil.pk,
+            "creative": {"scene": scene.key},
+            "prompt": "  warm   morning light, no   text ",
+        },
+        format="json",
+    )
+    assert response.status_code == 201, response.json()
+    generation = Generation.objects.get(pk=response.json()["id"])
+    assert generation.creative["scene"] == scene.key
+    assert generation.prompt.endswith("warm morning light, no text")
+
+
+def test_a_control_that_is_not_a_video_look_is_400(auth_client: Any, oil: Any) -> None:
+    response = auth_client.post(
+        KEYFRAME,
+        {"template": "pour-shot", "product": oil.pk, "creative": {"format": "square"}},
+        format="json",
+    )
+    assert response.status_code == 400
+
+
+def test_the_prompt_is_kept_on_the_render_and_priced_with_it(auth_client: Any, oil: Any) -> None:
+    body = confirmed(auth_client, template_clip(oil, template="pour-shot", prompt="slow push-in"))
+    response = auth_client.post(RENDERS, body, format="json")
+    assert response.status_code == 202, response.json()
+    assert VideoRender.objects.get(pk=response.json()["id"]).spec["prompt"] == "slow push-in"
+
+
+def test_a_plan_without_prompt_editing_is_402(
+    auth_client: Any, workspace: Any, plans: Any, catalog: None, flag_on: None, make_png_upload: Any
+) -> None:
+    on_plan(workspace, plans, "spark")
+    product = make_product(workspace, make_png_upload)
+    response = auth_client.post(
+        ESTIMATE,
+        template_clip(product, template="liquid-splash", prompt="slow push-in"),
+        format="json",
+    )
+    assert response.status_code == 402
+    assert response.json()["error"]["detail"]["feature"] == "ad_prompt_edit"

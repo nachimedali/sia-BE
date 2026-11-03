@@ -11,6 +11,7 @@ from rest_framework import serializers
 
 from ai.models import VideoMode, VideoRender, VideoReview
 from ai.serializers import CreativeOptionSerializer
+from ai.services import ad_templates
 from ai.services import creative as creative_service
 from ai.services.video import OVERLAY_MAX, TEXT_MAX
 from content.models import MediaAsset
@@ -84,6 +85,11 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
     )
     location = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
     script = AdScriptSerializer(required=False, allow_null=True, default=None)
+    #: The person's own direction for a template render (402 without the plan's
+    #: `ad_prompt_edit`), added to the controls above.
+    prompt = serializers.CharField(
+        max_length=ad_templates.DIRECTION_MAX, required=False, allow_blank=True, default=""
+    )
 
     def validate_creative(self, value: Any) -> dict[str, Any]:
         return creative_service.video_look(value)

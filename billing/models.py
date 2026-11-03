@@ -84,6 +84,8 @@ FEATURE_KEYS = frozenset(
         "ad_templates_premium",
         "ad_avatars_per_ad",
         "ad_products_per_ad",
+        # Free-text prompt on an ad template render, on top of the controls.
+        "ad_prompt_edit",
     }
 )
 

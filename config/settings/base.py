@@ -601,6 +601,9 @@ LLM_BASE_URL = env("LLM_BASE_URL", default="https://integrate.api.nvidia.com/v1"
 LLM_API_KEY = env("LLM_API_KEY", default=env("NVIDIA_API_KEY", default=""))
 LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="meta/muse-glimmer-30b")
 LLM_TIMEOUT_SECONDS = env.int("LLM_TIMEOUT_SECONDS", default=30)
+# Whole-task ceiling for a Studio generation (all attempts, copy included): past
+# it the row is marked FAILED instead of staying PENDING.
+GENERATION_TASK_TIMEOUT_SECONDS = env.int("GENERATION_TASK_TIMEOUT_SECONDS", default=300)
 # Background tasks that may wait longer than an in-request call, by `AITask`.
 # The website import sends ten pages of text to a reasoning model, which takes
 # 20-60 s on NVIDIA's hosted API; at 30 s every inferred section came back empty.
