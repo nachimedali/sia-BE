@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from typing import Any
 
 import pytest
@@ -12,6 +13,7 @@ from rest_framework.test import APIClient
 from billing.models import Invoice, InvoiceIssuer, PrepaidOrder
 from billing.rendering import WeasyPrintRenderer
 from billing.services import invoicing
+from billing.services.prepaid import month_start
 from common.records import AppendOnlyError
 
 pytestmark = pytest.mark.django_db
@@ -72,6 +74,10 @@ def test_last_months_payments_become_one_invoice_whose_total_is_what_was_charged
     assert "FACTURE" in html and "ComposeVision SUARL" in html and "7654321B" in html
     assert "Droit de timbre" in html and "Total TTC" in html
     assert "Abonnement" in html
+    assert f"Réf. Konnect {first.gateway_ref}" in html
+    assert "Arrêtée la présente facture à la somme de" in html
+    assert invoicing.fr_money(invoice.currency, invoice.total_minor) in html
+    assert invoice.sha256 == hashlib.sha256(invoice.document.open("rb").read()).hexdigest()
 
     assert invoicing.issue_due(now=NOVEMBER + dt.timedelta(days=1)) == 0  # idempotent
 
@@ -134,11 +140,16 @@ def test_an_invoice_is_frozen_and_corrected_only_by_a_credit_note(
     with pytest.raises(AppendOnlyError):
         invoice.save()
 
-    note = invoicing.issue_credit_note(invoice, reason="Remboursé")
-    assert note.total_minor == -invoice.total_minor
+    note = invoicing.issue_credit_note(invoice, reason="Prélevé deux fois")
+    # The stamp duty is not refunded: the note returns net + VAT only.
+    assert note.stamp_minor == 0
+    assert note.total_minor == -(invoice.net_minor + invoice.vat_minor)
     assert note.corrects == invoice
+    assert note.reason == "Prélevé deux fois"
     assert note.number.endswith("-00002")
-    assert "AVOIR" in note.document.read().decode()
+    html = note.document.read().decode()
+    assert "AVOIR" in html and f"Avoir sur la facture n° {invoice.number}" in html
+    assert "Total TTC à rembourser" in html and "Prélevé deux fois" in html
     with pytest.raises(StateConflict):
         invoicing.issue_credit_note(invoice, reason="again")
 
@@ -152,11 +163,16 @@ def test_the_invoice_list_and_download_are_the_organizations_own(
     invoicing.issue_due(now=NOVEMBER)
     invoice = Invoice.objects.get()
 
-    rows = auth_client.get("/api/v1/billing/invoices/").data
+    body = auth_client.get("/api/v1/billing/invoices/").data
+    assert body["issued_by"] == "composevision" and body["late"] is None
+    rows = body["invoices"]
     assert [(r["origin"], r["number"], r["is_credit_note"]) for r in rows] == [
         ("composevision", invoice.number, False)
     ]
     assert rows[0]["total"].endswith(" DT")
+    assert rows[0]["minor_units"] == 3 and rows[0]["lines"] == 1
+    assert rows[0]["charged_minor"] == invoice.total_minor  # what Konnect took that month
+    assert rows[0]["sha256"] == invoice.sha256
     download = auth_client.get(f"/api/v1/billing/invoices/{invoice.pk}/document/")
     assert download.status_code == 200
     assert b"FACTURE" in b"".join(download.streaming_content)  # type: ignore[attr-defined]
@@ -165,7 +181,22 @@ def test_the_invoice_list_and_download_are_the_organizations_own(
     rival = APIClient()
     rival.force_authenticate(other_user)
     assert rival.get(f"/api/v1/billing/invoices/{invoice.pk}/document/").status_code == 404
-    assert rival.get("/api/v1/billing/invoices/").data == []
+    assert rival.get("/api/v1/billing/invoices/").data["invoices"] == []
+
+
+def test_a_month_held_back_by_an_incomplete_issuer_is_reported_late(
+    tn_workspace: Any, auth_client: APIClient, konnect: Any
+) -> None:
+    paid = _paid_order(auth_client, konnect, on=timezone.now() - dt.timedelta(days=40))
+
+    body = auth_client.get("/api/v1/billing/invoices/").data
+
+    assert body["invoices"] == []
+    assert paid.paid_at is not None
+    assert body["late"] == str(month_start(paid.paid_at).date())
+    assert body["next_issue_on"] == str(
+        (month_start(timezone.now()) + dt.timedelta(days=32)).date().replace(day=1)
+    )
 
 
 def test_a_usd_account_lists_stripes_invoices(
@@ -182,32 +213,54 @@ def test_a_usd_account_lists_stripes_invoices(
         )
     )
 
-    rows = auth_client.get("/api/v1/billing/invoices/").data
+    body = auth_client.get("/api/v1/billing/invoices/").data
 
+    assert body["issued_by"] == "stripe" and body["next_issue_on"] is None
+    rows = body["invoices"]
     assert rows[0]["origin"] == "stripe"
     assert rows[0]["pdf_url"] == "https://stripe.test/in_1.pdf"
     assert rows[0]["total"] == "$49.00"
 
 
-def test_weasyprint_renders_the_template_to_a_real_pdf(issuer: InvoiceIssuer) -> None:
+@pytest.mark.parametrize(
+    ("minor", "words"),
+    [
+        (279_000, "Deux cent soixante-dix-neuf dinars"),
+        (1_500, "Un dinar et cinq cents millimes"),
+        (71_000, "Soixante et onze dinars"),
+        (80_000, "Quatre-vingts dinars"),
+        (181_000, "Cent quatre-vingt-un dinars"),
+        (200_000, "Deux cents dinars"),
+        (1_000, "Un dinar"),
+        (2_200_001, "Deux mille deux cents dinars et un millime"),
+        (280_000_000, "Deux cent quatre-vingt mille dinars"),
+        (0, "Zéro dinar"),
+    ],
+)
+def test_the_total_is_spelled_out_in_french(tnd: Any, minor: int, words: str) -> None:
+    assert invoicing.amount_in_words(tnd, minor) == words
+
+
+def test_amounts_print_the_french_way(tnd: Any) -> None:
+    assert invoicing.fr_money(tnd, 1_234_500) == "1\u00a0234,500 DT"
+
+
+def test_weasyprint_renders_the_template_to_a_real_pdf(issuer: InvoiceIssuer, tnd: Any) -> None:
     pytest.importorskip("weasyprint")
     from django.template.loader import render_to_string
 
     html = render_to_string(
         "billing/invoice.html",
-        {
-            "number": "CV-2026-00001",
-            "issued_on": dt.date(2026, 11, 1),
-            "period": dt.date(2026, 10, 1),
-            "issuer": {"legal_name": "X", "address": "Y", "tax_id": "Z", "trade_register": "R"},
-            "buyer_name": "Acme",
-            "lines": [
-                {"label": "Abonnement", "net": "147.000 DT", "vat": "27.930 DT", "rate": "19 %"}
-            ],
-            "net": "147.000 DT",
-            "vat": "27.930 DT",
-            "stamp": "1.000 DT",
-            "total": "175.930 DT",
-        },
+        invoicing.context(
+            kind="invoice",
+            number="CV-2026-00001",
+            issued_on=dt.date(2026, 11, 1),
+            period=dt.date(2026, 10, 1),
+            issuer={"legal_name": "X", "address": "Y", "tax_id": "Z", "trade_register": "R"},
+            buyer_name="Acme",
+            buyer_tax_id="",
+            currency=tnd,
+            lines=[],
+        ),
     )
     assert WeasyPrintRenderer().render(html).startswith(b"%PDF")

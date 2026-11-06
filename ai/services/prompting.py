@@ -29,8 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ai.prompts import text_v2
 from ai.prompts.image_v1 import PROMPT_PREFIX as IMAGE_PROMPT_PREFIX
-from ai.prompts.text_v2 import SYSTEM_PROMPT as TEXT_SYSTEM_PROMPT
 from brand.services.kit import kit_for
 from brand.services.kit import prompt_lines as kit_prompt_lines
 from products import brief as product_brief
@@ -163,6 +163,8 @@ MODE_INSTRUCTIONS: dict[str, str] = {
 #: The reply shape for a Studio image's copy. Parsed by
 #: `ai.services.pipeline.split_copy`, which also copes with a model that ignores
 #: it — the instruction is a request, never something the pipeline depends on.
+TEXT_SYSTEM_PROMPT = text_v2.SYSTEM_PROMPT
+
 HEADLINE_FORMAT = (
     "Return each variant as a headline of at most eight words on the first line, "
     "then the caption on the lines after it. No quotation marks, no labels."

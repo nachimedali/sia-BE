@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Count, Q, Sum
 from django.http import FileResponse, HttpResponseRedirect
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema
@@ -40,7 +40,7 @@ from billing.serializers import (
     CheckoutResponseSerializer,
     CreditLedgerSerializer,
     EntitlementsSerializer,
-    InvoiceRowSerializer,
+    InvoiceListSerializer,
     PackSerializer,
     PlanSerializer,
     PortalResponseSerializer,
@@ -49,7 +49,7 @@ from billing.serializers import (
     PurchaseRequestSerializer,
     VideoLedgerSerializer,
 )
-from billing.services import market, prepaid, purchases, subscriptions, webhooks
+from billing.services import invoicing, market, prepaid, purchases, subscriptions, webhooks
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import TN_PAYMENTS_V1
 from common.exceptions import OCCSError
@@ -348,14 +348,17 @@ class InvoiceListView(APIView):
 
     permission_classes = _TN
 
-    @extend_schema(responses={200: InvoiceRowSerializer(many=True)}, summary="Invoices")
+    @extend_schema(responses={200: InvoiceListSerializer}, summary="Invoices")
     def get(self, request: Request) -> Response:
         organization = request_workspace(request).organization
         rows: list[dict[str, Any]] = []
         if market.uses_prepaid(organization):
-            for invoice in Invoice.objects.filter(organization=organization).select_related(
-                "currency"
-            ):
+            invoices = (
+                Invoice.objects.filter(organization=organization)
+                .select_related("currency", "corrects")
+                .annotate(line_count=Count("lines"), charged=Sum("lines__order__amount_minor"))
+            )
+            for invoice in invoices:
                 rows.append(
                     {
                         "id": str(invoice.pk),
@@ -368,9 +371,29 @@ class InvoiceListView(APIView):
                         "total": invoice.currency.format(invoice.total_minor),
                         "is_credit_note": invoice.corrects_id is not None,
                         "pdf_url": "",
+                        "minor_units": invoice.currency.minor_units,
+                        "net_minor": invoice.net_minor,
+                        "vat_minor": invoice.vat_minor,
+                        "stamp_minor": invoice.stamp_minor,
+                        "charged_minor": invoice.charged,
+                        "issued_at": invoice.issued_at,
+                        "corrects": invoice.corrects.number if invoice.corrects else None,
+                        "reason": invoice.reason,
+                        "lines": invoice.line_count or None,
+                        "sha256": invoice.sha256,
                     }
                 )
-        elif organization.stripe_customer_id:
+            return Response(
+                InvoiceListSerializer(
+                    {
+                        "issued_by": "composevision",
+                        "invoices": rows,
+                        "next_issue_on": invoicing.next_issue_on(),
+                        "late": invoicing.late_month(organization),
+                    }
+                ).data
+            )
+        if organization.stripe_customer_id:
             try:
                 found = get_billing_gateway().list_invoices(
                     customer_id=organization.stripe_customer_id
@@ -394,9 +417,23 @@ class InvoiceListView(APIView):
                         else f"{row.amount_minor} {row.currency}",
                         "is_credit_note": False,
                         "pdf_url": row.pdf_url,
+                        "minor_units": currency.minor_units if currency else 2,
+                        "net_minor": None,
+                        "vat_minor": None,
+                        "stamp_minor": None,
+                        "charged_minor": None,
+                        "issued_at": None,
+                        "corrects": None,
+                        "reason": "",
+                        "lines": None,
+                        "sha256": "",
                     }
                 )
-        return Response(InvoiceRowSerializer(rows, many=True).data)
+        return Response(
+            InvoiceListSerializer(
+                {"issued_by": "stripe", "invoices": rows, "next_issue_on": None, "late": None}
+            ).data
+        )
 
 
 class InvoiceDocumentView(APIView):

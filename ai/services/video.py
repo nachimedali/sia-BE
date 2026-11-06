@@ -207,6 +207,7 @@ class Spec:
     extra_products: list[Product] = field(default_factory=list)
     location: str = ""
     script: dict[str, str] = field(default_factory=dict)
+    prompt: str = ""
 
     @property
     def seconds(self) -> int:
@@ -234,6 +235,7 @@ class Spec:
                 "location": self.location,
                 "role": "start",
                 "script": self.script,
+                **({"prompt": self.prompt} if self.prompt else {}),
             }
         elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
@@ -360,6 +362,20 @@ def parse(workspace: Workspace, data: dict[str, Any]) -> Spec:
     )
 
 
+def _directed(lead: str, render: VideoRender) -> str:
+    """`lead` plus the look the person chose and their own words."""
+    return " ".join(
+        filter(
+            None,
+            [
+                lead,
+                *creative_service.image_lines(render.spec.get("creative") or {}),
+                render.spec.get("prompt", ""),
+            ],
+        )
+    )
+
+
 def _vertical() -> CreativeOption:
     aspect = CreativeOption.objects.filter(
         kind=CreativeKind.VIDEO_ASPECT, is_active=True, metadata__aspect=REEL_ASPECT
@@ -416,6 +432,7 @@ def _parse_template(
             "text": common["text"] or "\n".join(text for text in script.values() if text),
         },
         script=script,
+        prompt=ad_templates.clean_prompt(workspace, data.get("prompt")),
         aspect=_vertical(),
         language=language,
         source=source,
@@ -853,9 +870,7 @@ def _render_clip(render: VideoRender) -> VideoResult:
     if prompt:
         # The scene, light, camera, cast and mood the person chose, in the same
         # words the still was made with (`creative.look_lines`).
-        prompt = " ".join(
-            [prompt, *creative_service.image_lines(render.spec.get("creative") or {})]
-        )
+        prompt = _directed(prompt, render)
     if prompt and flag_enabled(render.workspace.organization, STUDIO_REPHRASE):
         # The motion row, rewritten into one brief (`ai.services.rephrase`);
         # the row's own words when the rewrite fails its checks.
@@ -908,7 +923,7 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
         seconds=END_CARD_SECONDS,
     )
     per_shot = round((seconds - card.seconds) / len(shots_meta), 2)
-    prompt = ad_templates.motion_prompt(template)
+    prompt = _directed(ad_templates.motion_prompt(template), render)
     _advance(render, *PHASES[1])
     shots: list[ReelShot] = []
     counts = {"photo": 0, "screen": 0}

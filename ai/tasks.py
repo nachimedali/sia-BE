@@ -8,15 +8,29 @@ creates the `PENDING` row synchronously and this task does the rest.
 from __future__ import annotations
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
+from django.conf import settings
 
-from ai.models import Generation
+from ai.models import Generation, GenerationStatus
 from ai.services.pipeline import run_generation
 
 
-@shared_task(name="ai.tasks.run_generation")
+@shared_task(
+    name="ai.tasks.run_generation",
+    soft_time_limit=settings.GENERATION_TASK_TIMEOUT_SECONDS,
+    time_limit=settings.GENERATION_TASK_TIMEOUT_SECONDS + 30,
+)
 def run_generation_task(generation_id: int, *, n: int = 3) -> None:
     generation = Generation.objects.get(pk=generation_id)
-    run_generation(generation, n=n)
+    try:
+        run_generation(generation, n=n)
+    except SoftTimeLimitExceeded:
+        # A hung provider call must end as a visible failure, not a row that
+        # stays PENDING forever. Credits are debited on pass only, so nothing
+        # is owed back.
+        Generation.objects.filter(pk=generation_id, status=GenerationStatus.PENDING).update(
+            status=GenerationStatus.FAILED, error_detail={"reason": "timeout"}
+        )
 
 
 @shared_task(name="ai.tasks.video_render")

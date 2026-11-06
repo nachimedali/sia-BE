@@ -124,7 +124,7 @@ from collaboration.views import (
     ReviewRequestChangesView,
     ThreadViewSet,
 )
-from common.health import HealthView
+from common.health import BeatHealthView, HealthView
 from content.views import (
     MediaAssetViewSet,
     PlatformRuleListView,
@@ -226,6 +226,7 @@ router.register("workspaces/members", MembershipViewSet, basename="membership")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
+    path("health/beat/", BeatHealthView.as_view(), name="health-beat"),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "schema/swagger-ui/",

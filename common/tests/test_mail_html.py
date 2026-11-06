@@ -173,3 +173,33 @@ def test_every_email_embeds_the_logo_whatever_site_url_says(sent: list[Any], tem
     assert "multipart/related" in raw
     assert "Content-ID: <composevision-logo>" in raw
     assert "Content-Disposition: inline" in raw
+
+
+#: Copy of the frontend's page routes (`app-FE/app`); a dynamic segment is `*`.
+#: Update it with the route table, so a mailed link to a missing page fails here.
+FRONTEND_ROUTES = {
+    "/", "/pricing", "/privacy", "/terms", "/help", "/login", "/register", "/forgot-password",
+    "/reset-password", "/verify-email", "/confirm-email", "/accept-invite", "/onboarding",
+    "/app", "/app/analytics", "/app/approvals", "/app/autopilot", "/app/billing",
+    "/app/calendar", "/app/campaigns", "/app/help", "/app/inbox", "/app/notifications",
+    "/app/plan", "/app/playbook", "/app/products", "/app/published", "/app/search",
+    "/app/settings", "/app/settings/account", "/app/settings/connections",
+    "/app/settings/team", "/app/social-accounts", "/app/studio", "/app/templates",
+    "/app/trends", "/app/workspaces",
+}  # fmt: skip
+FRONTEND_PREFIXES = ("/a/", "/g/", "/r/", "/s/", "/app/posts/", "/app/approvals/")
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+@override_settings(SITE_URL="https://site.test")
+def test_every_link_in_every_email_opens_a_page(sent: list[Any], template: str) -> None:
+    import re
+    from urllib.parse import urlparse
+
+    DjangoMailSender().send(Email(to="a@example.com", subject="s", template=template, context={}))
+    html = sent[0].alternatives[0][0]
+    for href in re.findall(r'href="(https://site\.test[^"]*)"', html):
+        path = urlparse(href).path.rstrip("/") or "/"
+        assert path in FRONTEND_ROUTES or (path + "/").startswith(FRONTEND_PREFIXES), (
+            f"{template} links to {path}, which is not a frontend page"
+        )

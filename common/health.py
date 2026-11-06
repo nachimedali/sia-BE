@@ -89,3 +89,39 @@ class HealthView(APIView):
             ),
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
+
+
+class BeatHealthView(APIView):
+    """503 when Celery Beat has not fired for `BEAT_STALE_SECONDS`, for an uptime
+    check. Separate from `/health/`: a stopped Beat must not take the site out of rotation."""
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+
+    @extend_schema(
+        operation_id="health_beat",
+        summary="Celery Beat heartbeat",
+        responses={200: dict, 503: dict},
+        auth=[],
+    )
+    def get(self, request: Request) -> Response:
+        from django.conf import settings
+
+        from common.tasks import BEAT_HEARTBEAT_KEY
+
+        try:
+            raw = get_redis().get(BEAT_HEARTBEAT_KEY)
+        except Exception:
+            raw = None
+        age = None if raw is None else int(time.time()) - int(raw)
+        limit = settings.BEAT_STALE_SECONDS
+        if age is not None and age <= limit:
+            return Response({"status": "ok", "age_seconds": age})
+        return Response(
+            build_envelope(
+                code="beat_stale",
+                message="Celery Beat has not fired recently.",
+                detail={"age_seconds": age, "limit_seconds": limit},
+            ),
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )

@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from ai.models import Generation
 from ai.serializers import GenerationSerializer
 from ai.services import ad_templates
+from ai.services import creative as creative_service
 from ai.tasks import run_generation_task
 from billing.permissions import HasFlag
 from billing.services.flags import AD_TEMPLATES_S17
@@ -98,6 +99,8 @@ class AdTemplateGallerySerializer(serializers.Serializer[Any]):
     #: Product photos a render sends on this plan (`max_references`).
     references_cap = serializers.IntegerField(allow_null=True)
     references_total = serializers.IntegerField()
+    #: Whether the plan lets the person write their own direction (`ad_prompt_edit`).
+    prompt_edit = serializers.BooleanField()
 
 
 class AdKeyframeRequestSerializer(serializers.Serializer[Any]):
@@ -117,6 +120,15 @@ class AdKeyframeRequestSerializer(serializers.Serializer[Any]):
     #: A keyframe of this ad to draw again — a re-roll, counted against
     #: `ad_rerolls`.
     reroll_of = serializers.IntegerField(required=False, allow_null=True, default=None)
+    #: The Studio's look controls, by key, and the person's own direction
+    #: (402 `feature_not_available` without `ad_prompt_edit`).
+    creative = serializers.JSONField(required=False, default=dict)
+    prompt = serializers.CharField(
+        max_length=ad_templates.DIRECTION_MAX, required=False, allow_blank=True, default=""
+    )
+
+    def validate_creative(self, value: Any) -> dict[str, Any]:
+        return creative_service.video_look(value)
 
 
 def _product(request: Request, pk: Any) -> Product:
@@ -199,6 +211,8 @@ class AdTemplateKeyframeView(APIView):
             reroll_of=reroll_of,
             extra_avatars=people,
             extra_products=others,
+            look=data["creative"],
+            prompt=ad_templates.clean_prompt(workspace, data["prompt"]),
         )
         run_generation_task.delay(generation_id=generation.id, n=1)
         generation.refresh_from_db()

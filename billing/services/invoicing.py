@@ -15,6 +15,7 @@ issuer row, and `Invoice` is append-only, so a number can never be freed.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 from collections import defaultdict
 from typing import Any
@@ -52,8 +53,222 @@ def _label(order: PrepaidOrder) -> str:
     )
 
 
-def _money(currency: Any, minor: int) -> str:
-    return str(currency.format(minor))
+def fr_money(currency: Any, minor: int) -> str:
+    """`1234500` TND → `1 234,500 DT`: French separators, the currency's own decimals."""
+    major, rest = divmod(abs(minor), 10**currency.minor_units)
+    amount = f"{major:,}".replace(",", "\u00a0")
+    if currency.minor_units:
+        amount += f",{rest:0{currency.minor_units}d}"
+    symbol = currency.symbol or currency.code
+    return f"{'-' if minor < 0 else ''}{amount} {symbol}"
+
+
+_UNITS = [
+    "zéro",
+    "un",
+    "deux",
+    "trois",
+    "quatre",
+    "cinq",
+    "six",
+    "sept",
+    "huit",
+    "neuf",
+    "dix",
+    "onze",
+    "douze",
+    "treize",
+    "quatorze",
+    "quinze",
+    "seize",
+]
+_TENS = {2: "vingt", 3: "trente", 4: "quarante", 5: "cinquante", 6: "soixante"}
+#: Spelled-out names of each currency's units; only TND is invoiced by us.
+_UNIT_NAMES = {"TND": ("dinar", "millime")}
+
+
+def _below_100(n: int) -> str:
+    if n < 17:
+        return _UNITS[n]
+    if n < 20:
+        return f"dix-{_UNITS[n - 10]}"
+    tens, unit = divmod(n, 10)
+    if tens in (7, 9):  # soixante-dix, quatre-vingt-dix: the teens ride on 60 and 80
+        head = "soixante" if tens == 7 else "quatre-vingt"
+        joiner = " et " if n == 71 else "-"
+        return f"{head}{joiner}{_below_100(10 + unit)}"
+    head = "quatre-vingt" if tens == 8 else _TENS[tens]
+    if unit == 0:
+        return "quatre-vingts" if tens == 8 else head
+    return f"{head}{' et ' if unit == 1 and tens != 8 else '-'}{_UNITS[unit]}"
+
+
+def _below_1000(n: int, *, final: bool) -> str:
+    """`final`: nothing but a noun follows, so 80 and 200 take their plural s."""
+    hundreds, rest = divmod(n, 100)
+    words = []
+    if hundreds:
+        cent = "cent" if hundreds == 1 else f"{_UNITS[hundreds]} cent"
+        words.append(cent + ("s" if hundreds > 1 and not rest and final else ""))
+    if rest:
+        tail = _below_100(rest)
+        words.append(tail if final or not tail.endswith("vingts") else tail[:-1])
+    return " ".join(words)
+
+
+def _in_words(n: int) -> str:
+    if n == 0:
+        return "zéro"
+    millions, rest = divmod(n, 1_000_000)
+    thousands, units = divmod(rest, 1000)
+    words = []
+    if millions:
+        words.append(f"{_below_1000(millions, final=True)} million{'s' if millions > 1 else ''}")
+    if thousands:
+        words.append("mille" if thousands == 1 else f"{_below_1000(thousands, final=False)} mille")
+    if units:
+        words.append(_below_1000(units, final=True))
+    return " ".join(words)
+
+
+def amount_in_words(currency: Any, minor: int) -> str:
+    """`279000` TND → `Deux cent soixante-dix-neuf dinars`, as an invoice is *arrêtée*."""
+    major, rest = divmod(abs(minor), 10**currency.minor_units)
+    unit, sub = _UNIT_NAMES.get(currency.code, (currency.code, ""))
+    words = f"{_in_words(major)} {unit}{'s' if major > 1 and unit != currency.code else ''}"
+    if rest and sub:
+        words += f" et {_in_words(rest)} {sub}{'s' if rest > 1 else ''}"
+    return words[0].upper() + words[1:]
+
+
+def _pct(rate: Any) -> str:
+    return f"{(rate * 100).normalize()} %"
+
+
+def context(
+    *,
+    kind: str,
+    number: str,
+    issued_on: dt.date,
+    period: dt.date,
+    issuer: dict[str, str],
+    buyer_name: str,
+    buyer_tax_id: str,
+    currency: Any,
+    lines: list[tuple[PrepaidOrder, str]],
+    corrects: Invoice | None = None,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Everything `billing/invoice.html` prints, already formatted in French.
+
+    A credit note lists the corrected invoice's lines and refunds net + VAT:
+    the stamp duty is not refunded, so it has no stamp row.
+    """
+
+    def money(minor: int) -> str:
+        return fr_money(currency, minor)
+
+    net = sum(order.net_minor for order, _ in lines)
+    vat = sum(order.vat_minor for order, _ in lines)
+    stamp = sum(order.stamp_minor for order, _ in lines) if kind == "invoice" else 0
+    by_rate: dict[Any, list[int]] = defaultdict(lambda: [0, 0])
+    for order, _ in lines:
+        by_rate[order.vat_rate][0] += order.net_minor
+        by_rate[order.vat_rate][1] += order.vat_minor
+    return {
+        "kind": kind,
+        "title": "AVOIR" if kind == "credit_note" else "FACTURE",
+        "number": number,
+        "issue_date": issued_on.strftime("%d/%m/%Y"),
+        "month": f"{_MONTHS[period.month - 1]} {period.year}",
+        "issuer": {
+            "legal_name": issuer.get("legal_name", ""),
+            "address": issuer.get("address", ""),
+            "address_line": ", ".join(
+                part.strip() for part in issuer.get("address", "").splitlines() if part.strip()
+            ),
+            "matricule_fiscal": issuer.get("tax_id", ""),
+            "rc": issuer.get("trade_register", ""),
+            "email": issuer.get("email", ""),
+        },
+        "client": {"name": buyer_name, "tax_id": buyer_tax_id},
+        "lines": [
+            {
+                "designation": label,
+                "detail": f"Payé le {order.paid_at.astimezone(TUNIS):%d/%m/%Y}"
+                if order.paid_at
+                else "",
+                "ref": order.gateway_ref or "",
+                "ht": money(order.net_minor),
+                "rate": _pct(order.vat_rate),
+                "tva": money(order.vat_minor),
+            }
+            for order, label in lines
+        ],
+        "vat_breakdown": [
+            {"rate": _pct(rate), "base": money(base), "tva": money(tax)}
+            for rate, (base, tax) in sorted(by_rate.items())
+        ],
+        "total_ht": money(net),
+        "total_tva": money(vat),
+        "stamp": money(stamp),
+        "total_ttc": money(net + vat + stamp),
+        "total_in_words": amount_in_words(currency, net + vat + stamp),
+        "paid_with": "Konnect",
+        "charged": money(sum(order.amount_minor for order, _ in lines)),
+        "corrects": corrects.number if corrects else "",
+        "corrects_date": f"{corrects.issued_at.astimezone(TUNIS):%d/%m/%Y}" if corrects else "",
+        "reason": reason,
+    }
+
+
+_MONTHS = [
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+]
+
+
+def _store(invoice: Invoice, html: str, renderer: PdfRenderPort) -> None:
+    """Renders once and records the file's hash; nothing renders it again."""
+    data = renderer.render(html)
+    invoice.sha256 = hashlib.sha256(data).hexdigest()
+    invoice.document.save(f"{invoice.number}.{renderer.extension}", ContentFile(data), save=False)
+
+
+def next_issue_on(now: dt.datetime | None = None) -> dt.date:
+    """The 1st of next month (Africa/Tunis): when this month's payments are invoiced."""
+    start = month_start(now or timezone.now())
+    return (start + dt.timedelta(days=32)).date().replace(day=1)
+
+
+def late_month(organization: Any, now: dt.datetime | None = None) -> dt.date | None:
+    """The earliest past month with a payment still waiting for its invoice, if any.
+
+    Normally none: the job issues on the 1st. It shows when issuing is held
+    back (issuer incomplete, no PDF engine) or a run failed.
+    """
+    paid_at = (
+        PrepaidOrder.objects.filter(
+            organization=organization,
+            state=PrepaidState.PAID,
+            paid_at__lt=month_start(now or timezone.now()),
+            invoice_lines__isnull=True,
+        )
+        .order_by("paid_at")
+        .values_list("paid_at", flat=True)
+        .first()
+    )
+    return month_start(paid_at).date() if paid_at else None
 
 
 def issue_due(now: dt.datetime | None = None) -> int:
@@ -118,30 +333,20 @@ def issue(orders: list[PrepaidOrder], *, period: dt.date, renderer: PdfRenderPor
         "trade_register": issuer.trade_register,
         "email": issuer.email,
     }
+    buyer_name = latest.buyer_name or organization.name
     html = render_to_string(
         "billing/invoice.html",
-        {
-            "number": number,
-            "issued_on": issued_at.astimezone(TUNIS).date(),
-            "period": period,
-            "issuer": issuer_snapshot,
-            "buyer_name": latest.buyer_name or organization.name,
-            "buyer_tax_id": latest.buyer_tax_id,
-            "lines": [
-                {
-                    "label": label,
-                    "net": _money(currency, order.net_minor),
-                    "vat": _money(currency, order.vat_minor),
-                    "rate": f"{(order.vat_rate * 100).normalize()} %",
-                }
-                for order, label in labels
-            ],
-            "credit_note_of": None,
-            "net": _money(currency, net),
-            "vat": _money(currency, vat),
-            "stamp": _money(currency, stamp),
-            "total": _money(currency, net + vat + stamp),
-        },
+        context(
+            kind="invoice",
+            number=number,
+            issued_on=issued_at.astimezone(TUNIS).date(),
+            period=period,
+            issuer=issuer_snapshot,
+            buyer_name=buyer_name,
+            buyer_tax_id=latest.buyer_tax_id,
+            currency=currency,
+            lines=labels,
+        ),
     )
     invoice = Invoice(
         organization=organization,
@@ -149,16 +354,14 @@ def issue(orders: list[PrepaidOrder], *, period: dt.date, renderer: PdfRenderPor
         number=number,
         currency=currency,
         issuer=issuer_snapshot,
-        buyer_name=latest.buyer_name or organization.name,
+        buyer_name=buyer_name,
         buyer_tax_id=latest.buyer_tax_id,
         net_minor=net,
         vat_minor=vat,
         stamp_minor=stamp,
         total_minor=net + vat + stamp,
     )
-    invoice.document.save(
-        f"{number}.{renderer.extension}", ContentFile(renderer.render(html)), save=False
-    )
+    _store(invoice, html, renderer)
     invoice.save()
     for order, label in labels:
         InvoiceLine.objects.create(
@@ -177,9 +380,10 @@ def issue(orders: list[PrepaidOrder], *, period: dt.date, renderer: PdfRenderPor
 
 @transaction.atomic
 def issue_credit_note(invoice: Invoice, *, reason: str) -> Invoice:
-    """An *avoir* cancelling `invoice` in full: same amounts, negated, its own
-    number in the same sequence. A partial correction is a credit note plus a
-    new invoice; the original is never edited (append-only)."""
+    """An *avoir* cancelling `invoice` in full: net and VAT negated, its own
+    number in the same sequence. The stamp duty is not refunded. A partial
+    correction is a credit note plus a new invoice; the original is never
+    edited (append-only)."""
     if invoice.corrects_id is not None or invoice.credit_notes.exists():
         from common.exceptions import StateConflict
 
@@ -193,23 +397,22 @@ def issue_credit_note(invoice: Invoice, *, reason: str) -> Invoice:
         Invoice.objects.filter(issued_at__gte=dt.datetime(year, 1, 1, tzinfo=TUNIS)).count() + 1
     )
     number = issuer.number_format.format(year=year, seq=sequence)
+    lines = [(line.order, line.label) for line in invoice.lines.select_related("order")]
     html = render_to_string(
         "billing/invoice.html",
-        {
-            "number": number,
-            "issued_on": issued_at.astimezone(TUNIS).date(),
-            "period": invoice.period,
-            "issuer": invoice.issuer,
-            "buyer_name": invoice.buyer_name,
-            "buyer_tax_id": invoice.buyer_tax_id,
-            "credit_note_of": invoice.number,
-            "reason": reason,
-            "lines": [],
-            "net": _money(currency, -invoice.net_minor),
-            "vat": _money(currency, -invoice.vat_minor),
-            "stamp": _money(currency, -invoice.stamp_minor),
-            "total": _money(currency, -invoice.total_minor),
-        },
+        context(
+            kind="credit_note",
+            number=number,
+            issued_on=issued_at.astimezone(TUNIS).date(),
+            period=invoice.period,
+            issuer=invoice.issuer,
+            buyer_name=invoice.buyer_name,
+            buyer_tax_id=invoice.buyer_tax_id,
+            currency=currency,
+            lines=lines,
+            corrects=invoice,
+            reason=reason,
+        ),
     )
     note = Invoice(
         organization=invoice.organization,
@@ -221,13 +424,12 @@ def issue_credit_note(invoice: Invoice, *, reason: str) -> Invoice:
         buyer_tax_id=invoice.buyer_tax_id,
         net_minor=-invoice.net_minor,
         vat_minor=-invoice.vat_minor,
-        stamp_minor=-invoice.stamp_minor,
-        total_minor=-invoice.total_minor,
+        stamp_minor=0,
+        total_minor=-(invoice.net_minor + invoice.vat_minor),
         corrects=invoice,
+        reason=reason[:280],
     )
-    note.document.save(
-        f"{number}.{renderer.extension}", ContentFile(renderer.render(html)), save=False
-    )
+    _store(note, html, renderer)
     note.save()
     logger.info("credit note issued", extra={"invoice": invoice.number, "credit_note": number})
     return note

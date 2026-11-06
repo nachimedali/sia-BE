@@ -33,6 +33,7 @@ def test_every_queue_is_declared() -> None:
     ("task_name", "expected_queue"),
     [
         ("scheduling.tasks.publish_due_posts", "publish_q"),
+        ("common.tasks.beat_heartbeat", "publish_q"),
         ("scheduling.tasks.publish_reconcile", "publish_q"),
         ("social_providers.tasks.process_webhook_lifecycle", "publish_q"),
         ("social_providers.tasks.process_webhook_inbox", "metrics_q"),
