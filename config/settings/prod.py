@@ -59,8 +59,14 @@ FAKE_BILLING_REFUSES = True
 PLAYBOOK_SHOW_SAMPLE = False
 # The filesystem fake is served without auth (config/urls.py). A deploy that
 # lost AWS_S3_ENDPOINT_URL must fail at upload, not serve media publicly.
-USE_FAKE_STORAGE = False
-STORAGES = {**STORAGES, "default": {"BACKEND": "storages.backends.s3.S3Storage"}}  # noqa: F405
+# ALLOW_LOCAL_MEDIA is the beta-only opt-in: files on local disk, served unsigned.
+USE_FAKE_STORAGE = env.bool("ALLOW_LOCAL_MEDIA", default=False)
+_media_backend = (
+    "django.core.files.storage.FileSystemStorage"
+    if USE_FAKE_STORAGE
+    else "storages.backends.s3.S3Storage"
+)
+STORAGES = {**STORAGES, "default": {"BACKEND": _media_backend}}  # noqa: F405
 # The selected social provider's key is read without a fallback: a deploy that
 # lost it must fail at boot, not quietly start publishing nowhere.
 if SOCIAL_PROVIDER == "zernio":  # noqa: F405
