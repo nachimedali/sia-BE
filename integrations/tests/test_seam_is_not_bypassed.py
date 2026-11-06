@@ -36,19 +36,7 @@ GUARDED = tuple(sorted(set(settings.LOCAL_APPS) - set(MOVING) - {"integrations"}
 FORBIDDEN_PREFIXES = ("trends.", "ai.services.pipeline", "ai.services.costing")
 
 #: Documented, dated exceptions. Each one is a task in trendgen's todo.md.
-EXCEPTIONS = {
-    # Competitor tracking is a trend source kind whose API is a ModelSerializer
-    # over `TrendSource`. Porting it is a response-shape change, not an
-    # indirection, so it is deferred to Phase 12 (M0-06) rather than rushed
-    # into the seam.
-    "analytics/views.py": ("trends.services",),
-    # The brand import (S1-04) starts watching a verified competitor through the
-    # same `competitors.track` the competitor page uses. Same deferral, same
-    # reason (M0-06): competitor sources are workspace-private, so trendgen never
-    # serves them and an indirection here would be a port with one adapter.
-    "brand/services/downstream.py": ("trends.services",),
-    "analytics/serializers.py": ("trends.models",),
-}
+EXCEPTIONS: dict[str, tuple[str, ...]] = {}
 
 
 def guarded_files() -> list[Path]:

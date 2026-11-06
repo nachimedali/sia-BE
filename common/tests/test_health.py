@@ -63,3 +63,32 @@ def test_provider_failures_do_not_affect_the_status_code() -> None:
     response = APIClient().get(HEALTH_URL)
     assert response.status_code == 200
     assert "providers" in response.json()
+
+
+BEAT_URL = "/api/v1/health/beat/"
+
+
+def test_beat_health_503_until_the_heartbeat_runs_then_200() -> None:
+    from common.tasks import beat_heartbeat
+
+    with (
+        mock.patch("common.health.get_redis") as redis,
+        mock.patch("common.tasks.get_redis", redis),
+    ):
+        redis.return_value.get.return_value = None
+        stale = APIClient().get(BEAT_URL)
+        assert stale.status_code == 503
+        assert stale.json()["error"]["code"] == "beat_stale"
+
+        beat_heartbeat()
+        _, value = redis.return_value.set.call_args.args
+        redis.return_value.get.return_value = value
+        assert APIClient().get(BEAT_URL).status_code == 200
+
+
+def test_beat_health_503_when_the_heartbeat_is_old() -> None:
+    import time
+
+    with mock.patch("common.health.get_redis") as redis:
+        redis.return_value.get.return_value = str(int(time.time()) - 3600)
+        assert APIClient().get(BEAT_URL).status_code == 503

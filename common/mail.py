@@ -64,7 +64,7 @@ def base_context() -> dict[str, str]:
         "site_url": site,
         "logo_url": f"cid:{LOGO_CID}",
         "app_url": f"{site}/app",
-        "help_url": f"{site}/",
+        "help_url": f"{site}/help",
         "about_url": f"{site}/",
         "security_url": f"{site}/privacy",
         "preferences_url": f"{site}/app/settings",

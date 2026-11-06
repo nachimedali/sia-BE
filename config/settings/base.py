@@ -304,12 +304,18 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_RESULT_EXTENDED = True
+# Seconds without a heartbeat before `/api/v1/health/beat/` answers 503.
+BEAT_STALE_SECONDS = env.int("BEAT_STALE_SECONDS", default=600)
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
 # Periodic billing bookkeeping. Declared here rather than only in the database
 # scheduler so a fresh environment gets the schedule without a manual step;
 # django_celery_beat syncs these into editable rows on first run.
 CELERY_BEAT_SCHEDULE = {
+    "common-beat-heartbeat": {
+        "task": "common.tasks.beat_heartbeat",
+        "schedule": crontab(minute="*"),
+    },
     # Daily rather than monthly: each workspace's period is anchored on its own
     # signup date, so grants are due on every day of the month, not just the 1st.
     "billing-grant-monthly-allowances": {
@@ -843,5 +849,5 @@ USE_FAKE_SITE_FETCHER = env.bool("USE_FAKE_SITE_FETCHER", default=True)
 SENTRY_DSN = env("SENTRY_DSN", default="")
 SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="development" if DEBUG else "production")
 SENTRY_RELEASE = env("SENTRY_RELEASE", default="")
-SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=1.0)
-SENTRY_PROFILE_SESSION_SAMPLE_RATE = env.float("SENTRY_PROFILE_SESSION_SAMPLE_RATE", default=1.0)
+SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=0.1)
+SENTRY_PROFILE_SESSION_SAMPLE_RATE = env.float("SENTRY_PROFILE_SESSION_SAMPLE_RATE", default=0.1)

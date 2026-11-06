@@ -119,6 +119,9 @@ app.conf.task_routes = {
     # The queue smoke task is sent to a named queue by whoever runs it; this is
     # only where it lands when nobody names one (rule 9: never the default).
     "common.tasks.ping": {"queue": "metrics_q"},
+    # The beat heartbeat rides the publish pool: if that pool or Beat stops, the
+    # one thing that must not stop is exactly what the alert reports.
+    "common.tasks.beat_heartbeat": {"queue": "publish_q"},
 }
 
 app.autodiscover_tasks()
