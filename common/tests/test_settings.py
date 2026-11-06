@@ -84,3 +84,16 @@ def test_prod_cannot_store_media_on_the_filesystem(prod_settings) -> None:
     workspace-private media publicly."""
     assert prod_settings.USE_FAKE_STORAGE is False
     assert prod_settings.STORAGES["default"]["BACKEND"] == "storages.backends.s3.S3Storage"
+
+
+def test_prod_local_media_needs_the_explicit_opt_in(monkeypatch) -> None:
+    """Beta-only: ALLOW_LOCAL_MEDIA selects the filesystem even when an S3 endpoint is set."""
+    monkeypatch.setenv("ALLOW_LOCAL_MEDIA", "true")
+    monkeypatch.setenv("AWS_S3_ENDPOINT_URL", "https://s3.example.com")
+    for key, value in REQUIRED_PROD_ENV.items():
+        monkeypatch.setenv(key, value)
+    mod = importlib.reload(importlib.import_module("config.settings.prod"))
+    assert mod.USE_FAKE_STORAGE is True
+    assert mod.STORAGES["default"]["BACKEND"] == "django.core.files.storage.FileSystemStorage"
+    monkeypatch.delenv("ALLOW_LOCAL_MEDIA")
+    importlib.reload(mod)
