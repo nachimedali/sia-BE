@@ -23,17 +23,7 @@ PNG_1X1 = base64.b64encode(
     )
 ).decode()
 
-OPENROUTER_REPLY = {
-    "choices": [
-        {
-            "message": {
-                "images": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG_1X1}"}}
-                ]
-            }
-        }
-    ]
-}
+OPENROUTER_REPLY = {"data": [{"b64_json": PNG_1X1}]}
 
 
 def _transport(monkeypatch: Any, *, google: int, openrouter: int) -> list[httpx.Request]:
@@ -64,17 +54,18 @@ FALLBACK_ON = {
 }
 
 
-def test_the_request_is_openrouter_image_output_with_the_reference(monkeypatch: Any) -> None:
+def test_the_request_goes_to_the_image_router_with_the_reference(monkeypatch: Any) -> None:
+    """FLUX answers 404 on `chat/completions`; it is served by `/images` only."""
     sent = _transport(monkeypatch, google=402, openrouter=200)
     result = _draw(OpenRouterImageProvider())
 
     request = sent[0]
     body = json.loads(request.content)
-    assert request.url.path.endswith("/chat/completions")
+    assert request.url.path == "/api/v1/images"
     assert body["model"] == "black-forest-labs/flux-3-image-klein"
-    assert body["modalities"] == ["image"]
-    assert body["image_config"] == {"aspect_ratio": "9:16"}
-    assert body["messages"][0]["content"][1]["type"] == "image_url"
+    assert (body["prompt"], body["aspect_ratio"]) == ("a mug", "9:16")
+    assert body["input_references"][0]["type"] == "image_url"
+    assert "n" not in body
     assert (result.provider, result.model) == ("openrouter", "black-forest-labs/flux-3-image-klein")
     assert result.variants[0].mime == "image/png"
 
@@ -101,3 +92,17 @@ def test_both_vendors_failing_is_still_a_provider_error(monkeypatch: Any) -> Non
 @override_settings(USE_FAKE_AI_PROVIDERS=False, USE_FAKE_IMAGE_PROVIDER=False)
 def test_no_fallback_key_means_google_alone() -> None:
     assert isinstance(get_image_provider(), NanoBananaImageProvider)
+
+
+def test_a_data_url_answer_is_read_too(monkeypatch: Any) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"url": f"data:image/png;base64,{PNG_1X1}"}]})
+
+    patch_httpx_transport(monkeypatch, handler)
+    assert _draw(OpenRouterImageProvider()).variants[0].mime == "image/png"
+
+
+def test_an_answer_with_no_image_is_a_provider_error(monkeypatch: Any) -> None:
+    patch_httpx_transport(monkeypatch, lambda request: httpx.Response(200, json={"data": []}))
+    with pytest.raises(ProviderError):
+        _draw(OpenRouterImageProvider())

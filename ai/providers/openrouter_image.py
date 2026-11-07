@@ -1,5 +1,5 @@
-"""Second-vendor `ImageProvider`: OpenRouter's chat completions with image
-output, used only when the primary image vendor (Google) fails.
+"""Second-vendor `ImageProvider`: OpenRouter's image router (`/images`),
+used only when the primary image vendor (Google) fails.
 
 Google stays the primary because it is cheaper (`pricing.audit.md` §4: no
 5.5% fee, a batch tier). This exists for the day Google refuses outright — a
@@ -54,39 +54,40 @@ def _client() -> Any:
 def _request(
     model: str, prompt: str, reference_images: list[bytes], aspect: str, size: str | None
 ) -> dict[str, Any]:
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    content += [image_url_part(image) for image in reference_images]
-    image_config: dict[str, Any] = {"aspect_ratio": aspect}
+    """OpenRouter's image router (`POST /images`): image-only models such as
+    FLUX refuse `chat/completions` with a 404. One image per request, like the
+    Google adapter: single-image providers reject `n` above one."""
+    body: dict[str, Any] = {"model": model, "prompt": prompt, "aspect_ratio": aspect}
+    if reference_images:
+        body["input_references"] = [image_url_part(image) for image in reference_images]
     if size:
-        image_config["image_size"] = size
-    return {
-        "model": model,
-        "messages": [{"role": "user", "content": content}],
-        # Image-only models (FLUX) refuse a request that also asks for text.
-        "modalities": ["image"],
-        "image_config": image_config,
-    }
+        body["resolution"] = size
+    return body
+
+
+def _decode(item: dict[str, Any]) -> tuple[bytes, str] | None:
+    """One returned image: `b64_json`, or a `data:` URL in `url`."""
+    if item.get("b64_json"):
+        return base64.b64decode(item["b64_json"]), ""
+    url = str(item.get("url") or "")
+    if url.startswith("data:") and ";base64," in url:
+        header, data = url.split(";base64,", 1)
+        return base64.b64decode(data), header.removeprefix("data:")
+    return None
 
 
 def _variants(payload: dict[str, Any]) -> list[ImageVariant]:
+    # Seen live 2026-11-07 (FLUX 3 Klein): `data[{b64_json, media_type}]`, a JPEG.
     variants = []
-    for choice in payload.get("choices") or []:
-        for image in (choice.get("message") or {}).get("images") or []:
-            url = str((image.get("image_url") or {}).get("url") or "")
-            if not url.startswith("data:") or ";base64," not in url:
-                continue
-            header, data = url.split(";base64,", 1)
-            content = base64.b64decode(data)
-            with Image.open(io.BytesIO(content)) as img:
-                width, height = img.size
-            variants.append(
-                ImageVariant(
-                    content=content,
-                    mime=header.removeprefix("data:") or "image/png",
-                    width=width,
-                    height=height,
-                )
-            )
+    for item in payload.get("data") or []:
+        decoded = _decode(item) if isinstance(item, dict) else None
+        if decoded is None:
+            continue
+        content, mime = decoded
+        with Image.open(io.BytesIO(content)) as img:
+            width, height = img.size
+            mime = mime or Image.MIME.get(img.format or "", "image/png")
+        variants.append(ImageVariant(content=content, mime=mime, width=width, height=height))
     return variants
 
 
@@ -113,7 +114,7 @@ class OpenRouterImageProvider:
         def one(_: int) -> dict[str, Any] | ProviderError:
             try:
                 return unwrap_json_response(
-                    client.post("/chat/completions", json=body), label="Fallback image provider"
+                    client.post("/images", json=body), label="Fallback image provider"
                 )
             except ProviderError as exc:
                 return exc
