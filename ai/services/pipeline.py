@@ -50,6 +50,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
 
@@ -358,6 +359,12 @@ def _reference_image_bytes(product: Product | None, *, cap: int | None = None) -
     return contents
 
 
+def _record_prompt(generation: Generation, prompt: str) -> None:
+    """Saved before the provider call, so a vendor refusal keeps it too."""
+    generation.prompt_sent = prompt
+    generation.save(update_fields=["prompt_sent", "updated_at"])
+
+
 def _attempt_text(
     generation: Generation, *, n: int
 ) -> tuple[list[tuple[TextVariant, quality.QualityResult]], dict[str, Any]]:
@@ -375,6 +382,7 @@ def _attempt_text(
         mode=generation.mode,
         direction=creative_service.caption_lines(generation.creative),
     )
+    _record_prompt(generation, f"SYSTEM:\n{grounded.system}\n\nUSER:\n{grounded.user}")
     if from_image:
         assert source_media is not None
         # The one branch, and it is on *capability* rather than on mode name:
@@ -461,6 +469,7 @@ def _attempt_image(
     )
     restrictions = generation.product.restrictions if generation.product else []
 
+    _record_prompt(generation, grounded.user)
     result = provider.generate(
         prompt=grounded.user,
         reference_images=[
@@ -488,8 +497,18 @@ def _attempt_image(
         )
         for variant in result.variants
     ]
-    meta = {"provider": result.provider, "model": result.model}
+    meta = {"provider": result.provider, "model": result.model, "prompt": grounded.user}
     return checked, meta
+
+
+def _check_image(generation: Generation, attempt: int, index: int, candidate: Any) -> Any:
+    """The attempt's picture as a file for `QualityCheck.image`; blank for text."""
+    if not isinstance(candidate, ImageVariant):
+        return ""
+    extension = candidate.mime.split("/")[-1] or "png"
+    return ContentFile(
+        candidate.content, name=f"generation-{generation.pk}-a{attempt}-{index}.{extension}"
+    )
 
 
 def _persist_generated_image(generation: Generation, variant: ImageVariant) -> MediaAsset:
@@ -707,17 +726,20 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
                 assets=assets,
             )
 
-        QualityCheck.objects.bulk_create(
-            QualityCheck(
+        for index, (candidate, check) in enumerate(attempt_results):
+            # One save each, not bulk_create: the picture is written to storage.
+            QualityCheck.objects.create(
                 generation=generation,
                 checks=check.checks,
                 identity_score=check.identity_score,
                 passed=check.passed,
                 attempt=attempt,
                 rejected_reason=check.rejected_reason,
+                image=_check_image(generation, attempt, index, candidate),
+                provider=meta.get("provider", ""),
+                model=meta.get("model", ""),
+                prompt_sent=meta.get("prompt", ""),
             )
-            for _candidate, check in attempt_results
-        )
 
         passing = [(candidate, check) for candidate, check in attempt_results if check.passed]
         if passing:

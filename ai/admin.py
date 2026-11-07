@@ -12,6 +12,7 @@ from typing import Any
 from django.contrib import admin
 from django.db import transaction
 from django.http import HttpRequest
+from django.utils.html import format_html, format_html_join
 
 from ai.models import (
     AIKind,
@@ -23,6 +24,7 @@ from ai.models import (
     GenerationVariant,
     QualityCheck,
     QualityGateConfig,
+    VideoRender,
     VoiceProfile,
 )
 
@@ -53,11 +55,37 @@ class GenerationVariantInline(admin.TabularInline):  # type: ignore[type-arg]
     can_delete = False
 
 
+def _thumbnail(url: str) -> str:
+    return format_html(
+        '<a href="{}" target="_blank"><img src="{}" style="max-height:160px;max-width:160px"></a>',
+        url,
+        url,
+    )
+
+
 class QualityCheckInline(admin.TabularInline):  # type: ignore[type-arg]
+    """Every attempt the gate judged, rejected ones included, with the picture
+    it was shown — the one place a refused image can be seen."""
+
     model = QualityCheck
     extra = 0
-    readonly_fields = ("attempt", "passed", "identity_score", "rejected_reason", "checks")
+    fields = (
+        "attempt",
+        "picture",
+        "passed",
+        "identity_score",
+        "rejected_reason",
+        "provider",
+        "model",
+        "checks",
+        "prompt_sent",
+    )
+    readonly_fields = fields
     can_delete = False
+
+    @admin.display(description="picture")
+    def picture(self, obj: QualityCheck) -> str:
+        return _thumbnail(obj.image.url) if obj.image else "—"
 
 
 @admin.register(Generation)
@@ -66,6 +94,20 @@ class GenerationAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
     list_filter = ("kind", "mode", "status")
     search_fields = ("prompt",)
     inlines = (GenerationVariantInline, QualityCheckInline)
+    readonly_fields = ("product_photos",)
+
+    @admin.display(description="product photos the gate compares against")
+    def product_photos(self, obj: Generation) -> str:
+        if obj.product is None:
+            return "—"
+        return (
+            format_html_join(
+                " ",
+                "{}",
+                ((_thumbnail(asset.file.url),) for asset in obj.product.reference_images.all()),
+            )
+            or "—"
+        )
 
     def has_add_permission(self, request: HttpRequest) -> bool:
         # Every generation goes through the pipeline (entitlements, quality
@@ -178,3 +220,38 @@ class AIModelRouteAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
             before=before,
             after=obj.snapshot(),
         )
+
+
+@admin.register(VideoRender)
+class VideoRenderAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """Read-only: what each render sent the video model and how it ended. Its
+    first frame is a `Generation` (`keyframe`), with every gate attempt."""
+
+    list_display = ("id", "workspace", "mode", "status", "error_code", "created_at")
+    list_filter = ("mode", "status")
+    fields = (
+        "workspace",
+        "product",
+        "mode",
+        "status",
+        "phase",
+        "error",
+        "error_code",
+        "keyframe",
+        "source",
+        "output",
+        "prompt_sent",
+        "rephrased_prompt",
+        "rephrased_by",
+        "spec",
+        "credits",
+        "units",
+        "created_at",
+    )
+    readonly_fields = fields
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False

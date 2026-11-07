@@ -884,6 +884,7 @@ def _render_clip(render: VideoRender) -> VideoResult:
         render.rephrased_by = rewritten.by
         render.rephrased_prompt = "" if rewritten.by == rephrase.TEMPLATE else rewritten.text
         render.save(update_fields=["rephrased_prompt", "rephrased_by"])
+    _record_prompt(render, prompt)
     _advance(render, *PHASES[1])
     result: VideoResult = provider.animate(
         image=image,
@@ -893,6 +894,12 @@ def _render_clip(render: VideoRender) -> VideoResult:
         duration_seconds=float(render.spec["seconds"]),
     )
     return result
+
+
+def _record_prompt(render: VideoRender, prompt: str) -> None:
+    """Saved before the vendor call, so a failed render keeps it too."""
+    render.prompt_sent = prompt
+    render.save(update_fields=["prompt_sent"])
 
 
 def _render_template_reel(render: VideoRender, template: CreativeOption) -> VideoResult:
@@ -924,6 +931,7 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
     )
     per_shot = round((seconds - card.seconds) / len(shots_meta), 2)
     prompt = _directed(ad_templates.motion_prompt(template), render)
+    _record_prompt(render, prompt)
     _advance(render, *PHASES[1])
     shots: list[ReelShot] = []
     counts = {"photo": 0, "screen": 0}

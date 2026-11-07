@@ -139,6 +139,9 @@ class Generation(models.Model):
     # and the brief went as written; both empty when it was never rephrased.
     rephrased_prompt = models.TextField(blank=True, default="")
     rephrased_by = models.CharField(max_length=64, blank=True, default="")
+    #: The final prompt as sent to the model (text: system and user), saved
+    #: before the call so a refused or failed run still shows what it asked.
+    prompt_sent = models.TextField(blank=True, default="")
     duration = models.PositiveIntegerField(null=True, blank=True)
     #: **Every Studio control, as the user set it** — scene, light, camera,
     #: who is in the frame, moods, palette, language, call to action, format,
@@ -342,6 +345,14 @@ class QualityCheck(models.Model):
     passed = models.BooleanField()
     attempt = models.PositiveSmallIntegerField()
     rejected_reason = models.CharField(max_length=200, blank=True)
+    #: What the gate was shown, kept for staff review in admin — passed or not.
+    #: Outside the media library on purpose: never listed, never counted
+    #: against the workspace's storage, never reachable from the API.
+    image = models.FileField(upload_to="quality-checks/%Y/%m/", blank=True)
+    #: Which vendor drew it: a fallback vendor can answer for some attempts only.
+    provider = models.CharField(max_length=64, blank=True)
+    model = models.CharField(max_length=128, blank=True)
+    prompt_sent = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -779,6 +790,9 @@ class VideoRender(models.Model):
     # The motion brief as the text model rewrote it; see `Generation`.
     rephrased_prompt = models.TextField(blank=True, default="")
     rephrased_by = models.CharField(max_length=64, blank=True, default="")
+    #: The final prompt as sent to the video model, saved before the call so a
+    #: failed render still shows it. Empty for a reel cut with no model.
+    prompt_sent = models.TextField(blank=True, default="")
     #: The still a clip animates, or a reel's first shot: what the output is
     #: `derived_from`.
     source = models.ForeignKey(
