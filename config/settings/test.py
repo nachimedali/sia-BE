@@ -76,6 +76,7 @@ USE_FAKE_CHECKS_PROVIDER = False
 LLM_RATE_LIMIT_PER_MINUTE = 0
 # A local `.env` video key must never reach a test.
 VIDEO_PROVIDER_API_KEY = ""
+IMAGE_FALLBACK_API_KEY = ""
 MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="occs-test-media-"))
 STORAGES = {
     **STORAGES,  # noqa: F405

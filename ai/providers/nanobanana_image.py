@@ -39,7 +39,8 @@ def _client() -> Any:
 
     return httpx.Client(
         base_url=settings.IMAGE_PROVIDER_BASE_URL,
-        params={"key": settings.IMAGE_PROVIDER_API_KEY},
+        # A header, not `?key=`: httpx logs every request URL at INFO.
+        headers={"x-goog-api-key": settings.IMAGE_PROVIDER_API_KEY},
         timeout=settings.LLM_TIMEOUT_SECONDS,
     )
 
@@ -227,9 +228,17 @@ def get_image_provider(task: str | None = None, *, workspace: Any = None) -> Any
         inner: Any = _fake_image_provider
     else:
         inner = NanoBananaImageProvider()
-    if task is None:
-        return inner
-    from ai.providers.routed import RoutedImageProvider
-    from ai.services.routing import resolve_for
+    provider: Any = inner
+    if task is not None:
+        from ai.providers.routed import RoutedImageProvider
+        from ai.services.routing import resolve_for
 
-    return RoutedImageProvider(inner, resolve_for(task, workspace))
+        provider = RoutedImageProvider(inner, resolve_for(task, workspace))
+    if not uses_fake("IMAGE"):
+        from ai.providers import openrouter_image
+
+        if openrouter_image.fallback_enabled():
+            provider = openrouter_image.ImageWithVendorFallback(
+                provider, openrouter_image.OpenRouterImageProvider()
+            )
+    return provider

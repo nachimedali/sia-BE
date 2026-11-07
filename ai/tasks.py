@@ -13,6 +13,7 @@ from django.conf import settings
 
 from ai.models import Generation, GenerationStatus
 from ai.services.pipeline import run_generation
+from common.exceptions import ProviderError
 
 
 @shared_task(
@@ -31,6 +32,13 @@ def run_generation_task(generation_id: int, *, n: int = 3) -> None:
         Generation.objects.filter(pk=generation_id, status=GenerationStatus.PENDING).update(
             status=GenerationStatus.FAILED, error_detail={"reason": "timeout"}
         )
+    except ProviderError:
+        # Same reason: the Studio polls a PENDING row forever. Re-raised so the
+        # vendor's refusal still reaches the log and Sentry.
+        Generation.objects.filter(pk=generation_id, status=GenerationStatus.PENDING).update(
+            status=GenerationStatus.FAILED, error_detail={"reason": "provider_error"}
+        )
+        raise
 
 
 @shared_task(name="ai.tasks.video_render")

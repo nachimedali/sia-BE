@@ -629,6 +629,12 @@ IMAGE_PROVIDER_BASE_URL = env(
 )
 IMAGE_PROVIDER_API_KEY = env("IMAGE_PROVIDER_API_KEY", default="")
 IMAGE_PROVIDER_MODEL = env("IMAGE_PROVIDER_MODEL", default="gemini-nano-banana-2.1")
+# Second image vendor, tried once when Google fails for any reason
+# (`ai.providers.openrouter_image`). Off while the key is empty; not read from
+# `OPENROUTER_API_KEY`, so setting that key never makes a dev stack spend.
+IMAGE_FALLBACK_BASE_URL = env("IMAGE_FALLBACK_BASE_URL", default="https://openrouter.ai/api/v1")
+IMAGE_FALLBACK_API_KEY = env("IMAGE_FALLBACK_API_KEY", default="")
+IMAGE_FALLBACK_MODEL = env("IMAGE_FALLBACK_MODEL", default="black-forest-labs/flux-3-image-klein")
 
 # Video runs through OpenRouter's video API (pricing.audit.md §5): one adapter,
 # every model by slug, the model per task and package an `AIModelRoute` row.
