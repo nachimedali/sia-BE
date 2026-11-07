@@ -332,3 +332,36 @@ def test_a_task_past_its_time_limit_fails_the_generation(
     generation.refresh_from_db()
     assert generation.status == GenerationStatus.FAILED
     assert generation.error_detail == {"reason": "timeout"}
+
+
+def test_a_provider_error_fails_the_generation_instead_of_leaving_it_pending(
+    monkeypatch: pytest.MonkeyPatch, workspace: Any, user: Any, plans: Any, generation_costs: Any
+) -> None:
+    """A vendor refusal (e.g. Google's 402 when its billing lapses) must end the
+    spinner: a row left PENDING is polled forever by the Studio."""
+    from ai import tasks
+    from common.exceptions import ProviderError
+
+    generation = _text_generation(_on_plan(workspace, plans, "pro"), user)
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        raise ProviderError("Image provider returned 402.")
+
+    monkeypatch.setattr(tasks, "run_generation", refuse)
+    with pytest.raises(ProviderError):
+        tasks.run_generation_task(generation.pk)
+
+    generation.refresh_from_db()
+    assert generation.status == GenerationStatus.FAILED
+    assert generation.error_detail == {"reason": "provider_error"}
+    assert generation.credits_charged == 0
+
+
+def test_the_image_provider_key_never_rides_in_the_url(settings: Any) -> None:
+    """httpx logs request URLs at INFO, so a `?key=` lands in the worker log."""
+    from ai.providers.nanobanana_image import _client
+
+    settings.IMAGE_PROVIDER_API_KEY = "secret-key"
+    client = _client()
+    assert "secret-key" not in str(client.build_request("POST", "/models/m:generateContent").url)
+    assert client.headers["x-goog-api-key"] == "secret-key"
