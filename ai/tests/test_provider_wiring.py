@@ -165,6 +165,23 @@ def test_a_last_frame_clip_asks_for_the_last_frame_and_audio(monkeypatch, no_sle
 
 
 @override_settings(**VIDEO_KEY)
+def test_a_seed_is_sent_when_given_and_left_out_when_not(monkeypatch, no_sleep) -> None:
+    """`seed` is a top-level field of OpenRouter's `POST /videos` (docs, 2026-11-08);
+    not every vendor honours it, so without one the field is not sent at all."""
+    captured = _video_transport(monkeypatch, statuses=["completed", "completed"])
+
+    provider = OpenRouterVideoProvider()
+    provider.animate(image=b"x", role="start", prompt="p", aspect="9:16", duration_seconds=5)
+    provider.animate(
+        image=b"x", role="start", prompt="p", aspect="9:16", duration_seconds=5, seed=4242
+    )
+
+    posts = [json.loads(r.content) for r in captured if r.method == "POST"]
+    assert "seed" not in posts[0]
+    assert posts[1]["seed"] == 4242
+
+
+@override_settings(**VIDEO_KEY)
 def test_without_a_model_the_settings_default_is_sent(monkeypatch, no_sleep) -> None:
     captured = _video_transport(monkeypatch, statuses=["completed"])
 

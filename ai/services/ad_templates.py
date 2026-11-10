@@ -24,21 +24,26 @@ button that fails.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import NotFound, ValidationError
 
+from ai.ad_template_seed import CAPTURES, GOALS
 from ai.models import CreativeKind, CreativeOption, Generation, GenerationKind, GenerationMode
-from ai.services import references
+from ai.services import claims, references, template_results
 from billing.services.entitlements import Entitlements, entitlements_for
 from billing.services.flags import AD_TEMPLATES_S17, flag_enabled
 from billing.services.plans import suggest_upgrade
+from brand.services.kit import kit_for
 from common.exceptions import FeatureNotAvailable, OCCSError, StateConflict
+from products.brief import identity_photos
 from products.models import Product
 from workspaces.models import Workspace
 
 CATEGORIES = (
+    "text",
     "unbox",
     "hand",
     "tryon",
@@ -66,11 +71,23 @@ PREMIUM_PACK = "templates-premium"
 #: How many people and products one ad may show, each counting the main one.
 #: A plan without the key keeps one of each, as before.
 CAST_FEATURES = {"avatars": "ad_avatars_per_ad", "products": "ad_products_per_ad"}
-NEEDS = ("", "app_screenshot")
+#: What a template needs beyond the product (S17-33): an app screenshot, a real
+#: offer and its end date (asked at render), three variants' photos, four
+#: photos for a grid, or the brand's own place photos.
+NEEDS = ("", "app_screenshot", "offer", "variants", "photos", "places", "reviews")
+VARIANTS_MIN = 3
+GRID_PHOTOS_MIN = 4
 #: A multi-shot template's shots (T3): `frame` animates the first frame,
 #: `photo` animates the product's next photo, `screen` sets its app screenshot
-#: in as a still — never through the video model, which would blur it.
-SHOT_USES = ("frame", "photo", "screen")
+#: in as a still — never through the video model, which would blur it. S17-33
+#: adds shots drawn in code (`ai.services.graphics`): `card` (words on the
+#: brand colour), `cutout` (the next photo on a colour field), `grid` (every
+#: photo at once), `chat` (the hook and body as bubbles); and `place`, the
+#: brand's own place photo, animated.
+SHOT_USES = ("frame", "photo", "screen", "card", "cutout", "grid", "chat", "place")
+DRAWN_USES = frozenset({"card", "cutout", "grid", "chat"})
+TRANSITIONS = ("crossfade", "slide", "cut")
+OFFER_TEXT_MAX = 60
 SHOTS_MIN, SHOTS_MAX = 2, 5
 #: The shot tag that marks a product photo as an app screenshot.
 SCREEN_TAG = "screen"
@@ -147,7 +164,7 @@ def validate_metadata(meta: Any) -> None:
         if not _strings(meta.get(field)) or not meta.get(field):
             errors[field] = "A non-empty list of text."
     if meta.get("needs", "") not in NEEDS:
-        errors["needs"] = "Blank or app_screenshot."
+        errors["needs"] = f"Blank or one of {', '.join(n for n in NEEDS if n)}."
     shots = meta.get("shots")
     if shots is not None:
         if (
@@ -157,11 +174,14 @@ def validate_metadata(meta: Any) -> None:
                 not isinstance(shot, dict)
                 or shot.get("use") not in SHOT_USES
                 or not isinstance(shot.get("text", ""), str)
+                or not isinstance(shot.get("kicker", ""), str)
+                or not isinstance(shot.get("strike", False), bool)
                 for shot in shots
             )
         ):
             errors["shots"] = (
-                f"{SHOTS_MIN} to {SHOTS_MAX} shots, each {{use: frame, photo or screen, text}}."
+                f"{SHOTS_MIN} to {SHOTS_MAX} shots, each {{use: one of "
+                f"{', '.join(SHOT_USES)}, text, kicker?, strike?}}."
             )
         elif any(shot["use"] == "screen" for shot in shots) and meta.get("needs") != (
             "app_screenshot"
@@ -171,6 +191,22 @@ def validate_metadata(meta: Any) -> None:
         errors["available"] = "true or false."
     if not isinstance(meta.get("premium", False), bool):
         errors["premium"] = "true or false."
+    if "goal" in meta and meta["goal"] not in GOALS:
+        errors["goal"] = f"One of {', '.join(GOALS)}."
+    if not isinstance(meta.get("hidden", False), bool):
+        errors["hidden"] = "true or false."
+    if not isinstance(meta.get("protect", ""), str) or len(meta.get("protect", "")) > PROMPT_MAX:
+        errors["protect"] = f"Text of at most {PROMPT_MAX} characters."
+    if meta.get("transition", "crossfade") not in TRANSITIONS:
+        errors["transition"] = f"One of {', '.join(TRANSITIONS)}."
+    if not isinstance(meta.get("script_hint", ""), str):
+        errors["script_hint"] = "Text."
+    if not isinstance(meta.get("land", False), bool):
+        errors["land"] = "true or false."
+    if "capture" in meta and meta["capture"] not in CAPTURES:
+        errors["capture"] = f"One of {', '.join(CAPTURES)}."
+    if not isinstance(meta.get("negative", ""), str) or len(meta.get("negative", "")) > PROMPT_MAX:
+        errors["negative"] = f"Text of at most {PROMPT_MAX} characters."
     if errors:
         raise DjangoValidationError(
             {"metadata": [f"{field}: {message}" for field, message in errors.items()]}
@@ -213,6 +249,48 @@ def premium_pack() -> str | None:
 
 def cast_limits(entitlements: Entitlements) -> dict[str, int]:
     return {part: max(1, entitlements.int_feature(key, 1)) for part, key in CAST_FEATURES.items()}
+
+
+#: A product's campaign goal (`Product.campaign_goal`) → the template goal the
+#: gallery recommends first.
+GOAL_FOR_CAMPAIGN = {"sales": "sell", "traffic": "explain", "awareness": "show"}
+RECOMMENDED = 3
+
+
+def _recommend(templates: list[dict[str, Any]], product: Product | None) -> list[str]:
+    """Up to three templates for this product (S17-32): ones it can make now,
+    the campaign's goal first, then the ones made for this kind of product,
+    each from a different kind of template."""
+    want = GOAL_FOR_CAMPAIGN.get(product.campaign_goal) if product is not None else None
+    kind = product.offer_kind if product is not None else ""
+    makeable = [
+        row for row in templates if row["available"] and row["fit"] is None and row["lock"] is None
+    ]
+
+    def proven(row: dict[str, Any]) -> float:
+        # S17-37: within a goal, this brand's own results lift a template — only
+        # one measured often enough to go on, and the better its median the more.
+        results = row.get("results") or {}
+        return -(results.get("median_engagement") or 0.0) if results.get("enough") else 0.0
+
+    ranked = sorted(
+        makeable,
+        key=lambda row: (
+            row["goal"] != want,
+            proven(row),
+            not (kind and kind in row["fits"] and len(row["fits"]) <= 2),
+        ),
+    )
+    picked: list[str] = []
+    categories: set[str] = set()
+    for row in ranked:
+        if row["category"] in categories:
+            continue
+        picked.append(row["key"])
+        categories.add(row["category"])
+        if len(picked) == RECOMMENDED:
+            break
+    return picked
 
 
 def _rows() -> list[CreativeOption]:
@@ -259,16 +337,49 @@ def fit_of(
     meta = row.metadata
     if product is not None and product.offer_kind and product.offer_kind not in meta["fits"]:
         return "template_fit"
-    if meta.get("needs") == "app_screenshot" and (
-        product is None or not has_screenshot(product, photo_ids)
-    ):
+    needs = meta.get("needs")
+    if needs == "app_screenshot" and (product is None or not has_screenshot(product, photo_ids)):
         return "needs_screenshot"
+    if needs in ("variants", "photos"):
+        tags = (product.reference_tags or {}) if product is not None else {}
+        if photo_ids is None and product is not None:
+            photo_ids = {str(pk) for pk in product.reference_images.values_list("pk", flat=True)}
+        plain = [pk for pk in photo_ids or set() if tags.get(pk) != SCREEN_TAG]
+        if len(plain) < (VARIANTS_MIN if needs == "variants" else GRID_PHOTOS_MIN):
+            return "needs_variants" if needs == "variants" else "needs_photos"
+    if needs == "places" and (product is None or not _has_places(product.workspace)):
+        return "needs_places"
+    if needs == "reviews" and (product is None or consented_review(product) is None):
+        return "needs_reviews"
     return None
+
+
+def consented_review(product: Product) -> dict[str, Any] | None:
+    """The product's first review given with the customer's consent (S17-36);
+    a review without it is never shown."""
+    for review in product.reviews or []:
+        if isinstance(review, dict) and review.get("consent") is True and review.get("quote"):
+            return review
+    return None
+
+
+def _has_places(workspace: Workspace) -> bool:
+    from brand.models import BrandPlace, PlaceSource
+
+    return BrandPlace.objects.filter(
+        workspace=workspace, source=PlaceSource.UPLOAD, media__isnull=False
+    ).exists()
 
 
 FIT_MESSAGES = {
     "template_fit": "This template doesn't fit this product.",
     "needs_screenshot": "Needs an app screenshot: tag one of the product's photos as App screen.",
+    "needs_variants": f"Needs photos of at least {VARIANTS_MIN} variants of the product.",
+    "needs_photos": f"Needs at least {GRID_PHOTOS_MIN} photos of the product.",
+    "needs_places": "Needs a photo of your own place: add one at the Scene step.",
+    "needs_reviews": (
+        "Needs a customer review given with their consent: add one on the product page."
+    ),
 }
 
 
@@ -282,6 +393,9 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     `fit`), so the page can say *why* a rail is empty rather than look broken;
     the page decides what to hide.
     """
+    from brand.models import PlaceSource
+    from brand.services import places
+
     entitlements = entitlements_for(workspace)
     plan = entitlements.plan
     lengths = _lengths()
@@ -297,9 +411,12 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         if product is not None
         else set()
     )
+    results = template_results.results_for(workspace)
     out = []
     for row in _rows():
         meta = row.metadata
+        if meta.get("hidden"):
+            continue
         feature = TIER_FEATURE[meta["tier"]]
         lock = None
         if not entitlements.feature(feature):
@@ -316,6 +433,9 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "label": row.localized("label"),
                 "description": row.localized("description"),
                 "category": meta["category"],
+                "goal": meta.get("goal") or "show",
+                # S17-37: what it did for this brand, or null before any post.
+                "results": results.get(row.key),
                 "fits": meta["fits"],
                 "person": meta["person"],
                 "tier": meta["tier"],
@@ -354,8 +474,38 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         )
     return {
         "templates": out,
+        "recommended": _recommend(out, product),
+        "goals": [{"key": goal, "label": goal} for goal in GOALS],
         "categories": [{"key": key, "label": label} for key, label in _category_labels()],
-        "locations": [{"key": key, "label": key.capitalize()} for key in _location_keys(out)],
+        "locations": _places(_location_keys(out)),
+        # S17-28: the brand's own places (any template can be set there), the
+        # catalogue places it keeps a plate for, and what keeping one costs.
+        "own_places": [
+            {"key": f"{places.OWN}{place.pk}", "label": place.label, "image": place.media.file.url}
+            for place in places.list_places(workspace)
+            if place.source == PlaceSource.UPLOAD and place.media is not None
+        ],
+        "kept": places.kept_keys(workspace),
+        # S17-34: what the script writer can be asked to argue, and how.
+        "angles": [
+            {
+                "key": row.key,
+                "label": row.localized("label"),
+                "description": row.localized("description"),
+                "stage": str((row.metadata or {}).get("stage") or ""),
+                "families": list((row.metadata or {}).get("families") or []),
+            }
+            for row in CreativeOption.objects.filter(kind=CreativeKind.ANGLE, is_active=True)
+        ],
+        "hook_families": [
+            {
+                "key": row.key,
+                "label": row.localized("label"),
+                "description": row.localized("description"),
+            }
+            for row in CreativeOption.objects.filter(kind=CreativeKind.HOOK_FAMILY, is_active=True)
+        ],
+        "keep_credits": places.keep_credits(workspace),
         "rerolls": entitlements.int_feature("ad_rerolls"),
         "prompt_edit": bool(entitlements.feature("ad_prompt_edit")),
         "avatars_per_ad": cast_limits(entitlements)["avatars"],
@@ -373,6 +523,22 @@ def _category_labels() -> list[tuple[str, str]]:
 
 def _location_keys(templates: list[dict[str, Any]]) -> list[str]:
     return list(dict.fromkeys(key for row in templates for key in row["locations"]))
+
+
+def _places(keys: list[str]) -> list[dict[str, str]]:
+    """Each place the templates use, named in the interface language, with its
+    picture; a key with no row reads its own name and no picture."""
+    rows = {
+        row.key: row for row in CreativeOption.objects.filter(kind=CreativeKind.PLACE, key__in=keys)
+    }
+    return [
+        {
+            "key": key,
+            "label": rows[key].localized("label") if key in rows else key.capitalize(),
+            "image": str((rows[key].metadata or {}).get("image") or "") if key in rows else "",
+        }
+        for key in keys
+    ]
 
 
 # -----------------------------------------------------------------------------
@@ -520,18 +686,97 @@ def length_units(row: CreativeOption, length_key: str) -> int:
     return int(row.metadata["units"][length_key])
 
 
-def _location(row: CreativeOption, location: str) -> str:
+@dataclass(frozen=True)
+class Place:
+    """Where a template is set (S17-27): what the camera sees, the light it is
+    locked to, where the product stands, and what it must never show."""
+
+    set: str
+    light: str = ""
+    zone: str = ""
+    forbid: str = ""
+
+
+def place_text(scene: str, workspace: Workspace | None) -> str:
+    """A place's set with the brand-colour placeholder filled: the kit's
+    primary, or a calm neutral when there is no kit."""
+    from ai.ad_template_seed import BRAND_COLOUR
+
+    if BRAND_COLOUR not in scene:
+        return scene
+    kit = kit_for(workspace) if workspace is not None else None
+    primary = dict(kit.colors).get("Primary") if kit else None
+    return scene.replace(
+        BRAND_COLOUR, f"the brand colour {primary}" if primary else "a calm neutral colour"
+    )
+
+
+#: The brand's own place (S17-28): its photo carries the set and the light.
+OWN_PLACE = Place(
+    set="the brand's own place, exactly as in the attached place photo",
+    zone="where it would really be used in that place",
+    forbid="no readable text or signs, no other brand's logo",
+)
+
+
+def place_of(row: CreativeOption, location: str, *, workspace: Workspace | None = None) -> Place:
+    """The template's place: the person's, or the template's first. 400 for a
+    place the template does not offer. A key with no `place` row reads the
+    words it had before places were rows. The brand's own place (`own:<id>`)
+    fits every template; another brand's is a 404."""
     from ai.ad_template_seed import LOCATIONS
+    from brand.services import places
 
     allowed = row.metadata["locations"]
     chosen = location or allowed[0]
+    if chosen.startswith(places.OWN):
+        if workspace is None:
+            raise TemplateRefusedError(
+                "Your own place needs the brand it belongs to.", code="template_location"
+            )
+        places.own(workspace, chosen)
+        return OWN_PLACE
     if chosen not in allowed:
         raise TemplateRefusedError(
             f"'{location}' is not a location of this template.",
             code="template_location",
             detail={"locations": allowed},
         )
-    return LOCATIONS.get(chosen, chosen)
+    found = CreativeOption.objects.filter(
+        kind=CreativeKind.PLACE, key=chosen, is_active=True
+    ).first()
+    if found is None:
+        return Place(set=LOCATIONS.get(chosen, chosen))
+    meta = found.metadata or {}
+    scene = str(meta.get("set") or found.prompt_fragment or chosen)
+    return Place(
+        set=place_text(scene, workspace),
+        light=str(meta.get("light") or ""),
+        zone=str(meta.get("zone") or ""),
+        forbid=str(meta.get("forbid") or ""),
+    )
+
+
+def place_forbid(row: CreativeOption, location: str, workspace: Workspace | None = None) -> str:
+    """What a render's place forbids, or "" when the place is no longer the
+    template's, or gone — a render already paid for is never failed over its
+    words."""
+    try:
+        return place_of(row, location, workspace=workspace).forbid
+    except (TemplateRefusedError, NotFound):
+        return ""
+
+
+def place_photo(row: CreativeOption, location: str, workspace: Workspace) -> int | None:
+    """The picture that sets the scene (S17-28): the brand's own place, or its
+    kept plate for this catalogue place; None when there is neither."""
+    from brand.services import places
+
+    chosen = location or row.metadata["locations"][0]
+    if chosen.startswith(places.OWN):
+        return places.own(workspace, chosen).media_id
+    plate = places.plate(workspace, chosen)
+    return plate.media_id if plate is not None else None
 
 
 def keyframe_prompt(
@@ -541,21 +786,74 @@ def keyframe_prompt(
     location: str = "",
     person: str = "",
     also: tuple[str, ...] = (),
+    workspace: Workspace | None = None,
+    own_light: bool = False,
 ) -> str:
     """The first frame, filled. `person` is the avatar's description or blank;
-    `also` names the other products in the ad."""
+    `also` names the other products in the ad. The place's light is left out
+    when the person chose their own (`own_light`): theirs wins."""
     prompt = str(row.metadata["keyframe_prompt"])
     optional = f" {person} is in the frame, natural and unposed." if person else ""
-    return (
+    place = place_of(row, location, workspace=workspace)
+    setting = "; ".join(
+        filter(
+            None,
+            [
+                place.set,
+                f"light: {place.light}" if place.light and not own_light else "",
+                f"the product: {place.zone}" if place.zone else "",
+            ],
+        )
+    )
+    filled = (
         prompt.replace("{product}", " and ".join((product.name, *also)))
-        .replace("{location}", _location(row, location))
+        .replace("{location}", setting)
         .replace("{person_optional}", optional)
         .replace("{person}", person or "A person")
     )
+    # The one detail that kills the idea if lost (S17-32), word for word.
+    protect = str(row.metadata.get("protect") or "").strip()
+    return f"{filled} Protect: {protect}" if protect else filled
 
 
-def motion_prompt(row: CreativeOption) -> str:
-    return str(row.metadata["motion_prompt"])
+#: Beats the composer plays, never the video model.
+CARD_BEATS = frozenset({"End card"})
+
+
+def motion_prompt(row: CreativeOption, *, seconds: float | None = None) -> str:
+    """The row's motion; with a length, followed by its beats on the clock
+    (S17-31) — one call with internal beats drifts less than several."""
+    motion = str(row.metadata["motion_prompt"])
+    beats = [beat for beat in row.metadata.get("beats") or [] if beat not in CARD_BEATS]
+    if not seconds or not beats:
+        return motion
+    step = seconds / len(beats)
+    windows = "; ".join(
+        f"{round(index * step):g}-{round((index + 1) * step):g} s: {beat}"
+        for index, beat in enumerate(beats)
+    )
+    return f"{motion} Timing: {windows}."
+
+
+def role_of(row: CreativeOption) -> str:
+    """`end` for a template filmed towards its first frame (S17-31): the clip
+    lands on the approved still, on the `video_end` route; `start` otherwise."""
+    return "end" if row.metadata.get("land") else "start"
+
+
+def negative_of(row: CreativeOption, forbid: str = "") -> str:
+    """The template's negative, and what its place forbids (S17-27)."""
+    return ", ".join(
+        part for part in (str(row.metadata.get("negative") or "").strip(), forbid.strip()) if part
+    )
+
+
+def avoid_line(row: CreativeOption, forbid: str = "") -> str:
+    """The negative as the last line of a prompt, or "". The routed models take
+    no negative field (OpenRouter's `POST /videos` has none), so it travels as
+    words — added after any rewrite, which may never drop it."""
+    negative = negative_of(row, forbid)
+    return f"Avoid: {negative}." if negative else ""
 
 
 def script_parts(
@@ -576,11 +874,96 @@ def script_text(row: CreativeOption, script: dict[str, Any] | None, product: Pro
     return "\n".join(text for text in script_parts(row, script, product).values() if text)
 
 
-def shot_line(text: str, product: Product, script: dict[str, str]) -> str:
-    """A shot's kinetic line: `{product}`, `{hook}`, `{body}`, `{cta}` filled."""
-    for key, value in (("product", product.name), *script.items()):
+def shot_line(
+    text: str, product: Product, script: dict[str, str], offer: dict[str, str] | None = None
+) -> str:
+    """A shot's line: `{product}`, `{hook}`, `{body}`, `{cta}` filled; the
+    body's benefits as `{claim1}`…`{claim3}` (split on " · "); an offer's
+    `{offer}` and `{ends}` (S17-33)."""
+    claims_of_body = [part.strip() for part in script.get("body", "").split("·")]
+    review = consented_review(product) or {}
+    values = [
+        ("review", str(review.get("quote") or "")),
+        ("review_author", str(review.get("author") or "")),
+        ("product", product.name),
+        *script.items(),
+        *((f"claim{index + 1}", claim) for index, claim in enumerate(claims_of_body)),
+        ("offer", (offer or {}).get("text", "")),
+        ("ends", (offer or {}).get("ends_label", "")),
+    ]
+    for key, value in values:
         text = text.replace("{" + key + "}", value)
     return text.strip()
+
+
+class OfferRequiredError(TemplateRefusedError):
+    default_code = "offer_required"
+    default_detail = "This template needs the offer: what it is and the day it ends."
+
+
+class OfferEndedError(TemplateRefusedError):
+    default_code = "offer_ended"
+    default_detail = "That offer has already ended."
+
+
+_MONTHS = {
+    "en": ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+    "fr": (
+        "janv.",
+        "févr.",
+        "mars",
+        "avr.",
+        "mai",
+        "juin",
+        "juil.",
+        "août",
+        "sept.",
+        "oct.",
+        "nov.",
+        "déc.",
+    ),
+    "it": ("gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"),
+}
+_UNTIL = {"en": "Until {date}", "fr": "Jusqu'au {date}", "it": "Fino al {date}"}
+#: A card's kicker in the ad's language (S17-33); anything else is shown as written.
+KICKERS = {
+    "Myth": {"fr": "Idée reçue", "it": "Falso mito"},
+    "Fact": {"fr": "En vrai", "it": "In realtà"},
+}
+
+
+def kicker_text(kicker: str, language: str) -> str:
+    return KICKERS.get(kicker, {}).get(language, kicker)
+
+
+def clean_offer(raw: Any) -> dict[str, str]:
+    """A real offer (S17-33): its words and the day it ends, which must not be
+    past. Urgency only when it is true (sales `scarcity-urgency-calibration`)."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    if not isinstance(raw, dict):
+        raise OfferRequiredError
+    text = " ".join(str(raw.get("text") or "").split())[:OFFER_TEXT_MAX]
+    try:
+        ends = dt.date.fromisoformat(str(raw.get("ends") or ""))
+    except ValueError as error:
+        raise OfferRequiredError from error
+    if not text:
+        raise OfferRequiredError
+    if ends < timezone.localdate():
+        raise OfferEndedError(detail={"ends": ends.isoformat()})
+    return {"text": text, "ends": ends.isoformat()}
+
+
+def ends_label(ends: str, language: str) -> str:
+    """ "Until 30 Nov" in the ad's language, for an offer's card."""
+    import datetime as dt
+
+    day = dt.date.fromisoformat(ends)
+    lang = language if language in _MONTHS else "en"
+    return _UNTIL[lang].format(date=f"{day.day} {_MONTHS[lang][day.month - 1]}")
 
 
 # -----------------------------------------------------------------------------
@@ -663,9 +1046,13 @@ def create_keyframe(
         person = " and ".join(avatars.describe(item) for item in people)
         assets = [{"media": item.portrait_id, "role": "person", "note": ""} for item in people]
     for item in others:
-        photo = item.reference_images.order_by("pk").first()
-        assert photo is not None  # resolve_cast refused a product with no photo
-        assets.append({"media": photo.pk, "role": "product", "note": f"This is {item.name}."})
+        photos = identity_photos(item)
+        assert photos  # resolve_cast refused a product with no photo
+        assets.append({"media": photos[0].pk, "role": "product", "note": f"This is {item.name}."})
+    negative = negative_of(row, place_of(row, location, workspace=workspace).forbid)
+    scene = place_photo(row, location, workspace)
+    if scene is not None:
+        assets.append({"media": scene, "role": "place", "note": ""})
     marker: dict[str, Any] = {
         "template": row.key,
         "location": location,
@@ -690,6 +1077,8 @@ def create_keyframe(
                     location=location,
                     person=person,
                     also=tuple(item.name for item in others),
+                    workspace=workspace,
+                    own_light=bool((look or {}).get("light")),
                 ),
                 prompt,
             ]
@@ -701,6 +1090,9 @@ def create_keyframe(
             **({"assets": assets} if assets else {}),
             "ad_template": marker,
             **({"avatar": avatar.pk} if avatar else {}),
+            # A keep-out rule (`creative.keep_out_lines`): sent verbatim after
+            # the brief's rewrite, which may never drop it.
+            **({"negative": negative} if negative else {}),
         },
     )
 
@@ -746,33 +1138,80 @@ SCRIPT_SYSTEM = (
     "and says what it does for the viewer. Name the product by the body.\n"
     "- Never invent a fact, a number, a price, a rating, a review or a claim the brief "
     "does not give. A generated person is never a customer.\n"
+    "- The person on screen shows and explains; never give them a personal experience "
+    "or result (it saved me, I was surprised, it gets me through).\n"
+    "- No urgency or scarcity (this week only, last chance, limited) unless the brief "
+    "gives a real offer and its end date.\n"
     "- Short spoken sentences; the whole script must be readable in the seconds given.\n"
     "- The call to action is one plain step the viewer can take.\n"
     "- No hashtags, no emoji, no links.\n"
-    "Reply with exactly three lines and nothing else:\n"
-    "HOOK: …\nBODY: …\nCTA: …"
+    "- When the brief names an angle and a hook style, the script argues that angle and the "
+    "hook works in that style. HOOK2 and HOOK3 are two more hooks for the same body, each in "
+    "one of the other styles the brief names, following the same hook rules.\n"
+    "Reply with these lines and nothing else:\n"
+    "HOOK: …\nBODY: …\nCTA: …\nHOOK2: …\nHOOK3: …"
 )
-_SCRIPT_LINE = re.compile(r"^\s*(HOOK|BODY|CTA)\s*:\s*(.+?)\s*$", re.I | re.M)
+_SCRIPT_LINE = re.compile(r"^\s*(HOOK3|HOOK2|HOOK|BODY|CTA)\s*:\s*(.+?)\s*$", re.I | re.M)
+#: Brief lines from the product's own record the script writer may use: its
+#: facts and the claims proven on file — never its hashtag or format rules.
+_BRIEF_PREFIXES = (
+    "In one line",
+    "Key features",
+    "Audience",
+    "Work in these words",
+    "Never use these words",
+    "Mention the price",
+    "Claims you may make",
+    "Make no claim",
+)
 
 
-def _script_from(body: str, brief: str) -> dict[str, str] | None:
-    """The three parts, or `None` when the reply is not the three lines asked
-    for, fails the rephrase checks (a number the brief never gave, a link), or
-    breaks the hook rules (too long, a dead opener)."""
+def _hook_ok(hook: str) -> bool:
+    low = hook.strip().lower()
+    return bool(low) and len(low.split()) <= HOOK_MAX_WORDS and not low.startswith(DEAD_OPENERS)
+
+
+def _script_from(body: str, brief: str) -> dict[str, Any] | None:
+    """The three parts and the alternative hooks that pass (`alts`), or `None`
+    when the reply is not the lines asked for, fails the rephrase checks (a
+    number the brief never gave, a link), or the main hook breaks the hook
+    rules (too long, a dead opener). An alternative that breaks them is dropped."""
     from ai.services import rephrase
 
     found = {key.lower(): text for key, text in _SCRIPT_LINE.findall(body)}
     parts = {key: found.get(key, "")[:SCRIPT_MAX] for key in ("hook", "body", "cta")}
     if not all(parts.values()) or not rephrase.acceptable(" ".join(parts.values()), brief):
         return None
-    hook = parts["hook"].strip().lower()
-    if len(hook.split()) > HOOK_MAX_WORDS or hook.startswith(DEAD_OPENERS):
+    if not _hook_ok(parts["hook"]):
         return None
-    return parts
+    alts = [
+        (index, found[key][:SCRIPT_MAX])
+        for index, key in enumerate(("hook2", "hook3"))
+        if found.get(key) and _hook_ok(found[key]) and rephrase.adds_nothing(found[key], brief)
+    ]
+    return {**parts, "alts": alts}
+
+
+def _brief_row(kind: str, key: str) -> CreativeOption | None:
+    """An angle or hook style named in a request: the row, None for blank, 400
+    for a key the live catalogue does not hold (rule 18)."""
+    if not key:
+        return None
+    row = CreativeOption.objects.filter(kind=kind, key=key, is_active=True).first()
+    if row is None:
+        raise ValidationError({kind: f"'{key}' is not in the catalogue."})
+    return row
 
 
 def write_script(
-    workspace: Workspace, *, key: str, product: Product, language: str, seconds: int = 0
+    workspace: Workspace,
+    *,
+    key: str,
+    product: Product,
+    language: str,
+    seconds: int = 0,
+    angle: str = "",
+    family: str = "",
 ) -> dict[str, Any]:
     """The template's script, written for this product by the text model.
 
@@ -797,23 +1236,50 @@ def write_script(
     )
     if language and language not in LANGUAGE_NAMES:
         raise ValidationError({"language": "One of en, fr, it."})
+    angle_row = _brief_row(CreativeKind.ANGLE, angle)
+    family_row = _brief_row(CreativeKind.HOOK_FAMILY, family)
+    # The main style, then two others for HOOK2 and HOOK3: the angle's own
+    # styles first, so "Make 3" tries three ideas rather than three synonyms.
+    suited = list((angle_row.metadata or {}).get("families") or []) if angle_row else []
+    others = [k for k in suited if k != family][:2]
+    other_rows = list(
+        CreativeOption.objects.filter(kind=CreativeKind.HOOK_FAMILY, key__in=others, is_active=True)
+    )
+    other_rows.sort(key=lambda row: others.index(row.key))
     price = resolve_cost(kind=GenerationKind.TEXT, mode=GenerationMode.RECIPE)
     entitlements = entitlements_for(workspace)
     entitlements.require_credits(price)
 
+    from products import brief as product_brief
+
     base = script_parts(row, None, product)
     meta = row.metadata
+    facts = [
+        line for line in product_brief.prompt_lines(product) if line.startswith(_BRIEF_PREFIXES)
+    ]
     brief = "\n".join(
         line
         for line in (
             f"Product: {product.name}",
-            f"About it: {product.short_description}" if product.short_description else "",
+            *facts,
+            # S17-34: who buys it and what makes them hesitate, in their words.
+            f"Who buys it, and when: {product.buyer_situation}" if product.buyer_situation else "",
+            f"What makes buyers hesitate: {product.top_objection}" if product.top_objection else "",
+            f"Angle: {angle_row.label} — {angle_row.prompt_fragment}" if angle_row else "",
+            f"Hook style: {family_row.label} — {family_row.prompt_fragment}" if family_row else "",
+            *(
+                f"Other hook style for HOOK{index + 2}: {other.label} — {other.prompt_fragment}"
+                for index, other in enumerate(other_rows)
+            ),
             f"Template: {row.label} — beats: {' · '.join(meta['beats'])}",
             f"Seconds: {seconds}" if seconds else "",
             f"Language: {LANGUAGE_NAMES.get(language or 'en', 'English')}",
             f"Starting hook: {base['hook']}",
             f"Starting body: {base['body']}",
             f"Starting call to action: {base['cta']}",
+            # S17-33: what this format's words must be (a value prop's three
+            # benefits, a myth and its fact, a chat's question and reply).
+            f"This format: {meta['script_hint']}" if meta.get("script_hint") else "",
         )
         if line
     )
@@ -825,8 +1291,20 @@ def write_script(
         parts = _script_from(result.variants[0].body if result.variants else "", brief)
     except ProviderError:
         parts = None
+    # S17-36: words the ad may not say on its own — a risky phrase, or a claim
+    # with no proof on file — send the template's own words back, free.
+    if parts is not None:
+        text = " ".join((parts["hook"], parts["body"], parts["cta"]))
+        if claims.risky(text) or claims.unproven(text, product):
+            parts = None
+        else:
+            parts["alts"] = [
+                (index, alt)
+                for index, alt in parts["alts"]
+                if not claims.risky(alt) and not claims.unproven(alt, product)
+            ]
     if parts is None:
-        return {**base, "by": "template", "credits": 0}
+        return {**base, "hooks": [base["hook"]], "families": [], "by": "template", "credits": 0}
     with transaction.atomic():
         ledger.debit_credits(
             workspace,
@@ -834,4 +1312,11 @@ def write_script(
             quota=entitlements.quota("monthly_ai_credits"),
             note=f"ad script {row.key}",
         )
-    return {**parts, "by": "model", "credits": price}
+    alts = parts.pop("alts")
+    hooks = [parts["hook"], *(text for _index, text in alts)]
+    families = (
+        [family, *(other_rows[index].key for index, _text in alts if index < len(other_rows))]
+        if family
+        else []
+    )
+    return {**parts, "hooks": hooks, "families": families, "by": "model", "credits": price}

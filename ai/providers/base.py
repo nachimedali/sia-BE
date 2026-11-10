@@ -186,6 +186,7 @@ class VideoProvider(Protocol):
         model: str | None = None,
         resolution: str | None = None,
         audio: bool | None = None,
+        seed: int | None = None,
     ) -> VideoResult:
         """Animate one still into a clip (steps-plan S3).
 
@@ -195,7 +196,9 @@ class VideoProvider(Protocol):
         direction only; the product's look comes from the image.
 
         `model`, `resolution` and `audio` come from the task's route
-        (`ai.services.routing`); `None` leaves the vendor's default.
+        (`ai.services.routing`); `None` leaves the vendor's default. `seed` is
+        the render's own (S17-26), the same for every shot of one render; a
+        vendor that does not honour seeds ignores it, `None` sends none.
         """
         ...
 
@@ -223,9 +226,17 @@ class CaptionCue:
 
 @dataclass(frozen=True)
 class EndCard:
+    """The reel's last card. `background` and `accent` are `#RRGGBB` (the
+    brand kit's, S17-26); `logo` is the brand's real logo file, composited and
+    never drawn by a model; `image` is the product's identity photo."""
+
     title: str
     call_to_action: str = ""
     seconds: float = 2.0
+    background: str = "#111111"
+    accent: str = "#FFFFFF"
+    logo: bytes | None = None
+    image: bytes | None = None
 
 
 class VideoComposer(Protocol):
@@ -251,6 +262,11 @@ class VideoComposer(Protocol):
         end_card: EndCard | None,
         duration_seconds: float,
     ) -> VideoResult: ...
+
+    def caption(self, *, clip: bytes, captions: list[CaptionCue], aspect: str) -> VideoResult:
+        """Burn `captions` into one rendered clip (S17-26): the clip keeps its
+        length and its sound, only the words are added on their cues."""
+        ...
 
 
 class EmbeddingProvider(Protocol):

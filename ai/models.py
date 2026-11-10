@@ -637,6 +637,13 @@ class CreativeKind(models.TextChoices):
     # validated on save (`ai.services.ad_templates.validate_metadata`).
     AD_TEMPLATE = "ad_template", "Video ad template"
     AVATAR_TRAIT = "avatar_trait", "Avatar trait"
+    # S17-27: where a template is set — the set, its light, where the product
+    # stands, what it must never show (`ai.ad_template_seed.PLACES`).
+    PLACE = "place", "Template place"
+    # S17-34: what an ad argues, and how its first second works — each row's
+    # `prompt_fragment` is the instruction the script writer reads.
+    ANGLE = "angle", "Ad angle"
+    HOOK_FAMILY = "hook_family", "Hook style"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
@@ -793,6 +800,14 @@ class VideoRender(models.Model):
     #: The final prompt as sent to the video model, saved before the call so a
     #: failed render still shows it. Empty for a reel cut with no model.
     prompt_sent = models.TextField(blank=True, default="")
+    #: The seed sent with every shot of this render (S17-26), so a render can be
+    #: traced and made again from the same inputs. Vendors may ignore it;
+    #: `None` on renders made before seeds were kept.
+    seed = models.PositiveBigIntegerField(null=True, blank=True)
+    #: What the machine measured on the finished file (S17-35): black frames,
+    #: freezes, a still or silent opening, the product's likeness at the end —
+    #: `[{code, ok, detail, score?}]`, shown at review, never a refusal.
+    checks = models.JSONField(default=list, blank=True)
     #: The still a clip animates, or a reel's first shot: what the output is
     #: `derived_from`.
     source = models.ForeignKey(

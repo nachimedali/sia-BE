@@ -106,11 +106,13 @@ def test_a_multi_shot_template_holds_once_and_debits_once(auth_client: Any, flat
     assert [shot["clip"] for shot in reel["shots"]] == [True, True, True]  # a reel of clips
     assert len(_fake_video_provider.calls) == 3  # one animation per room
     assert reel["shots"][0]["overlay"] == "Step inside Olive oil 500 ml."  # kinetic line
-    assert reel["end_card"] == {
-        "title": "Olive oil 500 ml",
-        "cta": "Book your visit.",
-        "seconds": 2.0,
-    }
+    card = reel["end_card"]
+    assert (card["title"], card["cta"], card["seconds"]) == (
+        "Olive oil 500 ml",
+        "Book your visit.",
+        2.0,
+    )
+    assert card["image"] is True  # the product's identity photo closes the reel
     assert sum(shot["seconds"] for shot in reel["shots"]) + 2.0 == pytest.approx(15, abs=0.05)
 
 

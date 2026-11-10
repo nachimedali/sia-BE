@@ -17,7 +17,7 @@ from typing import Any
 
 from django.db.models import Count, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework import mixins, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import IsAuthenticated
@@ -47,7 +47,9 @@ from products.serializers import (
     CompletenessCheckSerializer,
     DraftRejectRequestSerializer,
     GeneratedImageSerializer,
+    ProductCleanSerializer,
     ProductCompletenessSerializer,
+    ProductIdentitySerializer,
     ProductReferenceImagesUploadSerializer,
     ProductSerializer,
     ProductSummarySerializer,
@@ -56,6 +58,7 @@ from products.serializers import (
 # Aliased: `ProductViewSet.autopilot` is a route name fixed by design.md §7's
 # `/products/{id}/autopilot/`, and it would otherwise shadow the module.
 from products.services import autopilot as autopilot_service
+from products.services import identity
 from products.services import readiness as readiness_service
 from products.services.completeness import check_definitions, completeness_payload
 from products.services.products import (
@@ -275,6 +278,68 @@ class ProductViewSet(
         asset = get_object_or_404(product.reference_images.all(), pk=asset_id)
         detach_reference_image(product=product, media_asset=asset)
         return Response(self.get_serializer(self.get_queryset().get(pk=product.pk)).data)
+
+    @extend_schema(
+        request=None,
+        responses={200: ProductSerializer},
+        summary="Draft the product's identity card from its front photo",
+        description="A vision reading of what the product looks like (S17-29), paid in "
+        "credits when it returns a card, saved unconfirmed: a draft is never sent to a model.",
+    )
+    @action(detail=True, methods=["post"], url_path="identity/draft")
+    def identity_draft(self, request: Request, pk: str | None = None) -> Response:
+        product = identity.draft(self.get_object())
+        return Response(self.get_serializer(self.get_queryset().get(pk=product.pk)).data)
+
+    @extend_schema(
+        request=ProductIdentitySerializer,
+        responses={200: ProductSerializer},
+        summary="Correct and confirm the product's identity card",
+    )
+    @action(detail=True, methods=["patch"], url_path="identity")
+    def identity_card(self, request: Request, pk: str | None = None) -> Response:
+        product = self.get_object()
+        data = ProductIdentitySerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        card = {key: value for key, value in data.validated_data.items() if key != "confirmed"}
+        identity.save(product, card, confirmed=data.validated_data["confirmed"])
+        return Response(self.get_serializer(self.get_queryset().get(pk=product.pk)).data)
+
+    @extend_schema(
+        request=None,
+        responses={202: ProductCleanSerializer},
+        summary="Make a clean photo of the product from one of its photos",
+        description="A new picture of the product alone, made from that photo only (S17-29); "
+        "read `clean/{generation}/` to add it as a front photo once it is ready.",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"reference-images/(?P<asset_id>\d+)/clean",
+    )
+    def clean_photo(
+        self, request: Request, pk: str | None = None, asset_id: str | None = None
+    ) -> Response:
+        generation = identity.clean(
+            self.get_object(), int(asset_id or 0), user=authenticated_user(request)
+        )
+        return Response(
+            ProductCleanSerializer({"generation": generation.pk, "status": "pending"}).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @extend_schema(
+        responses={200: ProductCleanSerializer},
+        summary="Where a clean photo stands; a ready one is added once as a front photo",
+    )
+    @action(detail=True, methods=["get"], url_path=r"clean/(?P<generation_id>\d+)")
+    def clean_status(
+        self, request: Request, pk: str | None = None, generation_id: str | None = None
+    ) -> Response:
+        state = identity.clean_result(self.get_object(), int(generation_id or 0))
+        return Response(
+            ProductCleanSerializer({"generation": int(generation_id or 0), "status": state}).data
+        )
 
     @extend_schema(
         responses={200: CompletenessCheckSerializer(many=True)},

@@ -79,6 +79,7 @@ from billing.services.flags import STUDIO_REPHRASE, STUDIO_VARIANTS_V2, flag_ena
 from common.exceptions import InsufficientCredits, OCCSError, ProviderError
 from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
+from products.brief import identity_photos
 from products.models import Product
 from products.services.guards import ensure_generation_ready
 from workspaces.models import Workspace
@@ -346,12 +347,13 @@ def _ensure_captionable(workspace: Workspace, asset: MediaAsset | None) -> None:
 
 
 def _reference_image_bytes(product: Product | None, *, cap: int | None = None) -> list[bytes]:
-    """The product's photos, in order, up to `cap` — the plan's
+    """The product's photos, the ones that show it best first
+    (`products.brief.identity_photos`), up to `cap` — the plan's
     `max_references` (S17) when that flag is on, so the same photos reach the
     model and the gate. `None` sends every photo, as before."""
     if product is None:
         return []
-    photos = product.reference_images.all()
+    photos = identity_photos(product)
     contents = []
     for asset in photos[:cap] if cap is not None else photos:
         with asset.file.open("rb") as handle:
@@ -684,9 +686,13 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         _reference_image_bytes(
             generation.product, cap=ad_templates.references_cap(workspace, entitlements)
         )
-        if generation.kind == GenerationKind.IMAGE
+        if generation.kind == GenerationKind.IMAGE and generation.source_media_id is None
         else []
     )
+    if generation.kind == GenerationKind.IMAGE and generation.source_media is not None:
+        # A clean photo (S17-29): made from that one photo, and held to it.
+        with generation.source_media.file.open("rb") as handle:
+            reference_images = [handle.read()]
 
     # A composition's reference pictures, read once — never per attempt, and
     # never stored (`ai.services.references`).

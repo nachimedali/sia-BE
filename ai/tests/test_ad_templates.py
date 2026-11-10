@@ -172,7 +172,8 @@ def test_the_gallery_lists_every_template_with_its_fit_and_lock(
     body = auth_client.get(GALLERY, {"product": app.pk}).json()
     rows = {row["key"]: row for row in body["templates"]}
 
-    assert len(rows) == len(TEMPLATES)
+    # Every template the gallery shows: hidden talking formats are not (S17-32).
+    assert len(rows) == len([t for t in TEMPLATES if not t["metadata"].get("hidden")])
     assert rows["pour-shot"]["fit"] == "template_fit"  # a bottle shot is not an app's
     assert rows["tap-through"]["fit"] == "needs_screenshot"
     assert rows["tap-through"]["lock"] is None

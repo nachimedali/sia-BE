@@ -132,8 +132,12 @@ class OpenRouterVideoProvider:
         model: str | None = None,
         resolution: str | None = None,
         audio: bool | None = None,
+        seed: int | None = None,
     ) -> VideoResult:
         body = self._body(prompt, aspect, duration_seconds, model, resolution, audio)
+        if seed is not None:
+            # A top-level field of `POST /videos`; "not guaranteed by all providers".
+            body["seed"] = int(seed)
         body["frame_images"] = [
             {
                 **image_url_part(image),

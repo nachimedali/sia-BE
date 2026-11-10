@@ -58,7 +58,11 @@ REAL_PHOTOS = (3, 5)
 LANGUAGES = ("en", "fr", "it")
 NAME_MAX = 80
 NOTE_MAX = 140
-GROUPS = ("archetype", "age", "look", "style", "energy")
+#: The order a person is described in (S17-30): who, then how they look.
+GROUPS = ("gender", "archetype", "age", "heritage", "look", "hair", "style", "energy")
+#: A face with no energy chosen is calm: an over-energetic read gives a
+#: constant grin and busy hands that read as AI (goose-skills creator takes).
+CALM = "a calm, relaxed face, no constant grin"
 
 
 class AvatarLimitError(FeatureNotAvailable):
@@ -203,9 +207,15 @@ def describe(avatar: Avatar | None = None, *, traits: dict[str, str] | None = No
     their photos — words would invent features they do not have."""
     if avatar is not None and avatar.kind == AvatarKind.REAL:
         return "The person shown in the reference photo"
+    if avatar is not None and avatar.identity and traits is None:
+        # Written once, when the avatar was saved (S17-30): the same words in
+        # every render, whatever an operator retunes in the trait rows later.
+        return avatar.identity
     traits = traits if traits is not None else (avatar.traits if avatar else {})
     rows = _traits()
     parts = [rows[traits[group]].prompt_fragment for group in GROUPS if traits.get(group) in rows]
+    if not traits.get("energy"):
+        parts.append(CALM)
     sentence = "An invented person: " + ", ".join(part for part in parts if part)
     if traits.get("note"):
         sentence += f"; {traits['note']}"
@@ -501,6 +511,7 @@ def create_synthetic(
             kind=AvatarKind.SYNTHETIC,
             portrait=portrait,
             traits=draft.traits,
+            identity=describe(traits=draft.traits),
             languages=langs,
             created_by=user,
         )

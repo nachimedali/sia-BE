@@ -241,6 +241,7 @@ class VideoRenderAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         "source",
         "output",
         "prompt_sent",
+        "seed",
         "rephrased_prompt",
         "rephrased_by",
         "spec",

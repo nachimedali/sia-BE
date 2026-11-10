@@ -100,7 +100,16 @@ def test_the_library_says_what_is_left(auth_client: Any, growth: Any) -> None:
         "real_suggested_plan": "scale",
         "draft_credits": 12,
     }
-    assert {t["group"] for t in body["traits"]} == {"archetype", "age", "look", "style", "energy"}
+    assert {t["group"] for t in body["traits"]} == {
+        "archetype",
+        "gender",
+        "age",
+        "heritage",
+        "look",
+        "hair",
+        "style",
+        "energy",
+    }
 
 
 def test_a_failed_batch_is_not_charged_and_not_counted(

@@ -282,12 +282,14 @@ def test_a_clip_animates_on_the_route_for_its_role(workspace, plans) -> None:
         "model": "first-frame-essential",
         "resolution": "720p",
         "audio": None,
+        "seed": None,
     }
     assert _fake_video_provider.requests[-1] == {
         "role": "end",
         "model": "last-frame-model",
         "resolution": "1080p",
         "audio": True,
+        "seed": None,
     }
     assert start.model == "first-frame-essential"
 

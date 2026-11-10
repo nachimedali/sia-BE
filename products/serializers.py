@@ -21,6 +21,31 @@ from products.models import AutopilotConfig, AutopilotDraft, Product, ProductFor
 from taste.models import REASON_CODES
 
 
+class StrictBooleanField(serializers.BooleanField):
+    """True or false only: a consent is never inferred from "yes" or "1"."""
+
+    def to_internal_value(self, data: Any) -> bool:
+        if not isinstance(data, bool):
+            self.fail("invalid", input=data)
+        return data
+
+
+class ProductReviewSerializer(serializers.Serializer[Any]):
+    """One customer review (S17-36), in their words and with their consent."""
+
+    quote = serializers.CharField(max_length=200)
+    author = serializers.CharField(max_length=60)
+    #: Where it was given (a platform, a shop, an email); `source` is a DRF word.
+    where = serializers.CharField(max_length=80, allow_blank=True, required=False, default="")
+    #: The customer agreed to be quoted in ads. Without it the review is kept
+    #: but never shown.
+    consent = StrictBooleanField()
+
+
+#: How many reviews a product keeps — a bound on the list, not a plan number.
+REVIEWS_MAX = 10
+
+
 class ProductSerializer(serializers.ModelSerializer[Product]):
     reference_images = MediaAssetSerializer(many=True, read_only=True)
     formats = serializers.ListField(
@@ -115,6 +140,11 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
             "rules_reviewed",
             "photo_policy",
             "reference_tags",
+            "buyer_situation",
+            "top_objection",
+            "reviews",
+            "identity",
+            "identity_confirmed_at",
             "platform_plan",
             "campaign_goal",
             "campaign_starts",
@@ -135,9 +165,16 @@ class ProductSerializer(serializers.ModelSerializer[Product]):
             "rules_reviewed_at",
             "completeness_score",
             "is_generation_ready",
+            # S17-29: written through `identity/` and `identity/draft/` only.
+            "identity",
+            "identity_confirmed_at",
             "created_at",
             "updated_at",
         )
+
+    reviews = serializers.ListField(
+        child=ProductReviewSerializer(), max_length=REVIEWS_MAX, required=False
+    )
 
     # The list/retrieve queryset annotates these. Create and update hand back
     # the service's own instance, which has no annotation, so count directly.
@@ -322,3 +359,23 @@ class GeneratedImageSerializer(serializers.Serializer[Any]):
     was_selected = serializers.BooleanField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     media = MediaAssetSerializer(source="media_asset", read_only=True)
+
+
+class ProductIdentitySerializer(serializers.Serializer[Any]):
+    """The identity card as the person corrects it (S17-29). Bounds are checked
+    again by `products.services.identity.clean_card`, the one place that owns them."""
+
+    shape = serializers.CharField(max_length=160, allow_blank=True, required=False, default="")
+    colours = serializers.CharField(max_length=160, allow_blank=True, required=False, default="")
+    label = serializers.ListField(  # type: ignore[assignment]
+        child=serializers.CharField(max_length=60), max_length=6, required=False, default=list
+    )
+    keep = serializers.CharField(max_length=200, allow_blank=True, required=False, default="")
+    #: True sends the card with every image of the product; false keeps it a draft.
+    confirmed = serializers.BooleanField(required=False, default=True)
+
+
+class ProductCleanSerializer(serializers.Serializer[Any]):
+    generation = serializers.IntegerField()
+    #: `pending`, `ready` (added as a front photo) or `failed`.
+    status = serializers.CharField()

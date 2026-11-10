@@ -45,8 +45,10 @@ the flag off, nothing here changes.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,6 +57,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
+from PIL import Image
 from rest_framework.exceptions import NotFound, ValidationError
 
 from accounts.models import User
@@ -68,13 +71,14 @@ from ai.models import (
 )
 from ai.providers.base import CaptionCue, EndCard, ReelShot, VideoResult
 from ai.providers.video import get_video_composer, get_video_provider
-from ai.services import ad_templates, disclosure, quality, rephrase
+from ai.services import ad_templates, disclosure, graphics, quality, render_checks, rephrase
 from ai.services import creative as creative_service
 from ai.services.creative import VIDEO_KINDS
 from billing.services import ledger
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import STUDIO_REPHRASE, flag_enabled
 from billing.services.plans import suggest_upgrade
+from brand.services.kit import kit_for
 from common.exceptions import (
     FeatureNotAvailable,
     InsufficientCredits,
@@ -86,6 +90,7 @@ from common.exceptions import (
 from content.models import MediaAsset, MediaKind, MediaSource, Post, PostSource
 from content.services.media import ingest_media
 from content.services.posts import create_post, update_post
+from products.brief import identity_photos
 from products.models import Product
 from workspaces.models import Organization, Workspace
 
@@ -109,6 +114,19 @@ TEXT_MAX = 2200
 REEL_ASPECT = "9:16"
 #: How much of a reel the end card takes, when it is on.
 END_CARD_SECONDS = 2.0
+#: The end card without a brand kit: the dark card and white pill it had.
+END_CARD_BACKGROUND = "#111111"
+END_CARD_ACCENT = "#FFFFFF"
+#: A logo smaller than this is a favicon: never stretched onto a card
+#: (goose-skills `review-finished-ad`: long side under 256 px, or 40,000 px²).
+LOGO_MIN_SIDE = 256
+LOGO_MIN_AREA = 40_000
+#: A single-clip template's words on screen (S17-26): the hook opens it, the
+#: call to action closes it, each for at most this long; the body has the rest.
+BEAT_EDGE_SECONDS = 3.0
+#: Seeds sent to the video vendors: a non-negative 31-bit integer every
+#: vendor that takes one accepts.
+SEED_RANGE = 2**31
 ACTIVE = (VideoRenderStatus.QUEUED, VideoRenderStatus.RUNNING)
 
 
@@ -208,6 +226,11 @@ class Spec:
     location: str = ""
     script: dict[str, str] = field(default_factory=dict)
     prompt: str = ""
+    #: An offer template's real offer (S17-33), `{text, ends}`.
+    offer: dict[str, str] = field(default_factory=dict)
+    #: The script's angle and hook style (S17-37), kept for results.
+    angle: str = ""
+    family: str = ""
 
     @property
     def seconds(self) -> int:
@@ -233,9 +256,12 @@ class Spec:
                 "extra_avatars": [item.pk for item in self.extra_avatars],
                 "extra_products": [item.pk for item in self.extra_products],
                 "location": self.location,
-                "role": "start",
+                "role": self.role,
                 "script": self.script,
                 **({"prompt": self.prompt} if self.prompt else {}),
+                **({"offer": self.offer} if self.offer else {}),
+                **({"angle": self.angle} if self.angle else {}),
+                **({"family": self.family} if self.family else {}),
             }
         elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
@@ -376,6 +402,12 @@ def _directed(lead: str, render: VideoRender) -> str:
     )
 
 
+def _key(kind: str, key: Any, field_name: str) -> str:
+    """A catalogue key the request named, or ""; an unknown one is a 400."""
+    row = _pick(kind, key, field_name, required=False)
+    return row.key if row is not None else ""
+
+
 def _vertical() -> CreativeOption:
     aspect = CreativeOption.objects.filter(
         kind=CreativeKind.VIDEO_ASPECT, is_active=True, metadata__aspect=REEL_ASPECT
@@ -417,7 +449,8 @@ def _parse_template(
     length = common["length"]
     ad_templates.length_units(row, length.key)
     location = str(data.get("location") or "")
-    ad_templates.keyframe_prompt(row, product=product, location=location)  # 400 on a bad location
+    # 400 on a bad location, 404 on another brand's own place.
+    ad_templates.keyframe_prompt(row, product=product, location=location, workspace=workspace)
     # A template made only from the product's photos has no first frame to pick.
     source = (
         _media(workspace, data["source"])
@@ -426,17 +459,24 @@ def _parse_template(
     )
     assert product is not None
     script = ad_templates.script_parts(row, data.get("script"), product)
+    # A real offer and its end date, never a made-up one (S17-33).
+    offer = (
+        ad_templates.clean_offer(data.get("offer")) if row.metadata.get("needs") == "offer" else {}
+    )
     return Spec(
         **{
             **common,
             "text": common["text"] or "\n".join(text for text in script.values() if text),
         },
         script=script,
+        offer=offer,
+        angle=_key(CreativeKind.ANGLE, data.get("angle"), "angle"),
+        family=_key(CreativeKind.HOOK_FAMILY, data.get("family"), "family"),
         prompt=ad_templates.clean_prompt(workspace, data.get("prompt")),
         aspect=_vertical(),
         language=language,
         source=source,
-        role="start",
+        role=ad_templates.role_of(row),
         template=row,
         avatar=avatar,
         extra_avatars=people,
@@ -769,6 +809,7 @@ def start_render(
             avatar=spec.avatar,
             keyframe=keyframe,
             labels=disclosure.labels_for(spec.avatar),
+            seed=secrets.randbelow(SEED_RANGE),
         )
         if retry_of is not None:
             retry_of.review = VideoReview.RETRIED
@@ -827,6 +868,72 @@ def caption_cues(text: str, *, start: float, end: float) -> list[CaptionCue]:
     ]
 
 
+def beat_cues(script: dict[str, str], seconds: float) -> list[CaptionCue]:
+    """A template's hook, body and call to action as cues on their beats: the
+    hook from the first frame (the ad must read with the sound off), the call
+    to action over the close, the body between. An empty part is left out and
+    its time goes to its neighbour."""
+    edge = min(BEAT_EDGE_SECONDS, seconds / 3)
+    windows = {
+        "hook": (0.0, edge),
+        "body": (edge, seconds - edge),
+        "cta": (seconds - edge, seconds),
+    }
+    parts = [(part, str(script.get(part) or "").strip()) for part in ("hook", "body", "cta")]
+    kept = [(part, text) for part, text in parts if text]
+    cues: list[CaptionCue] = []
+    for index, (part, text) in enumerate(kept):
+        start = 0.0 if index == 0 else windows[part][0]
+        end = seconds if index == len(kept) - 1 else windows[kept[index + 1][0]][0]
+        cues.append(CaptionCue(text=text, start=round(start, 2), end=round(end, 2)))
+    return cues
+
+
+def _logo(workspace: Workspace) -> bytes | None:
+    """The workspace's logo file, or `None` when there is none, it cannot be
+    read, or it is favicon-sized — a stretched favicon is worse than no logo."""
+    if not workspace.logo:
+        return None
+    try:
+        with workspace.logo.open("rb") as handle:
+            content = bytes(handle.read())
+        with Image.open(io.BytesIO(content)) as picture:
+            width, height = picture.size
+    except (OSError, ValueError):
+        logger.warning("workspace %s: logo unreadable", workspace.pk, exc_info=True)
+        return None
+    if max(width, height) < LOGO_MIN_SIDE or width * height < LOGO_MIN_AREA:
+        return None
+    return content
+
+
+def brand_end_card(
+    workspace: Workspace, product: Product | None, *, title: str, call_to_action: str
+) -> EndCard:
+    """The end card in the brand's own colours (S17-26): the kit's primary as
+    the background and its accent for the call-to-action pill, the real logo,
+    the product's identity photo. Without a kit, the plain dark card."""
+    kit = kit_for(workspace)
+    colors = dict(kit.colors) if kit else {}
+    background = colors.get("Primary") or END_CARD_BACKGROUND
+    accent = colors.get("Accent") or colors.get("Highlight") or ""
+    if not accent or accent.upper() == background.upper():
+        # One colour only: a pill in the card's own colour would vanish.
+        accent = END_CARD_ACCENT if background != END_CARD_ACCENT else END_CARD_BACKGROUND
+    photos = identity_photos(product) if product is not None else []
+    photo = _bytes(photos[0]) if photos else None
+    return EndCard(
+        title=title,
+        call_to_action=call_to_action,
+        seconds=END_CARD_SECONDS,
+        background=background,
+        accent=accent,
+        logo=_logo(workspace),
+        # The product cut out of a plain background (S17-31), or its photo.
+        image=(graphics.cutout(photo) or photo) if photo is not None else None,
+    )
+
+
 def _end_card(render: VideoRender) -> EndCard:
     title = render.product.name if render.product else render.workspace.name
     cta_key = render.spec.get("cta") or ""
@@ -836,7 +943,7 @@ def _end_card(render: VideoRender) -> EndCard:
         else None
     )
     short = str((cta.metadata or {}).get("short") or cta.label) if cta else ""
-    return EndCard(title=title, call_to_action=short, seconds=END_CARD_SECONDS)
+    return brand_end_card(render.workspace, render.product, title=title, call_to_action=short)
 
 
 def _render_clip(render: VideoRender) -> VideoResult:
@@ -863,7 +970,7 @@ def _render_clip(render: VideoRender) -> VideoResult:
     ).first()
     image = _bytes(render.source)
     prompt = (
-        ad_templates.motion_prompt(template)
+        ad_templates.motion_prompt(template, seconds=float(render.spec["seconds"]))
         if template
         else (motion.prompt_fragment if motion else "")
     )
@@ -884,6 +991,12 @@ def _render_clip(render: VideoRender) -> VideoResult:
         render.rephrased_by = rewritten.by
         render.rephrased_prompt = "" if rewritten.by == rephrase.TEMPLATE else rewritten.text
         render.save(update_fields=["rephrased_prompt", "rephrased_by"])
+    if template is not None:
+        # The template's negative, after any rewrite, which may never drop it.
+        forbid = ad_templates.place_forbid(
+            template, str(render.spec.get("location") or ""), render.workspace
+        )
+        prompt = " ".join(filter(None, [prompt, ad_templates.avoid_line(template, forbid)]))
     _record_prompt(render, prompt)
     _advance(render, *PHASES[1])
     result: VideoResult = provider.animate(
@@ -892,8 +1005,35 @@ def _render_clip(render: VideoRender) -> VideoResult:
         prompt=prompt,
         aspect=str(aspect.metadata["aspect"]) if aspect else REEL_ASPECT,
         duration_seconds=float(render.spec["seconds"]),
+        seed=render.seed,
     )
+    if template is not None:
+        return _burn_in_beats(render, result)
     return result
+
+
+def _burn_in_beats(render: VideoRender, clip: VideoResult) -> VideoResult:
+    """A single-clip template's hook, body and call to action burned in on
+    their beats (S17-26), so the ad reads with the sound off. The clip keeps
+    its vendor, model and length; with no composer, or one that fails, the
+    clip goes out as it came — words are never worth a paid animation."""
+    composer = get_video_composer()
+    cues = beat_cues(dict(render.spec.get("script") or {}), float(render.spec["seconds"]))
+    if composer is None or not cues:
+        return clip
+    try:
+        burned = composer.caption(clip=clip.content, captions=cues, aspect=REEL_ASPECT)
+    except ProviderError:
+        logger.warning("render %s: beats not burned in", render.pk, exc_info=True)
+        return clip
+    return VideoResult(
+        content=burned.content,
+        mime=burned.mime,
+        duration_seconds=burned.duration_seconds,
+        provider=clip.provider,
+        model=clip.model,
+        latency_ms=clip.latency_ms + burned.latency_ms,
+    )
 
 
 def _record_prompt(render: VideoRender, prompt: str) -> None:
@@ -902,11 +1042,17 @@ def _record_prompt(render: VideoRender, prompt: str) -> None:
     render.save(update_fields=["prompt_sent"])
 
 
+#: Shots the video model animates; the others are stills, drawn or crisp.
+MOVING_USES = frozenset({"frame", "photo", "place"})
+
+
 def _render_template_reel(render: VideoRender, template: CreativeOption) -> VideoResult:
-    """A multi-shot template (T3): one clip per `frame` or `photo` shot, the
-    app screenshot set in as a still, a kinetic line on each, an end card —
-    cut by the composer into one file. One render, so one hold and one debit,
-    however many shots; any shot failing fails the whole render, unpaid."""
+    """A multi-shot template (T3): one clip per `frame`, `photo` or `place`
+    shot, the app screenshot set in as a still, the drawn shots (S17-33: text
+    cards, cutouts on a colour field, a photo grid, chat bubbles) made in code,
+    a line on each, a brand end card — cut by the composer into one file. One
+    render, so one hold and one debit, however many shots; any shot failing
+    fails the whole render, unpaid."""
     composer = get_video_composer()
     if composer is None:
         raise VideoUnavailableError
@@ -914,41 +1060,90 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
     product = render.product
     assert product is not None
     script = dict(render.spec.get("script") or {})
+    language = str(render.spec.get("language") or "en")
+    offer = dict(render.spec.get("offer") or {})
+    if offer.get("ends"):
+        offer["ends_label"] = ad_templates.ends_label(offer["ends"], language)
     tags = product.reference_tags or {}
-    photos = list(product.reference_images.order_by("id"))
+    photos = identity_photos(product)
     screens = [a for a in photos if tags.get(str(a.pk)) == ad_templates.SCREEN_TAG]
     plain = [a for a in photos if tags.get(str(a.pk)) != ad_templates.SCREEN_TAG] or photos
+    places = _own_places(render.workspace) if any(s["use"] == "place" for s in shots_meta) else []
     provider = None
-    if any(shot["use"] != "screen" for shot in shots_meta):
+    if any(shot["use"] in MOVING_USES for shot in shots_meta):
         provider = get_video_provider(workspace=render.workspace)
         if provider is None:
             raise VideoUnavailableError
     seconds = float(render.spec["seconds"])
-    card = EndCard(
+    card = brand_end_card(
+        render.workspace,
+        product,
         title=product.name,
         call_to_action=script.get("cta", "")[:OVERLAY_MAX],
-        seconds=END_CARD_SECONDS,
     )
     per_shot = round((seconds - card.seconds) / len(shots_meta), 2)
-    prompt = _directed(ad_templates.motion_prompt(template), render)
+    prompt = " ".join(
+        filter(
+            None,
+            [
+                _directed(ad_templates.motion_prompt(template), render),
+                ad_templates.avoid_line(
+                    template,
+                    ad_templates.place_forbid(
+                        template, str(render.spec.get("location") or ""), render.workspace
+                    ),
+                ),
+            ],
+        )
+    )
     _record_prompt(render, prompt)
     _advance(render, *PHASES[1])
     shots: list[ReelShot] = []
-    counts = {"photo": 0, "screen": 0}
+    counts = {"photo": 0, "screen": 0, "cutout": 0, "place": 0}
+
+    def take(pool: list[MediaAsset], use: str) -> MediaAsset:
+        if not pool:
+            raise VideoUnavailableError
+        picked = pool[counts[use] % len(pool)]
+        counts[use] += 1
+        return picked
+
     for shot in shots_meta:
         use = shot["use"]
+        line = ad_templates.shot_line(str(shot.get("text") or ""), product, script, offer)
+        overlay = line
         if use == "frame":
             assert render.source is not None
-            still = render.source
+            image = _bytes(render.source)
+        elif use == "card":
+            kicker = ad_templates.shot_line(str(shot.get("kicker") or ""), product, script, offer)
+            image = graphics.card(
+                line,
+                background=card.background,
+                kicker=ad_templates.kicker_text(kicker, language),
+                strike=bool(shot.get("strike")),
+            )
+            overlay = ""  # the words are drawn on the card
+        elif use == "cutout":
+            photo = _bytes(take(plain, "cutout"))
+            image = graphics.cutout_field(photo, background=graphics.field_colour(photo))
+        elif use == "grid":
+            image = graphics.mosaic([_bytes(p) for p in plain], background=card.background) or (
+                _bytes(plain[0])
+            )
+        elif use == "chat":
+            image = graphics.chat(
+                [(script.get("hook", ""), False), (script.get("body", ""), True)],
+                background="#F4F4F2",
+                accent=card.accent if card.accent != "#FFFFFF" else card.background,
+            )
+            overlay = ""
+        elif use == "place":
+            image = _bytes(take(places, "place"))
         else:
-            pool = screens if use == "screen" else plain
-            if not pool:
-                raise VideoUnavailableError
-            still = pool[counts[use] % len(pool)]
-            counts[use] += 1
-        image = _bytes(still)
+            image = _bytes(take(screens if use == "screen" else plain, use))
         clip = None
-        if use != "screen":
+        if use in MOVING_USES:
             assert provider is not None
             clip = provider.animate(
                 image=image,
@@ -957,19 +1152,35 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
                 aspect=REEL_ASPECT,
                 # The models' shortest clip; the composer trims it to the shot.
                 duration_seconds=float(max(5, -(-per_shot // 1))),
+                # One seed for every shot of the render, so they drift less.
+                seed=render.seed,
             ).content
-        line = ad_templates.shot_line(str(shot.get("text") or ""), product, script)
-        shots.append(ReelShot(image=image, seconds=per_shot, overlay=line[:OVERLAY_MAX], clip=clip))
+        shots.append(
+            ReelShot(image=image, seconds=per_shot, overlay=overlay[:OVERLAY_MAX], clip=clip)
+        )
     result: VideoResult = composer.compose(
         shots=shots,
         aspect=REEL_ASPECT,
-        transition="crossfade",
+        transition=str(template.metadata.get("transition") or "crossfade"),
         music=None,
         captions=[],
         end_card=card,
         duration_seconds=seconds,
     )
     return result
+
+
+def _own_places(workspace: Workspace) -> list[MediaAsset]:
+    """The brand's own place photos, oldest first (S17-28)."""
+    from brand.models import BrandPlace, PlaceSource
+
+    return [
+        place.media
+        for place in BrandPlace.objects.filter(
+            workspace=workspace, source=PlaceSource.UPLOAD, media__isnull=False
+        ).select_related("media")
+        if place.media is not None
+    ]
 
 
 def _render_reel(render: VideoRender) -> VideoResult:
@@ -1084,6 +1295,7 @@ def run_render(render_id: int) -> VideoRender:
             render, "quality_gate_failed", f"{check.rejected_reason} No credits were taken."
         )
 
+    render.checks = _measure(render, result)
     entitlements = entitlements_for(render.workspace)
     try:
         with transaction.atomic():
@@ -1111,6 +1323,7 @@ def run_render(render_id: int) -> VideoRender:
             locked.provider = render.provider
             locked.model = render.model
             locked.latency_ms = render.latency_ms
+            locked.checks = render.checks
             locked.finished_at = timezone.now()
             locked.save()
             return locked
@@ -1128,6 +1341,29 @@ def run_render(render_id: int) -> VideoRender:
             "insufficient_video_units",
             "There were not enough videos left when the render finished. Nothing was taken.",
         )
+
+
+def _measure(render: VideoRender, result: VideoResult) -> list[dict[str, Any]]:
+    """The advisory checks on the finished file (S17-35); [] when unmeasurable."""
+    from ai.models import QualityGateConfig
+
+    template = (
+        CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=render.template).first()
+        if render.template
+        else None
+    )
+    card = (template is not None and bool(ad_templates.shots_of(template))) or (
+        render.mode == VideoMode.REEL and bool(render.spec.get("end_card"))
+    )
+    photos = (
+        [_bytes(photo) for photo in identity_photos(render.product)[:3]] if render.product else []
+    )
+    return render_checks.inspect(
+        result.content,
+        end_card_seconds=END_CARD_SECONDS if card else 0.0,
+        product_photos=photos,
+        threshold=QualityGateConfig.get_solo().identity_similarity_threshold,
+    )
 
 
 def _make_keyframe(render: VideoRender) -> VideoRender | None:
