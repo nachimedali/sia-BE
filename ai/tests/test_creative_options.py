@@ -20,7 +20,7 @@ What these tests pin:
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -385,7 +385,7 @@ def _mean_chroma(content: bytes) -> tuple[float, float]:
     _y, cb, cr = Image.open(io.BytesIO(content)).convert("YCbCr").split()
 
     def mean(channel: Image.Image) -> float:
-        data = list(channel.getdata())
+        data = cast(list[int], list(channel.get_flattened_data()))
         return sum(data) / len(data)
 
     return mean(cb), mean(cr)

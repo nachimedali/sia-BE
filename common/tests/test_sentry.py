@@ -69,12 +69,17 @@ def test_the_check_command_refuses_without_a_dsn():
 @override_settings(SENTRY_DSN="https://key@o1.ingest.de.sentry.io/2")
 def test_the_check_command_sends_an_error_and_a_log():
     with (
-        mock.patch("common.observability.init_sentry", return_value=True),
+        # Patched where the command looks it up: patching `common.observability`
+        # left the real SDK running on this fake DSN for the rest of the suite.
+        mock.patch(
+            "common.management.commands.sentry_check.init_sentry", return_value=True
+        ) as init,
         mock.patch("sentry_sdk.capture_exception", return_value="evt-1") as capture,
         mock.patch("sentry_sdk.logger.error") as log,
         mock.patch("sentry_sdk.flush") as flush,
     ):
         call_command("sentry_check")
+    init.assert_called_once()
     assert isinstance(capture.call_args.args[0], ZeroDivisionError)
     log.assert_called_once()
     flush.assert_called_once()

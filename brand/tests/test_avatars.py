@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 from django.core.management import call_command
-from django.db import close_old_connections
+from django.db import connections
 from django.utils import timezone
 
 from billing.models import FeatureFlag
@@ -215,7 +215,6 @@ def test_twenty_racing_creates_against_a_cap_of_three_make_three(
     outcomes: list[str] = []
 
     def create(index: int) -> None:
-        close_old_connections()
         try:
             avatars.create_synthetic(
                 workspace, user=user, draft_id=draft.pk, index=index % 4, name=f"N{index}"
@@ -224,7 +223,7 @@ def test_twenty_racing_creates_against_a_cap_of_three_make_three(
         except avatars.AvatarLimitError:
             outcomes.append("refused")
         finally:
-            close_old_connections()
+            connections.close_all()
 
     threads = [threading.Thread(target=create, args=(i,)) for i in range(20)]
     for thread in threads:

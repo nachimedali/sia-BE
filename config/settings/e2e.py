@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 from .dev import *  # noqa: F403
-from .dev import BASE_DIR, DATABASES
+from .dev import BASE_DIR, DATABASES, SIMPLE_JWT
 
 # **Its own database, not the dev one.** The suite shares a Postgres server
 # with development, and pointing both at one database means a long-lived dev
@@ -38,12 +38,15 @@ SITE_URL = os.environ.get("E2E_SITE_URL", "http://127.0.0.1:3100")
 # Playwright drives every worker from 127.0.0.1, so the per-IP auth limits would
 # throttle the suite itself. The limiter is covered by its own backend tests
 # (accounts/tests/test_throttling.py) under time-machine, which is the right
-# place for it.
+# place for it. The refill matters as much as the capacity: at the production
+# rate (one sign-up every two minutes) one full run drains the 500 and the next
+# run's late specs stay stuck on /register.
+_E2E_THROTTLE = {"capacity": 500, "refill_per_second": 50}
 AUTH_THROTTLES = {
-    "auth:login": {"capacity": 500},
-    "auth:register": {"capacity": 500},
-    "auth:reset": {"capacity": 500},
-    "auth:resend": {"capacity": 500},
+    "auth:login": _E2E_THROTTLE,
+    "auth:register": _E2E_THROTTLE,
+    "auth:reset": _E2E_THROTTLE,
+    "auth:resend": _E2E_THROTTLE,
 }
 
 # Playwright never reaches an AI vendor, whatever keys the local `.env` holds.
@@ -64,3 +67,10 @@ USE_FAKE_PLATFORM_ADAPTER = True
 # and the frontend server it boots draws no widget (`playwright.config.ts`).
 USE_FAKE_CAPTCHA = True
 SENTRY_DSN = ""  # Playwright failures are expected, not incidents
+
+# Every "signed in" spec reuses the one session `e2e/auth.setup.ts` saved. A full
+# run outlasts the 15-minute access cookie, and with rotation the first spec to
+# refresh spends the shared refresh token and signs every later one out (they
+# land on /login, answering 200 where a 404 or 500 was asserted). Rotation is
+# covered by `accounts/tests/test_auth.py`; sign-out still blacklists explicitly.
+SIMPLE_JWT = {**SIMPLE_JWT, "ROTATE_REFRESH_TOKENS": False, "BLACKLIST_AFTER_ROTATION": False}

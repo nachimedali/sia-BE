@@ -297,7 +297,7 @@ def field_colour(photo: bytes) -> str:
             small = opened.convert("RGB").resize((16, 16))
     except (OSError, ValueError):
         return "#F4F4F2"
-    pixels = list(small.getdata())
+    pixels = cast(list[tuple[int, int, int]], list(small.get_flattened_data()))
     average = [sum(p[i] for p in pixels) // len(pixels) for i in range(3)]
     light = [int(c + (255 - c) * 0.72) for c in average]
     return "#{:02X}{:02X}{:02X}".format(*light)
