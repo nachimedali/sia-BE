@@ -201,6 +201,9 @@ def validate_metadata(meta: Any) -> None:
         errors["transition"] = f"One of {', '.join(TRANSITIONS)}."
     if not isinstance(meta.get("script_hint", ""), str):
         errors["script_hint"] = "Text."
+    for field in ("preview", "poster"):
+        if not isinstance(meta.get(field, ""), str):
+            errors[field] = "A path or URL."
     if not isinstance(meta.get("land", False), bool):
         errors["land"] = "true or false."
     if "capture" in meta and meta["capture"] not in CAPTURES:
@@ -456,6 +459,8 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "needs": meta.get("needs", ""),
                 "available": bool(meta.get("available", True)),
                 "premium": bool(meta.get("premium", False)),
+                "preview": str(meta.get("preview") or ""),
+                "poster": str(meta.get("poster") or ""),
                 "frame": has_frame(row),
                 "fit": fit_of(row, product, photo_ids=photo_ids),
                 "lock": lock,

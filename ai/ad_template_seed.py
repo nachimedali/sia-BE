@@ -474,6 +474,42 @@ _HIDDEN = frozenset(
         "car-chat",
     }
 )
+#: Templates with a preview clip and its first frame in the frontend's
+#: `public/studio/templates/` (S17-39): placeholders from `ad-templates/previews.md`
+#: until our own renders replace them (S17-17). `close-detail` waits for a redo:
+#: its first clip copied a real sneaker brand's look.
+PREVIEWS = frozenset(
+    {
+        "slow-unbox",
+        "gift-reveal",
+        "first-look",
+        "stair-unbox",
+        "doorstep-delivery",
+        "pour-shot",
+        "market-stroll",
+        "hand-turn",
+        "morning-ritual",
+        "bag-check",
+        "trail-test",
+        "street-carry",
+        "flat-lay",
+        "reaction-reveal",
+        "mirror-try-on",
+        "before-after",
+        "get-ready",
+        "seaside-wear",
+        "beach-day",
+        "swatch-test",
+        "floor-read",
+    }
+)
+
+
+def preview_of(key: str) -> dict[str, str]:
+    """The clip and first-frame paths a template with a preview carries."""
+    return {"preview": f"/studio/templates/{key}.mp4", "poster": f"/studio/templates/{key}.webp"}
+
+
 #: The one detail that kills each idea if lost (goose-skills `ideas.md` §2 E):
 #: sent with the first frame, word for word, and the first thing to check.
 _PROTECT: dict[str, str] = {
@@ -653,6 +689,7 @@ def _template(
             "goal": _GOAL_OVERRIDE.get(key, _GOAL_BY_CATEGORY[category]),
             "protect": _PROTECT[key],
             **({"hidden": True} if key in _HIDDEN else {}),
+            **(preview_of(key) if key in PREVIEWS else {}),
             # S17-31: filmed towards its first frame, which the clip ends on.
             **({"land": True} if land else {}),
             "negative": f"{_NEGATIVE}, {CAPTURES[capture]['avoid']}",

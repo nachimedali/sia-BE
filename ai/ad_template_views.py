@@ -83,6 +83,9 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     #: A premium template: in the plans with `ad_templates_premium`, or bought
     #: as the template pack.
     premium = serializers.BooleanField()
+    #: A short muted clip of the format and its first frame (S17-39), or blank.
+    preview = serializers.CharField(allow_blank=True)
+    poster = serializers.CharField(allow_blank=True)
     #: False when the template is made from the product's own photos (T3):
     #: there is no first frame to draw.
     frame = serializers.BooleanField()
