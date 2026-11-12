@@ -201,6 +201,37 @@ def _claims(value: Any, workspace_id: int | None, errors: dict[str, str]) -> lis
     return out
 
 
+#: The shots that show what the product *is*, best first (S17-26). A model
+#: given the front and the pack holds the label; one given a lifestyle shot
+#: first fuses its props onto the product.
+IDENTITY_SHOTS = ("front", "packaging", "side-back")
+#: Shots that carry other things — hands, rooms, a screen — go last.
+CONTEXT_SHOTS = ("in-use", "lifestyle", "screen")
+
+
+def identity_photos(product: Product) -> list[MediaAsset]:
+    """The product's reference photos, the ones that show it best first.
+
+    Tagged identity shots lead, untagged photos keep their upload order behind
+    them (most products are never tagged, and then nothing moves), detail
+    shots follow, and context shots close. An app's identity is its screen, so
+    for an `app` product the screenshot leads instead."""
+    tags = product.reference_tags or {}
+    lead = ("screen", *IDENTITY_SHOTS) if product.offer_kind == "app" else IDENTITY_SHOTS
+
+    def rank(photo: MediaAsset) -> tuple[int, int]:
+        tag = tags.get(str(photo.pk))
+        if tag in lead:
+            return (lead.index(tag), photo.pk)
+        if tag is None:
+            return (len(lead), photo.pk)
+        if tag in CONTEXT_SHOTS:
+            return (len(lead) + 2 + CONTEXT_SHOTS.index(tag), photo.pk)
+        return (len(lead) + 1, photo.pk)
+
+    return sorted(product.reference_images.all(), key=rank)
+
+
 def _reference_tags(value: Any, instance: Product | None, errors: dict[str, str]) -> dict[str, str]:
     if not isinstance(value, dict):
         errors["reference_tags"] = "Expected {media id: shot type}."

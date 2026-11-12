@@ -34,6 +34,7 @@ from ai.prompts.image_v1 import PROMPT_PREFIX as IMAGE_PROMPT_PREFIX
 from brand.services.kit import kit_for
 from brand.services.kit import prompt_lines as kit_prompt_lines
 from products import brief as product_brief
+from products.services import identity as product_identity
 
 if TYPE_CHECKING:
     from ai.models import VoiceProfile
@@ -272,6 +273,13 @@ def assemble_image_prompt(
         user_lines.append("\n".join(rules))
         grounding["references"] = True
     user_lines += _restriction_lines(product)
+
+    # The product identity card (S17-29): appended like the restrictions, so a
+    # rewrite of the brief never drops the label's words. Confirmed cards only.
+    card = product_identity.lines(product)
+    if card:
+        user_lines += card
+        grounding["identity"] = True
 
     # The brand kit (S1-06): appended here, after the rewrite, like the
     # restrictions — a rewrite of the brief never gets to drop the brand's colours.

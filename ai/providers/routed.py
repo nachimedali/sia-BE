@@ -169,6 +169,7 @@ class RoutedVideoProvider:
         model: str | None = None,
         resolution: str | None = None,
         audio: bool | None = None,
+        seed: int | None = None,
     ) -> Any:
         from ai.models import AITask
 
@@ -183,4 +184,5 @@ class RoutedVideoProvider:
             prompt=prompt,
             aspect=aspect,
             duration_seconds=duration_seconds,
+            seed=seed,
         )

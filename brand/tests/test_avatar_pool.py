@@ -19,7 +19,7 @@ import threading
 from typing import Any
 
 import pytest
-from django.db import close_old_connections
+from django.db import connections
 from django.utils import timezone
 from PIL import Image
 
@@ -291,13 +291,12 @@ def test_two_organizations_racing_for_one_set_get_it_once(
     reused: list[bool] = []
 
     def ask(brand: Any, owner: Any) -> None:
-        close_old_connections()
         try:
             made = avatars.start_draft(brand, user=owner, raw_traits=PLAIN)
             made.refresh_from_db()
             reused.append(made.reused)
         finally:
-            close_old_connections()
+            connections.close_all()
 
     threads = [threading.Thread(target=ask, args=racer) for racer in racers]
     for thread in threads:

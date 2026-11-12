@@ -53,6 +53,13 @@ SERVER_ROLES: dict[str, str] = {
         "build; do not change who they are. They are an invented or consenting brand "
         "presenter, not a public figure."
     ),
+    # Where an ad template is set (S17-28): the brand's own place, or the
+    # plate it keeps for a catalogue place.
+    "place": (
+        "Image {n} is the place. Set the scene exactly here: the same room, surfaces, "
+        "materials and light. Add only what the brief asks for, and copy no text, sign or "
+        "logo from it."
+    ),
     # A second or third product in an ad template (S17); the note names it.
     "product": (
         "Image {n} is another product in the scene. Show it exactly as pictured: same shape, "

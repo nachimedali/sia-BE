@@ -365,3 +365,98 @@ def test_the_image_provider_key_never_rides_in_the_url(settings: Any) -> None:
     client = _client()
     assert "secret-key" not in str(client.build_request("POST", "/models/m:generateContent").url)
     assert client.headers["x-goog-api-key"] == "secret-key"
+
+
+def test_every_image_attempt_keeps_its_picture_vendor_and_prompt(
+    workspace: Any, user: Any, product_with_reference_image: Any, generation_costs: Any
+) -> None:
+    """A rejected picture is never shown to the user, but staff must be able to
+    see what the gate refused and why (admin: Generation → quality checks)."""
+    generation = _image_generation(
+        workspace,
+        user,
+        product_with_reference_image,
+        prompt=f"an unrelated scene {FORCE_LOW_SIMILARITY_SENTINEL}",
+    )
+    run_generation(generation, n=1)
+
+    checks = list(generation.quality_checks.order_by("attempt"))
+    assert len(checks) == 3
+    assert not any(check.passed for check in checks)
+    for check in checks:
+        assert check.image and check.image.size > 0
+        assert (check.provider, check.model) != ("", "")
+        assert "an unrelated scene" in check.prompt_sent
+    # Not media in the brand's library: nothing to list, nothing counted.
+    assert generation.variants.count() == 0
+
+
+def test_a_text_attempt_stores_no_picture(
+    workspace: Any, user: Any, plans: Any, generation_costs: Any
+) -> None:
+    generation = _text_generation(_on_plan(workspace, plans, "pro"), user)
+    run_generation(generation, n=1)
+    assert all(not check.image for check in generation.quality_checks.all())
+
+
+def test_staff_see_each_attempt_and_the_product_photos_in_admin(
+    client: Any,
+    workspace: Any,
+    user: Any,
+    product_with_reference_image: Any,
+    generation_costs: Any,
+) -> None:
+    generation = _image_generation(
+        workspace,
+        user,
+        product_with_reference_image,
+        prompt=f"an unrelated scene {FORCE_LOW_SIMILARITY_SENTINEL}",
+    )
+    run_generation(generation, n=1)
+
+    from accounts.models import User
+
+    client.force_login(User.objects.create_superuser(email="staff@example.com", password="x"))
+    page = client.get(f"/admin/ai/generation/{generation.pk}/change/", follow=True)
+    assert page.status_code == 200
+    html = page.content.decode()
+    # Three refused attempts plus the product's one reference photo.
+    assert html.count("max-height:160px") == 4
+    assert "product_identity" in html
+
+
+def test_an_image_generation_keeps_the_prompt_even_when_the_vendor_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    workspace: Any,
+    user: Any,
+    product_with_reference_image: Any,
+    generation_costs: Any,
+) -> None:
+    """Saved before the call: a 402 from the vendor must not lose what was sent."""
+    from ai.providers.fake import _fake_image_provider
+    from common.exceptions import ProviderError
+
+    sent: list[str] = []
+
+    def refuse(**kwargs: Any) -> None:
+        sent.append(kwargs["prompt"])
+        raise ProviderError("Image provider returned 402.")
+
+    monkeypatch.setattr(_fake_image_provider, "generate", refuse)
+    generation = _image_generation(workspace, user, product_with_reference_image, prompt="a mug")
+    with pytest.raises(ProviderError):
+        run_generation(generation, n=1)
+
+    generation.refresh_from_db()
+    assert generation.prompt_sent == sent[0]
+    assert "a mug" in generation.prompt_sent
+
+
+def test_a_text_generation_keeps_system_and_user_prompt(
+    workspace: Any, user: Any, plans: Any, generation_costs: Any
+) -> None:
+    generation = _text_generation(_on_plan(workspace, plans, "pro"), user)
+    run_generation(generation, n=1)
+    generation.refresh_from_db()
+    assert generation.prompt_sent.startswith("SYSTEM:\n")
+    assert "\n\nUSER:\n" in generation.prompt_sent

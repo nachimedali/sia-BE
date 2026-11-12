@@ -50,6 +50,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
 
@@ -78,6 +79,7 @@ from billing.services.flags import STUDIO_REPHRASE, STUDIO_VARIANTS_V2, flag_ena
 from common.exceptions import InsufficientCredits, OCCSError, ProviderError
 from content.models import MediaAsset, MediaKind, MediaSource
 from content.services.media import ingest_media
+from products.brief import identity_photos
 from products.models import Product
 from products.services.guards import ensure_generation_ready
 from workspaces.models import Workspace
@@ -345,17 +347,24 @@ def _ensure_captionable(workspace: Workspace, asset: MediaAsset | None) -> None:
 
 
 def _reference_image_bytes(product: Product | None, *, cap: int | None = None) -> list[bytes]:
-    """The product's photos, in order, up to `cap` — the plan's
+    """The product's photos, the ones that show it best first
+    (`products.brief.identity_photos`), up to `cap` — the plan's
     `max_references` (S17) when that flag is on, so the same photos reach the
     model and the gate. `None` sends every photo, as before."""
     if product is None:
         return []
-    photos = product.reference_images.all()
+    photos = identity_photos(product)
     contents = []
     for asset in photos[:cap] if cap is not None else photos:
         with asset.file.open("rb") as handle:
             contents.append(handle.read())
     return contents
+
+
+def _record_prompt(generation: Generation, prompt: str) -> None:
+    """Saved before the provider call, so a vendor refusal keeps it too."""
+    generation.prompt_sent = prompt
+    generation.save(update_fields=["prompt_sent", "updated_at"])
 
 
 def _attempt_text(
@@ -375,6 +384,7 @@ def _attempt_text(
         mode=generation.mode,
         direction=creative_service.caption_lines(generation.creative),
     )
+    _record_prompt(generation, f"SYSTEM:\n{grounded.system}\n\nUSER:\n{grounded.user}")
     if from_image:
         assert source_media is not None
         # The one branch, and it is on *capability* rather than on mode name:
@@ -461,6 +471,7 @@ def _attempt_image(
     )
     restrictions = generation.product.restrictions if generation.product else []
 
+    _record_prompt(generation, grounded.user)
     result = provider.generate(
         prompt=grounded.user,
         reference_images=[
@@ -488,8 +499,18 @@ def _attempt_image(
         )
         for variant in result.variants
     ]
-    meta = {"provider": result.provider, "model": result.model}
+    meta = {"provider": result.provider, "model": result.model, "prompt": grounded.user}
     return checked, meta
+
+
+def _check_image(generation: Generation, attempt: int, index: int, candidate: Any) -> Any:
+    """The attempt's picture as a file for `QualityCheck.image`; blank for text."""
+    if not isinstance(candidate, ImageVariant):
+        return ""
+    extension = candidate.mime.split("/")[-1] or "png"
+    return ContentFile(
+        candidate.content, name=f"generation-{generation.pk}-a{attempt}-{index}.{extension}"
+    )
 
 
 def _persist_generated_image(generation: Generation, variant: ImageVariant) -> MediaAsset:
@@ -665,9 +686,13 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         _reference_image_bytes(
             generation.product, cap=ad_templates.references_cap(workspace, entitlements)
         )
-        if generation.kind == GenerationKind.IMAGE
+        if generation.kind == GenerationKind.IMAGE and generation.source_media_id is None
         else []
     )
+    if generation.kind == GenerationKind.IMAGE and generation.source_media is not None:
+        # A clean photo (S17-29): made from that one photo, and held to it.
+        with generation.source_media.file.open("rb") as handle:
+            reference_images = [handle.read()]
 
     # A composition's reference pictures, read once — never per attempt, and
     # never stored (`ai.services.references`).
@@ -707,17 +732,20 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
                 assets=assets,
             )
 
-        QualityCheck.objects.bulk_create(
-            QualityCheck(
+        for index, (candidate, check) in enumerate(attempt_results):
+            # One save each, not bulk_create: the picture is written to storage.
+            QualityCheck.objects.create(
                 generation=generation,
                 checks=check.checks,
                 identity_score=check.identity_score,
                 passed=check.passed,
                 attempt=attempt,
                 rejected_reason=check.rejected_reason,
+                image=_check_image(generation, attempt, index, candidate),
+                provider=meta.get("provider", ""),
+                model=meta.get("model", ""),
+                prompt_sent=meta.get("prompt", ""),
             )
-            for _candidate, check in attempt_results
-        )
 
         passing = [(candidate, check) for candidate, check in attempt_results if check.passed]
         if passing:

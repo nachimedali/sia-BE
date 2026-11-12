@@ -422,7 +422,10 @@ def test_a_reel_is_cut_with_overlays_music_captions_and_an_end_card(
     assert [shot["overlay"] for shot in call["shots"]] == ["Line 0", "Line 1", "Line 2", "Line 3"]
     # 13 s of shots and a 2 s end card.
     assert [shot["seconds"] for shot in call["shots"]] == [3.25] * 4
-    assert call["end_card"] == {"title": "First harvest EVOO", "cta": "Shop now", "seconds": 2.0}
+    card = call["end_card"]
+    assert (card["title"], card["cta"], card["seconds"]) == ("First harvest EVOO", "Shop now", 2.0)
+    # No brand kit applied: the plain dark card (the brand's own: test_template_finish).
+    assert (card["background"], card["logo"]) == ("#111111", False)
     # Burned-in captions are the post text, in five-word cards over the shots.
     assert call["captions"][0] == ["Cold pressed in Djerba from", 0.0, 4.33]
     assert call["captions"][-1][2] == 13.0
@@ -1090,3 +1093,41 @@ def test_a_sibling_brands_still_is_a_404_on_the_free_path(
     )
 
     assert response.status_code == 404
+
+
+def test_a_render_keeps_the_prompt_the_video_model_was_sent(
+    auth_client: Any, pro: Any, still: Any
+) -> None:
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+    render = VideoRender.objects.get(pk=body["id"])
+    assert render.prompt_sent == _fake_video_provider.calls[-1]
+
+
+def test_a_render_the_vendor_refuses_still_keeps_its_prompt(
+    auth_client: Any, pro: Any, still: Any, monkeypatch: Any
+) -> None:
+    sent: list[str] = []
+
+    def broken(**kwargs: Any) -> VideoResult:
+        sent.append(kwargs["prompt"])
+        raise ProviderError("vendor down")
+
+    monkeypatch.setattr(_fake_video_provider, "animate", broken)
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+
+    render = VideoRender.objects.get(pk=body["id"])
+    assert body["status"] == "FAILED"
+    assert render.prompt_sent and render.prompt_sent == sent[0]
+
+
+def test_staff_read_a_renders_prompt_in_admin(
+    auth_client: Any, pro: Any, still: Any, client: Any
+) -> None:
+    from accounts.models import User
+
+    body = auth_client.post(RENDERS, confirmed(auth_client, clip(still)), format="json").json()
+    render = VideoRender.objects.get(pk=body["id"])
+    client.force_login(User.objects.create_superuser(email="staff@example.com", password="x"))
+    page = client.get(f"/admin/ai/videorender/{render.pk}/change/", follow=True)
+    assert page.status_code == 200
+    assert render.prompt_sent.split()[0] in page.content.decode()

@@ -51,11 +51,24 @@ class AdTemplateScriptSerializer(serializers.Serializer[Any]):
     cta = serializers.CharField()
 
 
+class AdTemplateResultsSerializer(serializers.Serializer[Any]):
+    posts = serializers.IntegerField()
+    measured = serializers.IntegerField()
+    #: Median engagement rate of the measured posts; null when none was measured.
+    median_engagement = serializers.FloatField(allow_null=True)
+    #: At least eight measured posts: enough to go on.
+    enough = serializers.BooleanField()
+
+
 class AdTemplateSerializer(serializers.Serializer[Any]):
     key = serializers.CharField()
     label = serializers.CharField()  # type: ignore[assignment]
     description = serializers.CharField()
     category = serializers.CharField()
+    #: What the ad is for (S17-32): `sell`, `explain`, `show` or `trust`.
+    goal = serializers.CharField()
+    #: What it did for this brand (S17-37), or null before any post was sent.
+    results = AdTemplateResultsSerializer(allow_null=True)
     fits = serializers.ListField(child=serializers.CharField())
     person = serializers.ChoiceField(choices=list(ad_templates.PERSON))
     tier = serializers.ChoiceField(choices=list(ad_templates.TIER_FEATURE))
@@ -70,6 +83,9 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     #: A premium template: in the plans with `ad_templates_premium`, or bought
     #: as the template pack.
     premium = serializers.BooleanField()
+    #: A short muted clip of the format and its first frame (S17-39), or blank.
+    preview = serializers.CharField(allow_blank=True)
+    poster = serializers.CharField(allow_blank=True)
     #: False when the template is made from the product's own photos (T3):
     #: there is no first frame to draw.
     frame = serializers.BooleanField()
@@ -87,10 +103,40 @@ class AdTemplateOptionSerializer(serializers.Serializer[Any]):
     label = serializers.CharField()  # type: ignore[assignment]
 
 
+class AdTemplatePlaceSerializer(AdTemplateOptionSerializer):
+    #: The Studio still that pictures the place (S17-27); blank for a place
+    #: with no row.
+    image = serializers.CharField(allow_blank=True)
+
+
+class AdBriefOptionSerializer(AdTemplateOptionSerializer):
+    description = serializers.CharField(allow_blank=True)
+
+
+class AdAngleSerializer(AdBriefOptionSerializer):
+    #: What the viewer already knows: unaware, problem, solution, product, any.
+    stage = serializers.CharField()
+    #: The hook styles that suit it, best first.
+    families = serializers.ListField(child=serializers.CharField())
+
+
 class AdTemplateGallerySerializer(serializers.Serializer[Any]):
     templates = AdTemplateSerializer(many=True)
+    #: Up to three templates for this product, best first (S17-32).
+    recommended = serializers.ListField(child=serializers.CharField())
+    #: The goals the gallery filters by; the page names them.
+    goals = AdTemplateOptionSerializer(many=True)
     categories = AdTemplateOptionSerializer(many=True)
-    locations = AdTemplateOptionSerializer(many=True)
+    locations = AdTemplatePlaceSerializer(many=True)
+    #: The brand's own places (`own:<id>`), which every template can be set in.
+    own_places = AdTemplatePlaceSerializer(many=True)
+    #: Catalogue places this brand keeps a ready plate for.
+    kept = serializers.ListField(child=serializers.CharField())
+    #: Credits keeping one more place costs.
+    keep_credits = serializers.IntegerField()
+    #: S17-34: angles and hook styles the script writer can be asked for.
+    angles = AdAngleSerializer(many=True)
+    hook_families = AdBriefOptionSerializer(many=True)
     #: Model re-rolls allowed per ad on this plan.
     rerolls = serializers.IntegerField()
     #: How many avatars and products one ad may show, the main ones included.
@@ -225,6 +271,9 @@ class AdScriptRequestSerializer(serializers.Serializer[Any]):
     language = serializers.CharField(max_length=8, required=False, allow_blank=True, default="")
     #: The clip length, so the words fit it.
     seconds = serializers.IntegerField(required=False, min_value=0, max_value=60, default=0)
+    #: S17-34: what the ad argues and how its hook works (catalogue keys).
+    angle = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    family = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
 
 
 class AdScriptSerializer(serializers.Serializer[Any]):
@@ -235,6 +284,10 @@ class AdScriptSerializer(serializers.Serializer[Any]):
     #: own words came back (nothing charged).
     by = serializers.ChoiceField(choices=["model", "template"])
     credits = serializers.IntegerField()
+    #: The hook and up to two more, each in another style (S17-34): what
+    #: "Make 3" varies. `families` names their styles when one was asked for.
+    hooks = serializers.ListField(child=serializers.CharField())
+    families = serializers.ListField(child=serializers.CharField())
 
 
 class AdTemplateScriptView(APIView):
@@ -263,5 +316,7 @@ class AdTemplateScriptView(APIView):
             product=_product(request, data["product"]),
             language=data["language"],
             seconds=data["seconds"],
+            angle=data["angle"],
+            family=data["family"],
         )
         return Response(AdScriptSerializer(script).data)

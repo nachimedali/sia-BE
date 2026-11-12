@@ -226,6 +226,11 @@ class Avatar(models.Model):
     #: `avatar_trait` keys by group (`archetype`, `age`, `look`, `style`,
     #: `energy`) and a free note — what the portraits were drawn from.
     traits = models.JSONField(default=dict, blank=True)
+    #: The sentence every render describes this person with (S17-30), written
+    #: once from `traits` when the avatar is saved and never rewritten, so the
+    #: same person is asked for in every shot. Blank on avatars saved before it
+    #: existed, and on real people (described only by their photos).
+    identity = models.TextField(blank=True, default="")
     #: Content languages this person speaks (L-6: en, fr, it).
     languages = models.JSONField(default=list, blank=True)
     is_house = models.BooleanField(default=False)
@@ -349,3 +354,58 @@ class PooledPortrait(models.Model):
 
     def __str__(self) -> str:
         return f"pooled portrait {self.pk}"
+
+
+class PlaceSource(models.TextChoices):
+    #: A photo the brand took of its own place.
+    UPLOAD = "upload", "Photo of the brand's place"
+    #: A catalogue place made once for this brand (an image generation).
+    MADE = "made", "Kept catalogue place"
+
+
+class BrandPlace(models.Model):
+    """A place this brand's template ads are set in (S17-28).
+
+    `upload`: the brand's own shop, kitchen or salon, from its photo — any
+    template can be set there (`own:<id>`). `made`: a catalogue place
+    (`place_key`) drawn once as an empty set, no product and no people, and
+    attached to every first frame set in that place, so the same kitchen
+    appears in every ad. Its `media` is filled from the generation when that
+    passes (`brand.services.places.resolve`), never by a signal.
+
+    Deleting a place removes the row only: its picture is a `MediaAsset`,
+    which is immutable and stays where renders used it.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="places"
+    )
+    label = models.CharField(max_length=80)
+    source = models.CharField(max_length=10, choices=PlaceSource.choices)
+    #: The catalogue place a `made` plate pictures; blank for an upload.
+    place_key = models.SlugField(max_length=40, blank=True)
+    media = models.ForeignKey(
+        "content.MediaAsset", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    generation = models.ForeignKey(
+        "ai.Generation", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["created_at", "id"]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            # One kept plate per place and brand: two racing "keep" clicks
+            # collide here instead of paying twice.
+            models.UniqueConstraint(
+                fields=["workspace", "place_key"],
+                condition=models.Q(source="made"),
+                name="brand_place_one_kept_plate",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.source})"

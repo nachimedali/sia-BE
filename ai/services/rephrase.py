@@ -179,7 +179,12 @@ def acceptable(text: str, brief: str) -> bool:
     """A rewrite is used only if it is a sane length, carries no link, and every
     number in it was already in the brief — a model asked for a picture must not
     add a rating, a price or a count."""
-    if not MIN_CHARS <= len(text) <= MAX_CHARS or _LINK.search(text):
+    return MIN_CHARS <= len(text) <= MAX_CHARS and adds_nothing(text, brief)
+
+
+def adds_nothing(text: str, brief: str) -> bool:
+    """No link, and no number the brief did not already give."""
+    if _LINK.search(text):
         return False
     allowed = {_digits(n) for n in _NUMBER.findall(brief)}
     return all(_digits(n) in allowed for n in _NUMBER.findall(text))

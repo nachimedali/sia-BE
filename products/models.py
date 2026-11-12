@@ -138,6 +138,14 @@ class Product(models.Model):
     price_currency = models.CharField(max_length=3, default="TND")
     product_url = models.URLField(max_length=500, blank=True)
     short_description = models.CharField(max_length=160, blank=True)
+    #: Who buys it and when, in the buyer's words (S17-34): the script writer's
+    #: story and hook start here.
+    buyer_situation = models.CharField(max_length=200, blank=True)
+    #: What makes a buyer hesitate (S17-34): an ad can answer it.
+    top_objection = models.CharField(max_length=200, blank=True)
+    #: The brand's own customer reviews (S17-36): `[{quote, author, where,
+    #: consent}]`. Only a review given with consent is ever shown in an ad.
+    reviews = models.JSONField(default=list, blank=True)
     features = models.JSONField(default=list, blank=True)
     audience = models.JSONField(default=list, blank=True, help_text="`audience` option keys.")
     languages = models.JSONField(
@@ -171,6 +179,12 @@ class Product(models.Model):
     reference_tags = models.JSONField(
         default=dict, blank=True, help_text="{media id: shot_tag key} for reference_images."
     )
+    #: What the product looks like, in words (S17-29): `shape`, `colours`, the
+    #: label's exact words (`label`) and what must never change (`keep`).
+    #: Drafted by vision, corrected and confirmed by the person; only a
+    #: confirmed card is sent with the photos (`products.services.identity`).
+    identity = models.JSONField(default=dict, blank=True)
+    identity_confirmed_at = models.DateTimeField(null=True, blank=True)
 
     platform_plan = models.JSONField(
         default=dict, blank=True, help_text="{platform: {formats: [...], per_week: n}}"

@@ -100,6 +100,7 @@ from brand.avatar_views import (
     AvatarListView,
     AvatarRevokeView,
 )
+from brand.place_views import BrandPlaceDetailView, BrandPlaceKeepView, BrandPlaceListView
 from brand.views import (
     BrandCoreView,
     BrandImportApplyView,
@@ -309,6 +310,10 @@ urlpatterns = [
         "brand/imports/<int:pk>/apply/", BrandImportApplyView.as_view(), name="brand-import-apply"
     ),
     path("brand/core/", BrandCoreView.as_view(), name="brand-core"),
+    # --- places (S17-28); `{pk}` resolved inside the workspace, so 404 elsewhere ---
+    path("brand/places/", BrandPlaceListView.as_view(), name="brand-places"),
+    path("brand/places/keep/", BrandPlaceKeepView.as_view(), name="brand-place-keep"),
+    path("brand/places/<int:pk>/", BrandPlaceDetailView.as_view(), name="brand-place"),
     # --- avatars (S17); `{pk}` resolved inside the workspace, so 404 elsewhere ---
     path("brand/avatars/", AvatarListView.as_view(), name="brand-avatars"),
     path("brand/avatars/limits/", AvatarLimitsView.as_view(), name="brand-avatar-limits"),

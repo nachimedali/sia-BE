@@ -82,13 +82,16 @@ VIDEO_KINDS = frozenset(
 
 
 #: Kinds that are not Studio controls: the Motion step's own catalogue, a
-#: campaign plan's price lines (steps-plan S5), and S17's ad templates and
-#: avatar traits (the template gallery and the avatar library), each read by
-#: its own service.
+#: campaign plan's price lines (steps-plan S5), and S17's ad templates, avatar
+#: traits and template places (the template gallery and the avatar library),
+#: each read by its own service.
 SERVED_ELSEWHERE = VIDEO_KINDS | {
     CreativeKind.PLAN_PRICE,
     CreativeKind.AD_TEMPLATE,
     CreativeKind.AVATAR_TRAIT,
+    CreativeKind.PLACE,
+    CreativeKind.ANGLE,
+    CreativeKind.HOOK_FAMILY,
 }
 
 
@@ -243,9 +246,14 @@ def look_lines(creative: dict[str, Any]) -> list[str]:
 
 
 def keep_out_lines(creative: dict[str, Any]) -> list[str]:
-    """What must stay out of the frame — a rule, so never rewritten."""
+    """What must stay out of the frame — a rule, so never rewritten. `negative`
+    is an ad template's own (S17-26), set by the server, never by the brief."""
     avoid = (creative.get("avoid") or "").strip()
-    return [f"Keep out of the frame: {avoid}."] if avoid else []
+    negative = str(creative.get("negative") or "").strip()
+    return [
+        *([f"Keep out of the frame: {avoid}."] if avoid else []),
+        *([f"Avoid: {negative}."] if negative else []),
+    ]
 
 
 def caption_lines(creative: dict[str, Any]) -> list[str]:

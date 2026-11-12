@@ -20,7 +20,7 @@ What these tests pin:
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -108,7 +108,13 @@ FULL = {
 # -----------------------------------------------------------------------------
 def test_the_seed_covers_every_control_and_is_idempotent(seeded: None) -> None:
     kinds = set(CreativeOption.objects.values_list("kind", flat=True))
-    assert kinds == ALL_KINDS | VIDEO_KINDS | {"ad_template", "avatar_trait"}
+    assert kinds == ALL_KINDS | VIDEO_KINDS | {
+        "ad_template",
+        "avatar_trait",
+        "place",
+        "angle",
+        "hook_family",
+    }
 
     before = CreativeOption.objects.count()
     call_command("seed_creative_options", verbosity=0)
@@ -139,7 +145,16 @@ def test_every_row_has_text_and_an_icon_to_draw(seeded: None) -> None:
         # Quick tags, regeneration reasons and avatar traits are text chips
         # by design.
         for row in CreativeOption.objects.exclude(
-            kind__in=[CreativeKind.QUICK_TAG, CreativeKind.REVISE_REASON, CreativeKind.AVATAR_TRAIT]
+            kind__in=[
+                CreativeKind.QUICK_TAG,
+                CreativeKind.REVISE_REASON,
+                CreativeKind.AVATAR_TRAIT,
+                # Places are pictured by their still (`metadata.image`), not an icon.
+                CreativeKind.PLACE,
+                # Angles and hook styles are words the script writer reads.
+                CreativeKind.ANGLE,
+                CreativeKind.HOOK_FAMILY,
+            ]
         ).exclude(kind__in=PRODUCT_FORM_KINDS | VIDEO_KINDS)
         if not row.label or not row.icon_paths
     ]
@@ -370,7 +385,7 @@ def _mean_chroma(content: bytes) -> tuple[float, float]:
     _y, cb, cr = Image.open(io.BytesIO(content)).convert("YCbCr").split()
 
     def mean(channel: Image.Image) -> float:
-        data = list(channel.getdata())
+        data = cast(list[int], list(channel.get_flattened_data()))
         return sum(data) / len(data)
 
     return mean(cb), mean(cr)

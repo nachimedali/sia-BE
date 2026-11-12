@@ -224,6 +224,22 @@ class FakeTextProvider:
         """
         self.captions.append({"prompt": prompt, "image_bytes": image_bytes, "n": n, "model": model})
         fingerprint = hashlib.sha256(image_bytes).hexdigest()[:8]
+        if system.startswith("You describe a product's identity"):
+            # The product identity card (S17-29), in the four lines it asks for.
+            card = (
+                f"SHAPE: a tall bottle, photo {fingerprint}\n"
+                "COLOURS: dark green glass, cream label\n"
+                'LABEL: "SAMPLE", "500 ml"\n'
+                "KEEP: the label centred"
+            )
+            return TextGenerationResult(
+                variants=[TextVariant(body=card, rationale="fake identity card")],
+                provider="fake",
+                model=model or "fake-vision-1",
+                tokens_in=len(prompt.split()),
+                tokens_out=len(card.split()),
+                latency_ms=6,
+            )
         variants = [
             TextVariant(
                 body=f"{prompt.strip()} — caption {i + 1} of image {fingerprint}",
@@ -410,10 +426,11 @@ class FakeVideoProvider:
         model: str | None = None,
         resolution: str | None = None,
         audio: bool | None = None,
+        seed: int | None = None,
     ) -> VideoResult:
         self.calls.append(prompt)
         self.requests.append(
-            {"role": role, "model": model, "resolution": resolution, "audio": audio}
+            {"role": role, "model": model, "resolution": resolution, "audio": audio, "seed": seed}
         )
         manifest = {
             "kind": "clip",
@@ -492,6 +509,10 @@ class FakeVideoComposer:
                     "title": end_card.title,
                     "cta": end_card.call_to_action,
                     "seconds": end_card.seconds,
+                    "background": end_card.background,
+                    "accent": end_card.accent,
+                    "logo": end_card.logo is not None,
+                    "image": end_card.image is not None,
                 }
                 if end_card
                 else None
@@ -502,6 +523,25 @@ class FakeVideoComposer:
             content=_fake_mp4(manifest),
             mime="video/mp4",
             duration_seconds=duration_seconds,
+            provider="fake",
+            model="fake-composer-1",
+            latency_ms=1,
+        )
+
+    def caption(self, *, clip: bytes, captions: list[CaptionCue], aspect: str) -> VideoResult:
+        manifest = {
+            "kind": "caption",
+            "aspect": aspect,
+            "clip": hashlib.sha256(clip).hexdigest()[:16],
+            "captions": [[cue.text, cue.start, cue.end] for cue in captions],
+        }
+        self.calls.append(manifest)
+        return VideoResult(
+            content=_fake_mp4(manifest),
+            mime="video/mp4",
+            # The clip's own length, read back from the fake clip: a burn-in
+            # adds words, never seconds.
+            duration_seconds=float(read_fake_manifest(clip).get("seconds", 0.0)),
             provider="fake",
             model="fake-composer-1",
             latency_ms=1,

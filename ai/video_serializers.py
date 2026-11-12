@@ -84,6 +84,13 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
         child=serializers.IntegerField(), required=False, default=list, max_length=9
     )
     location = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    #: An offer template's real offer (S17-33): `{text, ends}`, ends an ISO date
+    #: that is not past. Checked by `ai.services.ad_templates.clean_offer`.
+    offer = serializers.JSONField(required=False, allow_null=True, default=None)
+    #: S17-37: the script's angle and hook style (catalogue keys), kept on the
+    #: render so its results can later be read by them.
+    angle = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+    family = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
     script = AdScriptSerializer(required=False, allow_null=True, default=None)
     #: The person's own direction for a template render (402 without the plan's
     #: `ad_prompt_edit`), added to the controls above.
@@ -133,6 +140,15 @@ class VideoStillSerializer(serializers.Serializer[Any]):
     text = serializers.CharField(allow_blank=True)
 
 
+class RenderCheckSerializer(serializers.Serializer[Any]):
+    #: `black`, `frozen`, `still_opening`, `silent_opening` or `likeness`.
+    code = serializers.CharField()
+    ok = serializers.BooleanField()
+    detail = serializers.CharField()
+    #: The likeness score, 0 to 1; absent for the other checks.
+    score = serializers.FloatField(required=False, allow_null=True)
+
+
 class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
     output = MediaAssetSerializer(read_only=True, allow_null=True)
     lines = VideoEstimateLineSerializer(many=True, read_only=True)
@@ -143,6 +159,8 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
     charged = serializers.SerializerMethodField()
     #: Units the video ledger took (S17); 0 before, on failure, and in credits.
     charged_units = serializers.SerializerMethodField()
+    #: What the machine measured on the finished file (S17-35), advisory.
+    checks = RenderCheckSerializer(many=True, read_only=True)
 
     class Meta:
         model = VideoRender
@@ -161,6 +179,7 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
             "avatar",
             "keyframe",
             "labels",
+            "checks",
             "lines",
             "render_s",
             "spec",

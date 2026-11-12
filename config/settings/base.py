@@ -247,6 +247,11 @@ SPECTACULAR_SETTINGS = {
         # (top-level and the nested per-post view); spectacular otherwise
         # can't tell the two `kind` enums apart and mangles the name.
         "MediaKindEnum": "content.models.MediaKind",
+        # A brand place's origin (S17-28): an upload or a kept catalogue place.
+        "BrandPlaceOriginEnum": "brand.models.PlaceSource",
+        # …which would otherwise push the invoices' `origin` (ours or Stripe's)
+        # off the name it has always had.
+        "OriginEnum": ["composevision", "stripe"],
         # The inbox's triage status and intent get stable names (S2) rather than
         # the hash-suffixed ones spectacular invents for a collision.
         "TriageStatusEnum": "inbox.models.TriageStatus",

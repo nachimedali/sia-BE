@@ -139,6 +139,9 @@ class Generation(models.Model):
     # and the brief went as written; both empty when it was never rephrased.
     rephrased_prompt = models.TextField(blank=True, default="")
     rephrased_by = models.CharField(max_length=64, blank=True, default="")
+    #: The final prompt as sent to the model (text: system and user), saved
+    #: before the call so a refused or failed run still shows what it asked.
+    prompt_sent = models.TextField(blank=True, default="")
     duration = models.PositiveIntegerField(null=True, blank=True)
     #: **Every Studio control, as the user set it** — scene, light, camera,
     #: who is in the frame, moods, palette, language, call to action, format,
@@ -342,6 +345,14 @@ class QualityCheck(models.Model):
     passed = models.BooleanField()
     attempt = models.PositiveSmallIntegerField()
     rejected_reason = models.CharField(max_length=200, blank=True)
+    #: What the gate was shown, kept for staff review in admin — passed or not.
+    #: Outside the media library on purpose: never listed, never counted
+    #: against the workspace's storage, never reachable from the API.
+    image = models.FileField(upload_to="quality-checks/%Y/%m/", blank=True)
+    #: Which vendor drew it: a fallback vendor can answer for some attempts only.
+    provider = models.CharField(max_length=64, blank=True)
+    model = models.CharField(max_length=128, blank=True)
+    prompt_sent = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -626,6 +637,13 @@ class CreativeKind(models.TextChoices):
     # validated on save (`ai.services.ad_templates.validate_metadata`).
     AD_TEMPLATE = "ad_template", "Video ad template"
     AVATAR_TRAIT = "avatar_trait", "Avatar trait"
+    # S17-27: where a template is set — the set, its light, where the product
+    # stands, what it must never show (`ai.ad_template_seed.PLACES`).
+    PLACE = "place", "Template place"
+    # S17-34: what an ad argues, and how its first second works — each row's
+    # `prompt_fragment` is the instruction the script writer reads.
+    ANGLE = "angle", "Ad angle"
+    HOOK_FAMILY = "hook_family", "Hook style"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing
@@ -779,6 +797,17 @@ class VideoRender(models.Model):
     # The motion brief as the text model rewrote it; see `Generation`.
     rephrased_prompt = models.TextField(blank=True, default="")
     rephrased_by = models.CharField(max_length=64, blank=True, default="")
+    #: The final prompt as sent to the video model, saved before the call so a
+    #: failed render still shows it. Empty for a reel cut with no model.
+    prompt_sent = models.TextField(blank=True, default="")
+    #: The seed sent with every shot of this render (S17-26), so a render can be
+    #: traced and made again from the same inputs. Vendors may ignore it;
+    #: `None` on renders made before seeds were kept.
+    seed = models.PositiveBigIntegerField(null=True, blank=True)
+    #: What the machine measured on the finished file (S17-35): black frames,
+    #: freezes, a still or silent opening, the product's likeness at the end —
+    #: `[{code, ok, detail, score?}]`, shown at review, never a refusal.
+    checks = models.JSONField(default=list, blank=True)
     #: The still a clip animates, or a reel's first shot: what the output is
     #: `derived_from`.
     source = models.ForeignKey(
