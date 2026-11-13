@@ -34,7 +34,7 @@ from content.models import (
     RecurrenceRule,
 )
 from content.services import recurrence, templates
-from content.services.posts import platform_options_of
+from content.services.posts import platform_options_of, post_formats_of
 from products.models import Product
 
 
@@ -144,6 +144,9 @@ class PostEditRequestSerializer(serializers.Serializer[Any]):
         child=serializers.ChoiceField(choices=Platform.choices), required=False
     )
     platform_options = serializers.DictField(child=serializers.DictField(), required=False)
+    #: Each platform's content type (`PostFormat`); which ones a platform offers
+    #: is checked by `edit_post`, keyed by platform like an option error.
+    post_formats = serializers.DictField(child=serializers.CharField(), required=False)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=200, default="")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -161,6 +164,8 @@ class PostEditRequestSerializer(serializers.Serializer[Any]):
         if unknown:
             raise serializers.ValidationError(f"Unknown platform: {', '.join(unknown)}.")
         return value
+
+    validate_post_formats = validate_platform_options
 
 
 class PostCancelRequestSerializer(serializers.Serializer[Any]):
@@ -273,6 +278,8 @@ class PostSerializer(serializers.ModelSerializer[Post]):
         read_only=True
     )
     platform_options = serializers.SerializerMethodField()
+    #: Each platform's chosen content type; a platform missing is a feed post.
+    post_formats = serializers.SerializerMethodField()
     #: S4 — the review queue's badge. Read from annotations the posts list and
     #: detail put on the same query (`checks.queries.annotate`), so a page of
     #: a hundred posts is badged without a hundred more requests. `verdict`
@@ -296,6 +303,9 @@ class PostSerializer(serializers.ModelSerializer[Post]):
 
     def get_platform_options(self, obj: Post) -> dict[str, dict[str, Any]]:
         return platform_options_of(obj)
+
+    def get_post_formats(self, obj: Post) -> dict[str, str]:
+        return post_formats_of(obj)
 
     def get_open_thread_count(self, obj: Post) -> int:
         annotated = getattr(obj, "open_threads", None)
@@ -335,6 +345,7 @@ class PostSerializer(serializers.ModelSerializer[Post]):
             "proposed_scheduled_at",
             "generation",
             "platform_options",
+            "post_formats",
             "checks",
             "created_at",
             "updated_at",
@@ -462,6 +473,10 @@ class PostPreviewRequestSerializer(serializers.Serializer[Any]):
     #: not the platform defaults.
     platform_options = serializers.DictField(
         child=serializers.DictField(), required=False, default=dict
+    )
+    #: platform → content type, for the same reason: the draft's, not the saved one.
+    post_formats = serializers.DictField(
+        child=serializers.CharField(), required=False, default=dict
     )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:

@@ -269,6 +269,7 @@ def render_payloads(
     platforms: Iterable[str],
     alt_text: Mapping[int, str] | None = None,
     options: Mapping[str, Mapping[str, Any]] | None = None,
+    post_formats: Mapping[str, str] | None = None,
     workspace: Any = None,
 ) -> dict[str, AdaptedPayload]:
     """The one mapping both `render_post` and `PostPreviewView` build — a
@@ -281,6 +282,7 @@ def render_payloads(
             platform=platform,
             alt_text=alt_text,
             options=per_platform.get(platform),
+            post_format=(post_formats or {}).get(platform, PostFormat.FEED),
             workspace=workspace,
         )
         for platform in platforms

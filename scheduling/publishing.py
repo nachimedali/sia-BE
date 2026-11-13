@@ -102,6 +102,8 @@ def build_targets(post: Post) -> list[PostTarget]:
             social_account=account,
             defaults={
                 "platform": account.platform,
+                # The rendered shape, so the row says what publish will send.
+                "post_format": payloads[account.platform].post_format,
                 "rendered_payload": payloads[account.platform].as_dict(),
                 "state": PostTargetState.PENDING,
                 "idempotency_key": str(uuid.uuid4()),

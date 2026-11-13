@@ -127,7 +127,26 @@ def test_instagram_options_nest_under_its_slug_and_formats_select_content_type()
 def test_a_reel_only_setting_is_not_sent_on_a_feed_post() -> None:
     body = _body("instagram", options={"share_to_feed": True})
 
-    assert "platform_data" not in body, "a feed post would answer with a dropped-key warning"
+    # A feed post would answer with a dropped-key warning.
+    assert body["platform_data"] == {"instagram": {"content_type": "feed"}}
+
+
+def test_every_instagram_post_names_its_content_type() -> None:
+    """SocialAPI refuses an Instagram post without one (post 1 on beta, 2026-11-13)."""
+    for post_format, content_type in [
+        ("FEED", "feed"),
+        ("CAROUSEL", "carousel"),
+        ("REEL", "reel"),
+        ("STORY", "stories"),
+    ]:
+        body = _body("instagram", post_format=post_format)
+        assert body["platform_data"]["instagram"]["content_type"] == content_type, post_format
+
+
+def test_a_tiktok_photo_post_says_photo() -> None:
+    body = _body("tiktok", post_format="CAROUSEL", options={"privacy_level": "SELF_ONLY"})
+
+    assert body["platform_data"]["tiktok"] == {"privacy_level": "SELF_ONLY", "media_type": "photo"}
 
 
 def test_facebook_reads_flat_keys_on_the_target() -> None:
@@ -158,6 +177,7 @@ def test_tiktok_turns_allow_into_disable() -> None:
         "privacy_level": "SELF_ONLY",
         "disable_comment": False,
         "disable_duet": True,
+        "media_type": "video",
     }
 
 

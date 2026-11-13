@@ -145,7 +145,10 @@ MAPPINGS: dict[str, PlatformMapping] = {
             "tagged_handles": (To("data.user_tags", _user_tags, formats=ALL_IMAGES),),
             "share_to_feed": (To("data.share_to_feed", bool, formats=REELS),),
         },
+        # Required on every Instagram post (checked live 2026-11-13: a feed post
+        # without it fails `POST /posts/validate`).
         formats={
+            PostFormat.FEED: ("content_type", "feed"),
             PostFormat.CAROUSEL: ("content_type", "carousel"),
             PostFormat.REEL: ("content_type", "reel"),
             PostFormat.STORY: ("content_type", "stories"),
@@ -207,6 +210,10 @@ MAPPINGS: dict[str, PlatformMapping] = {
             "privacy_level": (To("data.privacy_level"),),
             "allow_comments": (To("data.disable_comment", _negate),),
             "allow_duet": (To("data.disable_duet", _negate),),
+        },
+        formats={
+            PostFormat.FEED: ("media_type", "video"),
+            PostFormat.CAROUSEL: ("media_type", "photo"),
         },
     ),
     Platform.YOUTUBE: PlatformMapping(
