@@ -148,6 +148,26 @@ def test_real_text_provider_carries_the_bearer_token(
     assert text_transport[0].headers["authorization"] == "Bearer sk-test-123"
 
 
+def test_real_text_provider_sends_no_thinking_switch_by_default(
+    text_transport: list[httpx.Request],
+) -> None:
+    LLMTextProvider().generate(system="s", prompt="p", n=1)
+
+    assert "chat_template_kwargs" not in json.loads(text_transport[0].content)
+
+
+def test_real_text_provider_sends_the_thinking_switch_on_every_call(
+    text_transport: list[httpx.Request],
+) -> None:
+    provider = LLMTextProvider(thinking=False)
+    provider.generate(system="s", prompt="p", n=1)
+    provider.caption(system="s", prompt="p", image_bytes=b"png", n=1)
+    provider.classify_constraints(image_bytes=b"png", restrictions=["no hands in frame"])
+
+    sent = [json.loads(request.content)["chat_template_kwargs"] for request in text_transport]
+    assert sent == [{"enable_thinking": False}] * 3
+
+
 def test_real_text_provider_classify_constraints_reports_reply_verbatim(monkeypatch: Any) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_chat_completion("always show the handle"))

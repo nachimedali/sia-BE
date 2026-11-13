@@ -610,7 +610,7 @@ USE_FAKE_CAPTCHA = env.bool("USE_FAKE_CAPTCHA", default=not TURNSTILE_SECRET_KEY
 LLM_PROVIDER = env("LLM_PROVIDER", default="nvidia")
 LLM_BASE_URL = env("LLM_BASE_URL", default="https://integrate.api.nvidia.com/v1")
 LLM_API_KEY = env("LLM_API_KEY", default=env("NVIDIA_API_KEY", default=""))
-LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="meta/muse-glimmer-30b")
+LLM_DEFAULT_MODEL = env("LLM_DEFAULT_MODEL", default="minimaxai/minimax-m3.1-flash")
 LLM_TIMEOUT_SECONDS = env.int("LLM_TIMEOUT_SECONDS", default=30)
 # Whole-task ceiling for a Studio generation (all attempts, copy included): past
 # it the row is marked FAILED instead of staying PENDING.
