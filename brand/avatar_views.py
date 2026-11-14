@@ -76,6 +76,8 @@ class AvatarTraitSerializer(serializers.Serializer[Any]):
     key = serializers.CharField()
     label = serializers.CharField()  # type: ignore[assignment]
     group = serializers.CharField()
+    #: The Studio still that pictures the trait; blank when it has none.
+    image = serializers.CharField(allow_blank=True)
     values = serializers.DictField(child=serializers.CharField(), required=False)
 
 
@@ -220,6 +222,7 @@ class AvatarListView(APIView):
                             "key": row.key,
                             "label": row.label,
                             "group": (row.metadata or {}).get("group", ""),
+                            "image": str((row.metadata or {}).get("image") or ""),
                             **(
                                 {"values": row.metadata["values"]}
                                 if (row.metadata or {}).get("values")

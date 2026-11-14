@@ -118,6 +118,8 @@ class AdAngleSerializer(AdBriefOptionSerializer):
     stage = serializers.CharField()
     #: The hook styles that suit it, best first.
     families = serializers.ListField(child=serializers.CharField())
+    #: The Studio still that pictures it; blank when an operator removed it.
+    image = serializers.CharField(allow_blank=True)
 
 
 class AdTemplateGallerySerializer(serializers.Serializer[Any]):

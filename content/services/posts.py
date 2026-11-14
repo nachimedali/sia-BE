@@ -26,7 +26,7 @@ from content.models import (
 from content.services import options as option_rules
 from content.services import revisions
 from content.services.blocks import validate_document
-from content.services.rules import OPTIONS_SCHEMA_VERSION
+from content.services.rules import OPTIONS_SCHEMA_VERSION, formats_for
 from workspaces.models import Workspace
 from workspaces.services import approvals
 
@@ -315,6 +315,13 @@ def _write_options(post: Post, platform: str, cleaned: dict[str, Any]) -> PostTa
     return target
 
 
+def _write_format(post: Post, platform: str, post_format: str) -> None:
+    """The platform's content type, on the same settings target as its options."""
+    PostTarget.objects.update_or_create(
+        post=post, platform=platform, social_account=None, defaults={"post_format": post_format}
+    )
+
+
 def ensure_editable(post: Post) -> None:
     """Content may change: not locked, not gone or going, not cancelled."""
     approvals.ensure_unlocked(post)
@@ -336,6 +343,16 @@ def platform_options_of(post: Post) -> dict[str, dict[str, Any]]:
     }
 
 
+def post_formats_of(post: Post) -> dict[str, str]:
+    """Each platform's chosen content type, from the same settings targets. A
+    platform missing here is a feed post (`PostTarget.post_format`'s default)."""
+    return {
+        target.platform: target.post_format
+        for target in post.targets.all()
+        if target.social_account_id is None
+    }
+
+
 @transaction.atomic
 def edit_post(
     post: Post,
@@ -345,14 +362,16 @@ def edit_post(
     media: Sequence[tuple[MediaAsset, str]] | None = None,
     planned_platforms: Sequence[str] | None = None,
     platform_options: dict[str, dict[str, Any]] | None = None,
+    post_formats: dict[str, str] | None = None,
     reason: str = "edited",
 ) -> Post:
     """The post editor's save: everything staged, written as **one** revision.
 
     Body, media order, alt text per use, which platforms the post goes to, and
-    each platform's settings — validated together and applied together, so a
-    bad option refuses the whole save rather than leaving the body half
-    written. Each image's description is written with the media list itself.
+    each platform's settings and content type — validated together and applied
+    together, so a bad option refuses the whole save rather than leaving the
+    body half written. Each image's description is written with the media list
+    itself.
     """
     ensure_editable(post)
 
@@ -363,11 +382,19 @@ def edit_post(
             cleaned[platform] = option_rules.validate(platform, options, workspace=post.workspace)
         except option_rules.OptionError as exc:
             errors[platform] = exc.errors
+    for platform, post_format in (post_formats or {}).items():
+        offered = formats_for(platform)
+        if post_format not in offered:
+            errors.setdefault(platform, {})["post_format"] = (
+                f"Choose one of: {', '.join(offered)}." if offered else "Unknown platform."
+            )
     if errors:
         raise InvalidPlatformOptionsError(detail=errors)
 
     for platform, options in cleaned.items():
         _write_options(post, platform, options)
+    for platform, post_format in (post_formats or {}).items():
+        _write_format(post, platform, post_format)
 
     fields: dict[str, Any] = {}
     if master_body is not None:
@@ -414,6 +441,8 @@ def duplicate_post(post: Post, *, author: User) -> Post:
     )
     for platform, options in platform_options_of(post).items():
         _write_options(copy, platform, options)
+    for platform, post_format in post_formats_of(post).items():
+        _write_format(copy, platform, post_format)
     update_post(
         copy,
         author=author,

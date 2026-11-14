@@ -443,7 +443,9 @@ def kind_of(task: str) -> str:
 #: else is refused by `AIModelRoute.clean`, never ignored — an ignored setting
 #: is one an operator believes is in force.
 ROUTE_PARAMS: dict[str, dict[str, tuple[Any, ...]]] = {
-    AIKind.TEXT: {},
+    # `thinking`: a reasoning model's hidden reasoning, sent as the gateway's
+    # `chat_template_kwargs.enable_thinking`; off, an answer takes seconds, not tens.
+    AIKind.TEXT: {"thinking": (True, False)},
     AIKind.IMAGE: {"image_size": ("1K", "2K", "4K"), "batch": (True, False)},
     AIKind.VIDEO: {"resolution": ("480p", "720p", "1080p"), "audio": (True, False)},
 }

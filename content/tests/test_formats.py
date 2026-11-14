@@ -203,3 +203,27 @@ class TestTargetValidation:
         post = create_post(workspace=workspace, author=user, master_body="Hello")
 
         assert PostTarget(post=post, platform=Platform.INSTAGRAM).post_format == PostFormat.FEED
+
+
+def test_each_platform_offers_the_content_types_its_provider_publishes() -> None:
+    """SocialAPI's publishing pages, read 2026-11-13: what the composer offers
+    is what can actually go out, and `FEED` (a plain post) is always there."""
+    assert {platform: sorted(formats_for(platform)) for platform in PLATFORM_RULES} == {
+        Platform.INSTAGRAM: ["CAROUSEL", "FEED", "REEL", "STORY"],
+        Platform.FACEBOOK: ["FEED", "REEL", "STORY"],
+        Platform.TIKTOK: ["CAROUSEL", "FEED"],
+        Platform.YOUTUBE: ["FEED", "SHORT"],
+        Platform.LINKEDIN: ["CAROUSEL", "FEED"],
+        Platform.THREADS: ["FEED"],
+        Platform.X: ["FEED"],
+        Platform.PINTEREST: ["FEED"],
+        Platform.GOOGLE_BUSINESS: ["FEED"],
+    }
+
+
+def test_an_instagram_post_is_one_image_and_a_pin_never_a_video() -> None:
+    for platform in (Platform.INSTAGRAM, Platform.PINTEREST):
+        rule = format_rule(platform, PostFormat.FEED)
+        assert rule is not None
+        assert rule.allowed_media_kinds == {MediaKind.IMAGE}, platform
+    assert format_rule(Platform.INSTAGRAM, PostFormat.FEED).max_media == 1  # type: ignore[union-attr]

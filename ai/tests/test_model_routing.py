@@ -429,6 +429,30 @@ def test_a_parameter_value_outside_its_set_is_refused() -> None:
     assert "params" in errors
 
 
+def test_a_text_route_may_switch_thinking_on_or_off() -> None:
+    for value in (True, False):
+        AIModelRoute(
+            task=AITask.DIGEST,
+            provider=settings.LLM_PROVIDER,
+            model="m",
+            params={"thinking": value},
+        ).full_clean()
+    errors = _form_errors(
+        task=AITask.DIGEST, provider=settings.LLM_PROVIDER, model="m", params={"thinking": "off"}
+    )
+    assert "params" in errors
+
+
+def test_the_routes_thinking_switch_reaches_the_text_adapter(settings) -> None:
+    settings.USE_FAKE_AI_PROVIDERS = False
+    settings.USE_FAKE_TEXT_PROVIDER = False
+    _route(AITask.AD_SCRIPT, "writer", params={"thinking": False})
+
+    assert get_text_provider(AITask.AD_SCRIPT).inner.thinking is False
+    # No row, no switch: the vendor's own default stands.
+    assert get_text_provider(AITask.DIGEST).inner.thinking is None
+
+
 def test_a_fallback_equal_to_the_primary_is_refused() -> None:
     errors = _form_errors(
         task=AITask.DIGEST, provider=settings.LLM_PROVIDER, model="m", fallback_model="m"
@@ -518,11 +542,11 @@ def test_the_seed_never_overwrites_an_edit_unless_asked(plans) -> None:
 
     call_command("seed_model_routes", "--refresh", verbosity=0)
     route = AIModelRoute.objects.get(task=AITask.DIGEST)
-    assert route.model == "meta/muse-glimmer-30b"
+    assert route.model == "minimaxai/minimax-m3.1-flash"
     change = AIModelRouteChange.objects.get(route=route)
     assert (change.before["model"], change.after["model"]) == (
         "operator-choice",
-        "meta/muse-glimmer-30b",
+        "minimaxai/minimax-m3.1-flash",
     )
 
 

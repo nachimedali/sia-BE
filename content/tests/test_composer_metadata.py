@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from django.contrib.auth import get_user_model
 
-from content.models import Platform, PostTarget
+from content.models import Platform, PostFormat, PostTarget
 from content.services import options as option_rules
 from content.services.adaptation import render_post
 from content.services.media import ingest_media
@@ -293,6 +293,9 @@ def test_reordering_a_carousel_changes_what_publish_sends(
 
     second = ingest_media(workspace=workspace, upload=make_png_upload("b.png"))
     post = create_post(workspace=workspace, author=user, media_assets=[media_asset, second])
+    PostTarget.objects.create(
+        post=post, platform=Platform.INSTAGRAM, post_format=PostFormat.CAROUSEL
+    )
 
     before = render_post(post, [Platform.INSTAGRAM])[Platform.INSTAGRAM].as_dict()
     assert [item["id"] for item in before["media"]] == [media_asset.pk, second.pk]

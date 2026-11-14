@@ -49,7 +49,7 @@ def test_every_place_says_what_the_camera_sees_how_it_is_lit_and_what_it_forbids
         meta = place["metadata"]
         for field in ("set", "light", "zone", "forbid"):
             assert isinstance(meta[field], str) and meta[field].strip(), (place["key"], field)
-        assert meta["image"].startswith("/studio/scene/"), place["key"]
+        assert meta["image"] == f"/studio/places/{place['key']}.webp", place["key"]
         assert place["prompt_fragment"] == meta["set"]
         assert len(meta["set"]) <= 300, place["key"]
 

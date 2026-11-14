@@ -116,7 +116,12 @@ def _post(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _complete(
-    *, messages: list[dict[str, Any]], model: str, n: int, timeout: float | None = None
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    n: int,
+    timeout: float | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> TextGenerationResult:
     """Chat-completion calls, looped with n=1 until n variants are generated
     (ensuring compatibility with providers enforcing n=1). Parsed into the shape
@@ -129,7 +134,7 @@ def _complete(
 
     with _client(timeout) as client:
         while len(variants) < target_n:
-            payload = _post(client, {"model": model, "n": 1, "messages": messages})
+            payload = _post(client, {"model": model, "n": 1, "messages": messages, **(extra or {})})
             choices = payload.get("choices", [])
             for choice in choices:
                 body = choice.get("message", {}).get("content", "")
@@ -151,9 +156,14 @@ def _complete(
 
 
 class LLMTextProvider:
-    def __init__(self, timeout: float | None = None) -> None:
+    def __init__(self, timeout: float | None = None, thinking: bool | None = None) -> None:
         #: Seconds to wait for an answer; `None` is `LLM_TIMEOUT_SECONDS`.
         self.timeout = timeout
+        #: The route's `thinking` switch; `None` sends none, leaving the model's default.
+        self.thinking = thinking
+        self.extra: dict[str, Any] = (
+            {} if thinking is None else {"chat_template_kwargs": {"enable_thinking": thinking}}
+        )
 
     def generate(
         self, *, system: str, prompt: str, n: int, model: str | None = None
@@ -166,6 +176,7 @@ class LLMTextProvider:
             model=model or settings.LLM_DEFAULT_MODEL,
             n=n,
             timeout=self.timeout,
+            extra=self.extra,
         )
 
     def caption(
@@ -185,6 +196,7 @@ class LLMTextProvider:
             ],
             model=model or settings.LLM_DEFAULT_MODEL,
             n=n,
+            extra=self.extra,
         )
 
     def classify_constraints(
@@ -220,6 +232,7 @@ class LLMTextProvider:
                             ],
                         }
                     ],
+                    **self.extra,
                 },
             )
         content: str = payload["choices"][0]["message"]["content"]
@@ -237,15 +250,20 @@ def get_text_provider(task: str | None = None, *, workspace: Any = None) -> Any:
     names its task, which `ai/tests/test_model_routing.py` enforces. Without
     one it is the bare adapter, for tests and the eval harness.
     """
+    from ai.services.routing import resolve_for
+
+    route = resolve_for(task, workspace) if task is not None else None
     if uses_fake("TEXT"):
         from ai.providers.fake import _fake_text_provider
 
         inner: Any = _fake_text_provider
     else:
-        inner = LLMTextProvider(timeout=settings.LLM_TASK_TIMEOUT_SECONDS.get(str(task or "")))
-    if task is None:
+        inner = LLMTextProvider(
+            timeout=settings.LLM_TASK_TIMEOUT_SECONDS.get(str(task or "")),
+            thinking=route.params.get("thinking") if route is not None else None,
+        )
+    if route is None:
         return inner
     from ai.providers.routed import RoutedTextProvider
-    from ai.services.routing import resolve_for
 
-    return RoutedTextProvider(inner, resolve_for(task, workspace))
+    return RoutedTextProvider(inner, route)

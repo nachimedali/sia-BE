@@ -30,7 +30,8 @@ from ai.models import CreativeOption, Generation, GenerationKind, GenerationMode
 from ai.services.pipeline import create_generation, run_generation
 from billing.services.ledger import grant_credits
 from channels.models import SocialAccount
-from content.models import Post, PostRevision, PostStatus, PostTarget
+from content.models import Post, PostFormat, PostRevision, PostStatus, PostTarget
+from content.services.adaptation import render_post
 from content.services.media import ingest_media
 from content.services.posts import create_post, set_alt_text, set_platform_options, update_post
 from products.services.products import attach_reference_images, create_product
@@ -215,6 +216,37 @@ def test_an_edit_refuses_media_from_another_workspace(
     assert post.media_assets.filter(pk=theirs.pk).exists() is False
 
 
+def test_each_platform_keeps_its_content_type_a_feed_post_by_default(
+    auth_client: Any, post: Post
+) -> None:
+    assert auth_client.get(_url(post)).json()["post_formats"] == {}
+
+    response = auth_client.post(
+        _url(post, "edit"), {"post_formats": {"instagram": "CAROUSEL"}}, format="json"
+    )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["post_formats"] == {"instagram": "CAROUSEL"}
+    assert render_post(post, ["instagram"])["instagram"].post_format == "CAROUSEL"
+
+
+def test_a_content_type_the_platform_does_not_offer_refuses_the_save(
+    auth_client: Any, post: Post
+) -> None:
+    response = auth_client.post(
+        _url(post, "edit"),
+        {"master_body": "Should not land.", "post_formats": {"x": "REEL"}},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "invalid_platform_options"
+    assert "post_format" in error["detail"]["x"]
+    post.refresh_from_db()
+    assert post.master_body == "Pressed the same day."
+
+
 def test_an_unknown_planned_platform_is_a_400(auth_client: Any, post: Post) -> None:
     response = auth_client.post(
         _url(post, "edit"), {"planned_platforms": ["myspace"]}, format="json"
@@ -379,6 +411,7 @@ def test_duplicating_makes_a_draft_from_the_same_brief_and_media(
     assert a is not None
     set_alt_text(post, media_asset=a, alt_text="Described once.", author=user)
     set_platform_options(post, platform="instagram", options={"first_comment": "#x"}, author=user)
+    auth_client.post(_url(post, "edit"), {"post_formats": {"instagram": "CAROUSEL"}}, format="json")
     update_post(post, author=user, planned_platforms=["instagram"])
     post = _scheduled(post, auth_client, "REMINDER")
 
@@ -398,6 +431,7 @@ def test_duplicating_makes_a_draft_from_the_same_brief_and_media(
     assert copy["planned_platforms"] == ["instagram"]
     assert copy["platform_options"] == auth_client.get(_url(post)).json()["platform_options"]
     assert copy["platform_options"]["instagram"]["first_comment"] == "#x"
+    assert copy["post_formats"] == {"instagram": "CAROUSEL"}
 
 
 def test_a_cancelled_post_can_still_be_reproduced(auth_client: Any, post: Post) -> None:
@@ -421,6 +455,19 @@ def test_building_targets_honours_the_planned_platforms(paid_workspace: Any, use
 
     assert {t.platform for t in build_targets(planned)} == {"instagram"}
     assert {t.platform for t in build_targets(unplanned)} == {"instagram", "facebook"}
+
+
+def test_a_built_target_carries_the_chosen_content_type(paid_workspace: Any, user: Any) -> None:
+    SocialAccount.objects.create(
+        workspace=paid_workspace, platform="instagram", provider_account_id="acct-instagram"
+    )
+    post = create_post(workspace=paid_workspace, author=user, master_body="A reel")
+    PostTarget.objects.create(post=post, platform="instagram", post_format=PostFormat.REEL)
+
+    (target,) = build_targets(post)
+
+    assert target.post_format == PostFormat.REEL
+    assert target.rendered_payload["post_format"] == PostFormat.REEL
 
 
 # --- regenerate / apply-generation --------------------------------------------------------

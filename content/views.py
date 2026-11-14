@@ -391,6 +391,7 @@ class PostViewSet(
             platforms=platforms,
             alt_text={int(k): v for k, v in data.get("alt_text", {}).items()},
             options=data.get("platform_options") or {},
+            post_formats=data.get("post_formats") or {},
             workspace=workspace,
         )
         return Response({"payloads": {p: payload.as_dict() for p, payload in payloads.items()}})
@@ -566,6 +567,7 @@ class PostViewSet(
             media=None if media is None else [(m["media_asset"], m["alt_text"]) for m in media],
             planned_platforms=data.get("planned_platforms"),
             platform_options=data.get("platform_options"),
+            post_formats=data.get("post_formats"),
             reason=data["reason"] or "edited",
         )
         return Response(self.get_serializer(self.get_queryset().get(pk=post.pk)).data)

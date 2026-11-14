@@ -79,8 +79,8 @@ class FormatRule:
     """What one `(platform, format)` pair permits (P4-05).
 
     **The media constraints live here, not on the platform.** A platform-level
-    cap cannot say the thing that is actually true — a LinkedIn feed post takes
-    nine images and its document carousel takes one PDF — so a single number
+    cap cannot say the thing that is actually true — an Instagram post takes
+    one image and its carousel takes ten — so a single number
     forces every format to share the loosest of them, and the composer accepts
     a post the provider will reject at publish time, on the one path nobody is
     watching.
@@ -138,15 +138,20 @@ VERTICAL_UI = (0.14, 0.20)
 STILLS = frozenset({MediaKind.IMAGE})
 MOTION = frozenset({MediaKind.VIDEO})
 VISUAL = frozenset({MediaKind.IMAGE, MediaKind.VIDEO})
-DOCS = frozenset({MediaKind.DOCUMENT})
 
 
 PLATFORM_RULES: dict[str, PlatformRule] = {
     Platform.INSTAGRAM: PlatformRule(
         char_limit=2200,
         formats={
+            # One image: Instagram publishes a video as a Reel and 2+ items as a
+            # carousel, each its own `content_type` (SocialAPI docs, 2026-11-13).
             PostFormat.FEED: FormatRule(
-                max_media=10, allowed_media_kinds=VISUAL, aspect_range=FEED_RANGE, min_width=1080
+                max_media=1,
+                allowed_media_kinds=STILLS,
+                min_media=1,
+                aspect_range=FEED_RANGE,
+                min_width=1080,
             ),
             PostFormat.CAROUSEL: FormatRule(
                 max_media=10,
@@ -192,10 +197,8 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
             PostFormat.CAROUSEL: FormatRule(
                 max_media=9, allowed_media_kinds=STILLS, min_media=2, min_width=1080
             ),
-            # The document post. One file, and `DOCUMENT` is its own kind
-            # rather than an image: a PDF that validated as an image would be
-            # rejected by the provider after passing every check here.
-            PostFormat.PDF_CAROUSEL: FormatRule(max_media=1, allowed_media_kinds=DOCS, min_media=1),
+            # No document post: no publishing provider takes one (SocialAPI
+            # docs, 2026-11-13), so offering it would only fail at publish.
         },
         hashtag_placement="inline",
         supports_thread=False,
@@ -223,6 +226,10 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
                 min_media=1,
                 aspect_range=VERTICAL,
                 safe_zone=VERTICAL_UI,
+            ),
+            # The photo post: 1 to 35 images, its text a 90-character title.
+            PostFormat.CAROUSEL: FormatRule(
+                max_media=35, allowed_media_kinds=STILLS, min_media=1, char_limit=90
             ),
         },
         hashtag_placement="inline",
@@ -345,8 +352,9 @@ PLATFORM_RULES: dict[str, PlatformRule] = {
         formats={
             # A pin with no image is not a pin: on Pinterest the media *is*
             # the post and the text is its caption, which is what `min_media`
-            # says here and could not be said at platform level at all.
-            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=VISUAL, min_media=1),
+            # says here and could not be said at platform level at all. An image
+            # Pin only: the provider publishes no video Pin.
+            PostFormat.FEED: FormatRule(max_media=1, allowed_media_kinds=STILLS, min_media=1),
         },
         hashtag_placement="inline",
         supports_thread=False,

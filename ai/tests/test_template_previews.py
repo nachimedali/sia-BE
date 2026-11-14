@@ -4,7 +4,7 @@ A template row may name a short muted clip and its first frame, both static
 files the frontend serves (`/studio/templates/<key>.mp4|.webp`), the way a
 place row names its picture. The tile shows the still and plays the clip only
 when asked, so a gallery of dozens loads stills alone. A template with no clip
-yet serves blanks and keeps its drawn sketch.
+yet serves no clip and its own still (`test_option_images`).
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def test_a_preview_must_be_text() -> None:
         validate_metadata(meta)
 
 
-def test_the_gallery_serves_the_clip_or_blanks(
+def test_the_gallery_serves_the_clip_or_the_still(
     auth_client: Any,
     growth: Any,  # noqa: F811
     make_png_upload: Any,
@@ -68,7 +68,8 @@ def test_the_gallery_serves_the_clip_or_blanks(
     }
     assert rows["pour-shot"]["preview"] == "/studio/templates/pour-shot.mp4"
     assert rows["pour-shot"]["poster"] == "/studio/templates/pour-shot.webp"
-    assert rows["levitate"]["preview"] == "" and rows["levitate"]["poster"] == ""
+    assert rows["levitate"]["preview"] == ""
+    assert rows["levitate"]["poster"] == "/studio/templates/levitate.webp"
 
 
 # -----------------------------------------------------------------------------

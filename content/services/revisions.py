@@ -96,6 +96,7 @@ def snapshot_of(post: Post) -> dict[str, Any]:
                 "body_override": target.body_override,
                 "media_override": target.media_override,
                 "platform_options": target.platform_options,
+                "post_format": target.post_format,
             }
             for target in post.targets.order_by("platform")
         ],
@@ -257,11 +258,14 @@ def restore(post: Post, *, sequence: int, author: User | None = None) -> Post:
             target.body_override = item["body_override"]
             target.media_override = item["media_override"]
             target.platform_options = item["platform_options"]
+            # A revision taken before content types were recorded keeps today's.
+            target.post_format = item.get("post_format", target.post_format)
             target.save(
                 update_fields=[
                     "body_override",
                     "media_override",
                     "platform_options",
+                    "post_format",
                     "updated_at",
                 ]
             )

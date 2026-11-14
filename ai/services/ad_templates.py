@@ -499,6 +499,7 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "description": row.localized("description"),
                 "stage": str((row.metadata or {}).get("stage") or ""),
                 "families": list((row.metadata or {}).get("families") or []),
+                "image": str((row.metadata or {}).get("image") or ""),
             }
             for row in CreativeOption.objects.filter(kind=CreativeKind.ANGLE, is_active=True)
         ],

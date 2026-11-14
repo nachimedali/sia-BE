@@ -44,6 +44,7 @@ SEEDS = [
     "ai.migrations.0022_video_clip_credits",
     "ai.migrations.0024_spark_wan_routes",
     "ai.migrations.0028_discovery_routes",
+    "ai.migrations.0047_text_routes_2026_11",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -165,6 +166,22 @@ def test_discovery_never_moves_an_edited_order_or_route() -> None:
     assert Plan.objects.get(code="essential").sort_order == 40
     assert Plan.objects.get(code="discovery").display_name == "Edited"
     assert AIModelRoute.objects.get(task="video_start", plan__code="discovery").model == "edited"
+
+
+def test_text_routes_leave_the_dead_models_and_an_edited_route_stays() -> None:
+    """2026-11-12: the text models `0021` seeded stopped answering on the NVIDIA API."""
+    _run_all()
+    AIModelRoute.objects.filter(task="ad_script", plan=None).update(
+        model="meta/muse-glimmer-30b", fallback_model="deepseek-ai/deepseek-v4.1-flash", params={}
+    )
+    AIModelRoute.objects.filter(task="rephrase", plan=None).update(model="edited")
+
+    _run_all()
+
+    script = AIModelRoute.objects.get(task="ad_script", plan=None)
+    assert (script.model, script.params) == ("minimaxai/minimax-m3.1-flash", {"thinking": False})
+    assert script.changes.get().before["model"] == "meta/muse-glimmer-30b"
+    assert AIModelRoute.objects.get(task="rephrase", plan=None).model == "edited"
 
 
 def test_tnd_lands_off_sale_until_staff_set_a_rate_and_an_edit_survives() -> None:

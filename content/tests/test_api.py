@@ -327,6 +327,24 @@ def test_preview_returns_a_payload_per_requested_platform(
     assert payloads["instagram"]["hashtags"] == ["launch"]
 
 
+def test_preview_renders_the_drafts_content_type(
+    auth_client: Any, workspace: Any, media_asset: Any
+) -> None:
+    response = auth_client.post(
+        PREVIEW_URL,
+        {
+            "media_asset_ids": [media_asset.id],
+            "platforms": ["instagram", "facebook"],
+            "post_formats": {"instagram": "STORY"},
+        },
+        format="json",
+    )
+
+    payloads = response.json()["payloads"]
+    assert payloads["instagram"]["post_format"] == "STORY"
+    assert payloads["facebook"]["post_format"] == "FEED"
+
+
 def test_preview_defaults_to_the_workspace_platforms(auth_client: Any, workspace: Any) -> None:
     workspace.platforms = ["tiktok", "youtube"]
     workspace.save(update_fields=["platforms"])

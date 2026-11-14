@@ -83,14 +83,13 @@ def _place(
     light: str,
     zone: str,
     forbid: str,
-    image: str,
 ) -> dict[str, Any]:
     """A place a template is set in (S17-27, `studio_content_audit.md` §3.1).
 
     `set` is what the camera sees (never anything with readable text), `light`
     the one light it is locked to unless the person picks their own, `zone`
     where the product stands, `forbid` what the place must never show — added
-    to the negative. `image` is the Studio still that pictures it."""
+    to the negative. Its Studio still is `/studio/places/<key>.webp`."""
     return {
         "key": key,
         "label": label,
@@ -103,7 +102,7 @@ def _place(
             "light": light,
             "zone": zone,
             "forbid": forbid,
-            "image": f"/studio/scene/{image}.webp",
+            "image": f"/studio/places/{key}.webp",
             "seed": SEED_VERSION,
         },
     }
@@ -121,7 +120,6 @@ PLACES: list[dict[str, Any]] = [
         light="a large soft key light from the front left, gentle fill, no hard shadows",
         zone="on the plinth, centred, lower-middle of the frame, about a third of its height",
         forbid="no props, no text, no second product",
-        image="seamless-studio",
     ),
     _place(
         "brand-colour",
@@ -131,7 +129,6 @@ PLACES: list[dict[str, Any]] = [
         light="a soft studio key light from the front left and a thin rim light behind",
         zone="on the plinth, centred, lower-middle of the frame, about a third of its height",
         forbid="no props, no text, no second product",
-        image="colour-block",
     ),
     _place(
         "kitchen",
@@ -144,7 +141,6 @@ PLACES: list[dict[str, Any]] = [
         light="morning window light from the left, normal exposure",
         zone="on the front third of the counter, lower-middle of the frame",
         forbid="no readable packaging other than the product, no clocks or lit screens",
-        image="kitchen-counter",
     ),
     _place(
         "cafe-table",
@@ -154,7 +150,6 @@ PLACES: list[dict[str, Any]] = [
         light="daylight from a big window on the right",
         zone=_TABLETOP,
         forbid="no menus, no logos on cups, " + _NO_TEXT,
-        image="breakfast-table",
     ),
     _place(
         "terrace",
@@ -167,7 +162,6 @@ PLACES: list[dict[str, Any]] = [
         light="bright Mediterranean sun from the right, crisp soft-edged shadows",
         zone="on the table, front and centre",
         forbid="no menus, " + _NO_TEXT,
-        image="garden-terrace",
     ),
     _place(
         "rooftop",
@@ -180,7 +174,6 @@ PLACES: list[dict[str, Any]] = [
         light="low late-afternoon sun from the left, long soft shadows",
         zone="on the parapet ledge, lower-middle of the frame",
         forbid="no billboards, " + _NO_TEXT,
-        image="garden-terrace",
     ),
     _place(
         "seaside",
@@ -190,7 +183,6 @@ PLACES: list[dict[str, Any]] = [
         light="golden late-afternoon sun from the right",
         zone="on the stone wall, lower-middle of the frame",
         forbid="no boats with names, " + _NO_TEXT,
-        image="water-reflection",
     ),
     _place(
         "beach",
@@ -203,7 +195,6 @@ PLACES: list[dict[str, Any]] = [
         light="late-afternoon side light, the product in soft shade",
         zone="on the mat, lower-middle of the frame",
         forbid="no crowds, no branded umbrellas, " + _NO_TEXT,
-        image="beach-shoreline",
     ),
     _place(
         "picnic",
@@ -213,7 +204,6 @@ PLACES: list[dict[str, Any]] = [
         light="dappled afternoon sun through leaves",
         zone="on the blanket, front and centre",
         forbid="no crowds, no other brand's bottles, " + _NO_TEXT,
-        image="botanical-set",
     ),
     _place(
         "market",
@@ -226,7 +216,6 @@ PLACES: list[dict[str, Any]] = [
         light="a warm hanging lamp from the right, soft falloff",
         zone="on the cloth at the front of the stall",
         forbid="no crowds, at most one vendor's hands, no price tags, " + _NO_TEXT,
-        image="breakfast-table",
     ),
     _place(
         "shop-counter",
@@ -239,7 +228,6 @@ PLACES: list[dict[str, Any]] = [
         light="warm shop light from above and soft daylight from the door on the left",
         zone="on the counter, front and centre",
         forbid="no lit screens, no price labels, no shop names, " + _NO_TEXT,
-        image="breakfast-table",
     ),
     _place(
         "living-room",
@@ -249,7 +237,6 @@ PLACES: list[dict[str, Any]] = [
         light="warm lamp light from the right with soft window fill",
         zone="on the coffee table, lower-middle of the frame",
         forbid="no lit TV screen, no readable book covers, " + _NO_TEXT,
-        image="living-room",
     ),
     _place(
         "loft",
@@ -262,7 +249,6 @@ PLACES: list[dict[str, Any]] = [
         light="soft daylight from the high windows on the left",
         zone="on the rug or a low table, lower third of the frame",
         forbid="no lit screens, no posters, " + _NO_TEXT,
-        image="living-room",
     ),
     _place(
         "entryway",
@@ -275,7 +261,6 @@ PLACES: list[dict[str, Any]] = [
         light="daylight from the open door on the left",
         zone="on or beside the box, lower third of the frame",
         forbid="no shipping labels, no courier logos, " + _NO_TEXT,
-        image="living-room",
     ),
     _place(
         "bedside",
@@ -285,7 +270,6 @@ PLACES: list[dict[str, Any]] = [
         light="warm lamp light from the left, the room dim around it",
         zone="on the table beside the lamp",
         forbid="no lit phone screens, no readable book covers, " + _NO_TEXT,
-        image="living-room",
     ),
     _place(
         "bathroom-shelf",
@@ -295,7 +279,6 @@ PLACES: list[dict[str, Any]] = [
         light="soft daylight from a frosted window on the left",
         zone="on the shelf, front and centre",
         forbid="no other brand's bottles facing the camera, no mirror showing the camera",
-        image="bathroom-vanity",
     ),
     _place(
         "salon",
@@ -305,7 +288,6 @@ PLACES: list[dict[str, Any]] = [
         light="soft even light from bulbs around the mirror, no glare",
         zone="on the trolley or in hand, mid-frame",
         forbid="no reflection of the camera, no other product brands, " + _NO_TEXT,
-        image="bathroom-vanity",
     ),
     _place(
         "office",
@@ -315,7 +297,6 @@ PLACES: list[dict[str, Any]] = [
         light="daylight from the window on the left",
         zone="on the desk, front right, about a quarter of the frame height",
         forbid="no readable documents, no screen content, " + _NO_TEXT,
-        image="work-desk",
     ),
     _place(
         "workshop",
@@ -327,7 +308,6 @@ PLACES: list[dict[str, Any]] = [
         light="daylight from a side window on the left",
         zone="on the bench, front and centre",
         forbid="no power-tool brand logos, " + _NO_TEXT,
-        image="work-desk",
     ),
     _place(
         "gym",
@@ -337,7 +317,6 @@ PLACES: list[dict[str, Any]] = [
         light="daylight from the high windows, even fill",
         zone="on the bench or in hand, mid-frame",
         forbid="no machine brand logos, no lit screens, no mirror showing the camera",
-        image="colour-block",
     ),
     _place(
         "street",
@@ -350,7 +329,6 @@ PLACES: list[dict[str, Any]] = [
         light="early-morning side light from the left",
         zone="carried or held at chest height, mid-frame",
         forbid="no passers-by, no shop names, no cars with plates, " + _NO_TEXT,
-        image="city-street",
     ),
     _place(
         "trail",
@@ -360,7 +338,6 @@ PLACES: list[dict[str, Any]] = [
         light="soft overcast daylight, even and natural",
         zone="held in hand or on a flat rock, mid-frame",
         forbid="no other hikers, no signposts, " + _NO_TEXT,
-        image="desert-dunes",
     ),
     _place(
         "car-interior",
@@ -370,7 +347,6 @@ PLACES: list[dict[str, Any]] = [
         light="soft daylight through the windscreen",
         zone="held at chest height or on the passenger seat",
         forbid="no car brand badges, no lit screens, no number plates, " + _NO_TEXT,
-        image="city-street",
     ),
 ]
 
@@ -505,9 +481,14 @@ PREVIEWS = frozenset(
 )
 
 
+def still_of(key: str) -> str:
+    """A template's still: its clip's first frame, or its picture when it has no clip."""
+    return f"/studio/templates/{key}.webp"
+
+
 def preview_of(key: str) -> dict[str, str]:
     """The clip and first-frame paths a template with a preview carries."""
-    return {"preview": f"/studio/templates/{key}.mp4", "poster": f"/studio/templates/{key}.webp"}
+    return {"preview": f"/studio/templates/{key}.mp4", "poster": still_of(key)}
 
 
 #: The one detail that kills each idea if lost (goose-skills `ideas.md` §2 E):
@@ -689,7 +670,7 @@ def _template(
             "goal": _GOAL_OVERRIDE.get(key, _GOAL_BY_CATEGORY[category]),
             "protect": _PROTECT[key],
             **({"hidden": True} if key in _HIDDEN else {}),
-            **(preview_of(key) if key in PREVIEWS else {}),
+            **(preview_of(key) if key in PREVIEWS else {"poster": still_of(key)}),
             # S17-31: filmed towards its first frame, which the clip ends on.
             **({"land": True} if land else {}),
             "negative": f"{_NEGATIVE}, {CAPTURES[capture]['avoid']}",
@@ -2126,7 +2107,12 @@ def _trait(
         "colors": [],
         "prompt_fragment": fragment,
         "sort_order": sort,
-        "metadata": {"group": group, **extra, "seed": SEED_VERSION},
+        "metadata": {
+            "group": group,
+            "image": f"/studio/avatar/{key}.webp",
+            **extra,
+            "seed": SEED_VERSION,
+        },
     }
 
 
@@ -2422,10 +2408,15 @@ HOOK_FAMILIES: list[dict[str, Any]] = [
     ),
 ]
 
+
+def _angle(key: str, label: str, description: str, guidance: str, **meta: Any) -> dict[str, Any]:
+    return _brief_row(key, label, description, guidance, image=f"/studio/angles/{key}.webp", **meta)
+
+
 #: What the ad argues, by what the viewer already knows (goose-skills
 #: `hook-families.md`, sales `storytelling`); each with the styles that suit it.
 ANGLES: list[dict[str, Any]] = [
-    _brief_row(
+    _angle(
         "story",
         "Story",
         "A moment, a snag, a way through",
@@ -2434,7 +2425,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="unaware",
         families=["relatable-moment", "cold-open", "reveal"],
     ),
-    _brief_row(
+    _angle(
         "desire",
         "Desire",
         "The pleasure of using it",
@@ -2442,7 +2433,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="unaware",
         families=["visual-only", "demo-first", "relatable-moment"],
     ),
-    _brief_row(
+    _angle(
         "problem-fix",
         "Problem, then fix",
         "The problem in the buyer's words",
@@ -2450,7 +2441,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="problem",
         families=["relatable-moment", "call-out", "mistake"],
     ),
-    _brief_row(
+    _angle(
         "demo",
         "Demo",
         "Watch it do the job",
@@ -2458,7 +2449,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="solution",
         families=["demo-first", "result-first", "list"],
     ),
-    _brief_row(
+    _angle(
         "how-it-works",
         "How it works",
         "One step at a time",
@@ -2466,7 +2457,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="solution",
         families=["list", "question", "demo-first"],
     ),
-    _brief_row(
+    _angle(
         "old-vs-new",
         "Old way, new way",
         "The usual way beside this one",
@@ -2474,7 +2465,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="solution",
         families=["old-vs-new", "category-complaint", "contrarian"],
     ),
-    _brief_row(
+    _angle(
         "proof",
         "Proof",
         "One true proof",
@@ -2482,7 +2473,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="product",
         families=["number", "result-first", "demo-first"],
     ),
-    _brief_row(
+    _angle(
         "objection",
         "Answer an objection",
         "What makes them hesitate, answered",
@@ -2490,7 +2481,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="product",
         families=["question", "contrarian", "call-out"],
     ),
-    _brief_row(
+    _angle(
         "offer",
         "Offer",
         "The real offer and when it ends",
@@ -2498,7 +2489,7 @@ ANGLES: list[dict[str, Any]] = [
         stage="product",
         families=["number", "cold-open", "call-out"],
     ),
-    _brief_row(
+    _angle(
         "news",
         "News",
         "What is new",

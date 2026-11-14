@@ -9,6 +9,10 @@ hosted free list, Google's Gemini API price page, OpenRouter's
 `/api/v1/videos/models`. The providers are the labels this deployment's ports
 answer to (`LLM_PROVIDER`, `IMAGE_PROVIDER`, `VIDEO_PROVIDER`); a route for a
 provider the deployment does not point at is skipped, never sent.
+
+Text re-chosen 2026-11-12, probed on the beta key: `muse-glimmer-30b` answered
+404 and `llama-3.2-11b-vision` 410, while the deepseek and gemma fallbacks timed
+out. Every text row runs with `thinking` off: reasoning cost 20-36 s an answer.
 """
 
 from __future__ import annotations
@@ -23,11 +27,12 @@ VIDEO = "openrouter"
 #: migration and by `seed_model_routes`, so the two cannot disagree.
 FIELDS = ("provider", "model", "fallback_model", "params", "note")
 
-GLIMMER = "meta/muse-glimmer-30b"
+WRITER = "minimaxai/minimax-m3.1-flash"
 LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b"
-TEXT_FALLBACK = "deepseek-ai/deepseek-v4.1-flash"
-VISION_FALLBACK = "meta/llama-3.2-11b-vision-instruct"
-BULK_FALLBACK = "google/gemma-4-31b-it"
+VISION = "nvidia/nemotron-3.5-super-vl-120b-a12b"
+VISION_FALLBACK = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+BULK_FALLBACK = "nvidia/nemotron-3.5-bolt-e4b"
+NO_THINKING = {"thinking": False}
 
 NANO_BANANA_21 = "gemini-nano-banana-2.1"
 NANO_BANANA_2 = "gemini-3.1-flash-image"
@@ -61,7 +66,14 @@ def _route(
 ROUTES: list[dict[str, Any]] = [
     # --- text: NVIDIA hosted API (audit §3) --------------------------------
     *(
-        _route(task, TEXT, GLIMMER, fallback=TEXT_FALLBACK, note="Writing: vision-capable 30B.")
+        _route(
+            task,
+            TEXT,
+            WRITER,
+            fallback=LIGHTNING,
+            params=NO_THINKING,
+            note="Writing: a fallback from another family, so one outage is not both.",
+        )
         for task in (
             "studio_text",
             "image_copy",
@@ -75,15 +87,17 @@ ROUTES: list[dict[str, Any]] = [
     _route(
         "caption_from_image",
         TEXT,
-        GLIMMER,
+        VISION,
         fallback=VISION_FALLBACK,
+        params=NO_THINKING,
         note="Vision: the image is attached, so the fallback must see images too.",
     ),
     _route(
         "constraint_check",
         TEXT,
-        GLIMMER,
+        VISION,
         fallback=VISION_FALLBACK,
+        params=NO_THINKING,
         note="Vision: one call per image variant.",
     ),
     *(
@@ -92,6 +106,7 @@ ROUTES: list[dict[str, Any]] = [
             TEXT,
             LIGHTNING,
             fallback=BULK_FALLBACK,
+            params=NO_THINKING,
             note="Bulk: ~3B active parameters, light on the shared 40/min budget.",
         )
         for task in ("sentiment", "inbox_coding", "rephrase")
