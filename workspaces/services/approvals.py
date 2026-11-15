@@ -480,6 +480,7 @@ def _finalise_approval(post: Post, *, scheduler: User | None) -> Post:
     Imported inside the function: `scheduling.services` imports this module for
     the approval gate, so a module-level import would be a cycle.
     """
+    from scheduling.publishing import MediaDoesNotFitError
     from scheduling.services import schedule_post
 
     post.status = PostStatus.APPROVED
@@ -507,10 +508,21 @@ def _finalise_approval(post: Post, *, scheduler: User | None) -> Post:
         and post.proposed_scheduled_at > timezone.now()
     ):
         mode, when = post.proposed_delivery_mode, post.proposed_scheduled_at
-        post.proposed_delivery_mode = ""
-        post.proposed_scheduled_at = None
-        post.save(update_fields=["proposed_delivery_mode", "proposed_scheduled_at", "updated_at"])
-        post = schedule_post(post=post, delivery_mode=mode, scheduled_at=when, actor=scheduler)
+        try:
+            with transaction.atomic():
+                post.proposed_delivery_mode = ""
+                post.proposed_scheduled_at = None
+                post.save(
+                    update_fields=["proposed_delivery_mode", "proposed_scheduled_at", "updated_at"]
+                )
+                post = schedule_post(
+                    post=post, delivery_mode=mode, scheduled_at=when, actor=scheduler
+                )
+        except MediaDoesNotFitError:
+            # The approval stands; its media makes no post on a platform it goes
+            # to, so the proposal is left for the author, whose schedule card
+            # says which platform and why, the same shape as a stale proposal.
+            post.refresh_from_db()
     return post
 
 

@@ -22,6 +22,7 @@ from content.services.options import validate as validate_options
 from content.services.posts import create_post
 from content.services.rules import PLATFORM_RULES, options_for
 from scheduling.services import schedule_post
+from scheduling.tests.media import an_image
 from social_providers.socialapi.publish_fields import (
     MAPPINGS,
     To,
@@ -285,7 +286,10 @@ def test_preview_and_publish_send_the_same_body(
     auth_client: Any, paid_workspace: Any, user: Any, social_account: Any
 ) -> None:
     post = create_post(
-        workspace=paid_workspace, author=user, master_body="Handmade in Lisbon #ceramics"
+        workspace=paid_workspace,
+        author=user,
+        master_body="Handmade in Lisbon #ceramics",
+        media_assets=[an_image(paid_workspace)],
     )
     schedule_post(
         post=post,

@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from content.models import PostStatus
 from content.services.posts import create_post
+from scheduling.tests.media import an_image
 from workspaces.models import ApprovalAction, ApprovalStage, Membership, Role
 from workspaces.services import approvals
 
@@ -42,7 +43,10 @@ def chain(advanced_workspace: Any) -> Any:
 @pytest.fixture
 def draft(advanced_workspace: Any, contributor_user: Any) -> Any:
     return create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="New drop",
+        media_assets=[an_image(advanced_workspace)],
     )
 
 
@@ -406,6 +410,27 @@ def test_the_proposed_time_is_scheduled_when_the_last_stage_clears(
     # Consumed, so a later re-approval cannot silently reschedule it again.
     assert post.proposed_delivery_mode == ""
     assert post.proposed_scheduled_at is None
+
+
+def test_an_approved_post_whose_media_cannot_publish_keeps_its_proposal(
+    chain: Any, contributor_user: Any, admin_user: Any, advanced_social_account: Any
+) -> None:
+    """The approval is not undone by the media: the post is approved, nothing
+    is scheduled, and the proposed time waits for the author to fix it."""
+    _stage(chain, order=1, name="Brand lead")
+    when = timezone.now() + dt.timedelta(days=1)
+    text_only = create_post(
+        workspace=chain.workspace, author=contributor_user, master_body="No picture"
+    )
+    post = approvals.submit_for_review(
+        text_only, actor=contributor_user, delivery_mode="AUTO_PUBLISH", scheduled_at=when
+    )
+
+    post = approvals.approve(post, actor=admin_user)
+
+    assert post.status == PostStatus.APPROVED
+    assert post.scheduled_at is None
+    assert post.proposed_scheduled_at == when
 
 
 def test_a_stale_proposal_is_not_silently_scheduled_when_a_slow_chain_finally_clears(

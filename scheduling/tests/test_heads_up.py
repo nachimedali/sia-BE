@@ -22,6 +22,7 @@ from content.models import Post, PostStatus
 from content.services.posts import create_post
 from scheduling import heads_up, tasks
 from scheduling.services import schedule_post
+from scheduling.tests.media import an_image
 
 pytestmark = pytest.mark.django_db
 
@@ -30,7 +31,11 @@ NOW = dt.datetime(2026, 10, 12, 9, 0, tzinfo=dt.UTC)
 
 def _scheduled(workspace: Any, user: Any, *, in_minutes: int, mode: str = "AUTO_PUBLISH") -> Post:
     post = create_post(
-        workspace=workspace, author=user, master_body="First harvest, pressed the same day."
+        workspace=workspace,
+        author=user,
+        master_body="First harvest, pressed the same day.",
+        # One image: the test account is Instagram, which publishes nothing without media.
+        media_assets=[an_image(workspace)],
     )
     schedule_post(
         post=post,

@@ -366,15 +366,21 @@ def test_publishing_still_succeeds_while_capture_is_starved(
 ) -> None:
     """End to end: capture has drained everything it may touch, and a scheduled
     post still goes out on time."""
-    from content.models import DeliveryMode, Post, PostStatus
+    from content.models import DeliveryMode, PostStatus
+    from content.services.posts import create_post
     from scheduling.services import schedule_post
+    from scheduling.tests.media import an_image
 
     limiter = publishing.capture_limiter(social_account)
     while limiter.consume_for_background():
         pass
 
-    post = Post.objects.create(
-        workspace=paid_workspace, author=user, master_body="Our seasonal glaze is live today."
+    # One image: the test account is Instagram, which publishes nothing without media.
+    post = create_post(
+        workspace=paid_workspace,
+        author=user,
+        master_body="Our seasonal glaze is live today.",
+        media_assets=[an_image(paid_workspace)],
     )
     schedule_post(
         post=post,

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from common.text import HASHTAG_RE
 from content.models import ContentKind, PostFormat
 from content.services.options import resolve as resolve_options
-from content.services.rules import PLATFORM_RULES, format_rule
+from content.services.rules import PLATFORM_RULES, fitting_format, format_rule
 
 if TYPE_CHECKING:
     from content.models import Post
@@ -45,6 +45,11 @@ class MediaLike(Protocol):
 _THREAD_SUFFIX_BUDGET = 8
 
 ELLIPSIS = "…"
+
+
+#: How the renderer says it dropped media the content type cannot carry; read
+#: by `scheduling.publishing.ensure_media_fits`, which refuses such a post.
+UNSUPPORTED_MEDIA = "does not support that media type"
 
 
 @dataclass(frozen=True)
@@ -184,6 +189,11 @@ def adapt_for_platform(
         warnings.append(f"{platform} does not support the {post_format} format; rendered as FEED.")
         post_format = PostFormat.FEED
         spec = format_rule(platform, PostFormat.FEED)
+    # The media decides the shape when the chosen one cannot carry it: a video
+    # left on Instagram's image-only Post goes out as a Reel rather than empty.
+    shaped = fitting_format(platform, post_format, [asset.kind for asset in media_assets])
+    if shaped != post_format:
+        post_format, spec = shaped, format_rule(platform, shaped)
     assert spec is not None  # every platform declares FEED; test_formats.py holds it
     char_limit = spec.char_limit or rule.char_limit
 
@@ -217,9 +227,7 @@ def adapt_for_platform(
     allowed = [asset for asset in media_assets if asset.kind in spec.allowed_media_kinds]
     unsupported_count = len(media_assets) - len(allowed)
     if unsupported_count:
-        warnings.append(
-            f"{unsupported_count} asset(s) dropped: {platform} does not support that media type."
-        )
+        warnings.append(f"{unsupported_count} asset(s) dropped: {platform} {UNSUPPORTED_MEDIA}.")
 
     kept = allowed[: spec.max_media]
     over_cap_count = len(allowed) - len(kept)

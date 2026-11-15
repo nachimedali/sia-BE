@@ -22,6 +22,7 @@ from common.exceptions import StateConflict
 from content.models import PostStatus
 from content.services.posts import create_post
 from scheduling.services import schedule_post
+from scheduling.tests.media import an_image
 from workspaces.models import ApprovalAction, ApprovalActionType
 from workspaces.services import approvals
 
@@ -151,7 +152,12 @@ def test_auto_publish_is_reachable_only_from_approved(
 ) -> None:
     """P2-05. `AUTO_PUBLISH` keeps its meaning — publish at the scheduled
     minute — and is reached only after the approval above it."""
-    post = create_post(workspace=paid_workspace, author=user, master_body="Auto")
+    post = create_post(
+        workspace=paid_workspace,
+        author=user,
+        master_body="Auto",
+        media_assets=[an_image(paid_workspace)],
+    )
 
     post = schedule_post(
         post=post,

@@ -14,6 +14,7 @@ from content.models import PostStatus
 from content.services.posts import create_post, update_post
 from scheduling.publishing import NoConnectedAccountsError
 from scheduling.services import schedule_post
+from scheduling.tests.media import an_image
 from workspaces.models import ApprovalAction, ApprovalActionType, AuditLog
 from workspaces.services import approvals
 
@@ -190,7 +191,10 @@ def test_contributor_post_cannot_publish_until_admin_approves(
     """The whole point of the phase, end to end: a CONTRIBUTOR cannot get a
     post scheduled on their own, and an ADMIN's approval is what unblocks it."""
     post = create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="New drop",
+        media_assets=[an_image(advanced_workspace)],
     )
     post = approvals.submit_for_review(post, actor=contributor_user)
     scheduled_at = timezone.now() + dt.timedelta(minutes=5)
@@ -243,7 +247,12 @@ def test_a_downgrade_does_not_switch_the_approval_gate_off(
     """
     advanced_workspace.organization.plan = plans["pro"]
     advanced_workspace.organization.save(update_fields=["plan"])
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    post = create_post(
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="Draft",
+        media_assets=[an_image(advanced_workspace)],
+    )
 
     with pytest.raises(StateConflict):
         schedule_post(
