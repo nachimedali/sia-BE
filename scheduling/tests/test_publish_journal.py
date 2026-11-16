@@ -27,7 +27,7 @@ from content.models import (
     PostTargetState,
     ProviderState,
 )
-from content.services.posts import create_post
+from content.services.posts import create_post, edit_post
 from scheduling import publishing, reconcile, tasks
 from scheduling.journal import TargetJournal, publish_media
 from scheduling.tests.test_publishing import _make_due, _scheduled_post
@@ -123,6 +123,26 @@ def test_a_confirmed_publish_becomes_published_with_the_platforms_id(
     assert target.permalink == "https://fake-platform.test/p/fake-draft-1"
     assert target.published_at is not None, "the capture ladder starts from here"
     assert post.status == PostStatus.PUBLISHED
+
+
+def test_a_background_publish_settles_past_the_editors_settings_row(
+    paid_workspace: Any, user: Any, social_account: Any, fake: Any
+) -> None:
+    """The settings row (a chosen content type) stays PENDING forever; it must
+    not hold the post in PUBLISHING once the real target is confirmed."""
+    post = _scheduled_post(paid_workspace, user)
+    edit_post(post, author=user, post_formats={"instagram": "STORY"})
+    post = _make_due(post)
+    publishing.publish_post_by_id(post.pk)
+    target = PostTarget.objects.get(post=post, social_account=social_account)
+    _age(target, minutes=2)
+    fake.settle("fake-draft-1")
+
+    assert reconcile.reconcile_pending() == 1
+
+    post.refresh_from_db()
+    assert post.status == PostStatus.PUBLISHED
+    assert PostTarget.objects.get(post=post, social_account=None).state == PostTargetState.PENDING
 
 
 def test_a_platform_refusal_fails_the_target_and_tells_the_owner(

@@ -342,7 +342,10 @@ def render_post(post: Post, platforms: Iterable[str]) -> dict[str, AdaptedPayloa
     # One query for the whole render rather than one per platform: preview asks
     # for every platform at once, and a six-platform post should not cost six
     # round-trips to answer a question about itself.
-    overrides = {target.platform: target for target in post.targets.all()}
+    # The editor's settings row (no account) wins over a delivery target of the
+    # same platform: it holds the choice, the other only what was rendered then.
+    targets = sorted(post.targets.all(), key=lambda target: target.social_account_id is None)
+    overrides = {target.platform: target for target in targets}
 
     payloads: dict[str, AdaptedPayload] = {}
     for platform in platforms:
