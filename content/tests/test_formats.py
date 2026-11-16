@@ -18,9 +18,11 @@ from typing import Any
 
 import pytest
 
-from content.models import MediaKind, Platform, PostFormat
-from content.services.adaptation import adapt_for_platform
+from content.models import MediaKind, Platform, PostFormat, PostTarget
+from content.services.adaptation import adapt_for_platform, render_post
+from content.services.posts import create_post, edit_post
 from content.services.rules import PLATFORM_RULES, fitting_format, format_rule, formats_for
+from scheduling.tests.media import an_image
 
 pytestmark = pytest.mark.django_db
 
@@ -298,3 +300,24 @@ class TestTheMediaDecidesTheShape:
             fitting_format(Platform.INSTAGRAM, PostFormat.CAROUSEL, [MediaKind.IMAGE] * 11)
             == PostFormat.CAROUSEL
         )
+
+
+def test_the_editors_choice_wins_over_an_old_delivery_targets_shape(
+    paid_workspace: Any, user: Any, social_account: Any
+) -> None:
+    """A post rescheduled after a failure has both rows for Instagram: the
+    settings row (what the editor chose) and the old delivery target (what was
+    rendered then). The render reads the choice, whatever order the rows come in."""
+    post = create_post(
+        workspace=paid_workspace,
+        author=user,
+        master_body="Drop",
+        media_assets=[an_image(paid_workspace)],
+    )
+    old = PostTarget.objects.create(
+        post=post, platform="instagram", social_account=social_account, post_format="FEED"
+    )
+    edit_post(post, author=user, post_formats={"instagram": "STORY"})
+    old.save()  # rewritten last, so a plain scan returns it after the settings row
+
+    assert render_post(post, ["instagram"])["instagram"].post_format == "STORY"

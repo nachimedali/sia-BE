@@ -130,6 +130,7 @@ def update_post(
     reason: str = "edited",
     record: bool = True,
     alt_texts: Mapping[int, str] | None = None,
+    reshaped: bool = False,
     **fields: Any,
 ) -> Post:
     """`fields` is exactly what the caller wants to change — a PATCH that
@@ -166,7 +167,7 @@ def update_post(
             raise ValidationError({"doc_body": "Only a DOC post carries a document body."})
         fields["doc_body"] = validate_document(fields["doc_body"], workspace=post.workspace)
 
-    touches_content = bool(_CONTENT_FIELDS & fields.keys())
+    touches_content = reshaped or bool(_CONTENT_FIELDS & fields.keys())
     media_assets = fields.pop("media_asset_ids", None)
 
     for name, value in fields.items():
@@ -391,6 +392,11 @@ def edit_post(
     if errors:
         raise InvalidPlatformOptionsError(detail=errors)
 
+    # A new shape or new settings change what publishes as much as a caption does.
+    was_formats, was_options = post_formats_of(post), platform_options_of(post)
+    reshaped = any(was_formats.get(p) != f for p, f in (post_formats or {}).items()) or any(
+        was_options.get(p, {}) != o for p, o in cleaned.items()
+    )
     for platform, options in cleaned.items():
         _write_options(post, platform, options)
     for platform, post_format in (post_formats or {}).items():
@@ -409,6 +415,7 @@ def edit_post(
         author=author,
         reason=reason,
         alt_texts=None if media is None else {asset.pk: alt for asset, alt in media},
+        reshaped=reshaped,
         **fields,
     )
 

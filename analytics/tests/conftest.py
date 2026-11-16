@@ -11,6 +11,7 @@ helpers with it, not silently make every test assert nothing.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Any
 
 import pytest
@@ -80,6 +81,7 @@ def make_target(
         state=PostTargetState.PUBLISHED,
         published_at=published,
         provider_post_id=provider_post_id or f"zp-{post.pk}",
+        idempotency_key=str(uuid.uuid4()),  # minted for every delivery target
     )
 
 

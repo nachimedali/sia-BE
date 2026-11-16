@@ -23,7 +23,7 @@ from channels.adapters.base import PlatformError
 from channels.models import SocialAccount, SocialAccountStatus
 from common.exceptions import FeatureNotAvailable
 from content.models import Post, PostStatus, PostTarget, PostTargetState
-from content.services.posts import create_post
+from content.services.posts import create_post, edit_post
 from scheduling import publishing, tasks
 from scheduling.services import schedule_post
 from scheduling.tests.media import an_image
@@ -390,6 +390,80 @@ def test_one_posts_retryable_failure_does_not_abandon_the_rest_of_the_scan(
 
     assert publishing.publish_due() == 2
     assert len(platform_adapter.published) == 1
+
+
+def test_the_editors_settings_row_is_not_a_delivery_target(
+    paid_workspace: Any, user: Any, social_account: Any, platform_adapter: Any
+) -> None:
+    """A content type chosen in the editor lives on an account-less settings
+    row. Publishing sends through the account's target and leaves that row be:
+    failing it as "no connected account" marked a published post as failed."""
+    post = create_post(
+        workspace=paid_workspace,
+        author=user,
+        master_body="Drop",
+        media_assets=[an_image(paid_workspace)],
+    )
+    edit_post(post, author=user, post_formats={"instagram": "STORY"})
+    schedule_post(
+        post=post,
+        delivery_mode="AUTO_PUBLISH",
+        scheduled_at=timezone.now() + dt.timedelta(minutes=2),
+        actor=user,
+    )
+    post = _make_due(post)
+
+    publishing.publish_post_by_id(post.pk)
+
+    post.refresh_from_db()
+    settings_row = PostTarget.objects.get(post=post, social_account=None)
+    sent = PostTarget.objects.get(post=post, social_account=social_account)
+    assert post.status == PostStatus.PUBLISHED
+    assert sent.state == PostTargetState.PUBLISHED
+    assert sent.post_format == "STORY"
+    assert settings_row.state == PostTargetState.PENDING
+    assert settings_row.error_detail == {}
+    assert len(platform_adapter.published) == 1
+
+
+def test_changing_only_the_content_type_of_a_scheduled_post_sends_it_back_to_review(
+    paid_workspace: Any, user: Any, social_account: Any, platform_adapter: Any
+) -> None:
+    """A Story is not the Reel that was approved. Changing the type alone used to
+    leave the post scheduled with the old shape frozen in its target, so the
+    Reel went out (beta post 6). It goes back to review, like a caption edit."""
+    post = _scheduled_post(paid_workspace, user)
+    slot = post.scheduled_at
+
+    edit_post(post, author=user, post_formats={"instagram": "STORY"})
+
+    post.refresh_from_db()
+    assert post.status == PostStatus.PENDING_REVIEW
+    assert not PostTarget.objects.filter(post=post, social_account=social_account).exists()
+    assert post.proposed_scheduled_at == slot, "the slot is kept as the proposal"
+
+
+def test_saving_the_same_content_type_again_leaves_the_schedule_alone(
+    paid_workspace: Any, user: Any, social_account: Any
+) -> None:
+    post = create_post(
+        workspace=paid_workspace,
+        author=user,
+        master_body="Drop",
+        media_assets=[an_image(paid_workspace)],
+    )
+    edit_post(post, author=user, post_formats={"instagram": "STORY"})
+    schedule_post(
+        post=post,
+        delivery_mode="AUTO_PUBLISH",
+        scheduled_at=timezone.now() + dt.timedelta(minutes=2),
+        actor=user,
+    )
+
+    edit_post(post, author=user, post_formats={"instagram": "STORY"})
+
+    post.refresh_from_db()
+    assert post.status == PostStatus.SCHEDULED
 
 
 def test_a_target_whose_account_was_deleted_fails_terminally(

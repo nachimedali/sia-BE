@@ -134,7 +134,8 @@ def _settle_posts(posts: Iterable[Post]) -> None:
     if not in_flight:
         return
     by_post: dict[int, list[PostTarget]] = defaultdict(list)
-    for target in PostTarget.objects.filter(post__in=in_flight):
+    # Delivery targets only: a settings row stays PENDING and would hold the post mid-flight.
+    for target in PostTarget.objects.filter(post__in=in_flight, idempotency_key__isnull=False):
         by_post[target.post_id].append(target)
     for post in in_flight:
         publishing.settle(post, by_post[post.pk])

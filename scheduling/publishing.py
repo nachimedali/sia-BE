@@ -29,6 +29,7 @@ import logging
 import uuid
 from typing import Any
 
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from billing.services.entitlements import entitlements_for
@@ -123,6 +124,13 @@ def ensure_media_fits(post: Post) -> None:
         }
     if problems:
         raise MediaDoesNotFitError(detail=problems)
+
+
+def delivery_targets(post: Post) -> QuerySet[PostTarget]:
+    """The targets publish sends through. The editor's per-platform settings
+    row (`social_account` empty, never given an idempotency key) is not one;
+    a target whose account was deleted later keeps its key, so still counts."""
+    return post.targets.filter(idempotency_key__isnull=False)
 
 
 def build_targets(post: Post) -> list[PostTarget]:
@@ -460,7 +468,9 @@ def publish_post(post: Post) -> Post:
     # `social_account__workspace` because the publish-time cap check re-derives
     # entitlements from it per target; `post__author` because a terminal failure
     # emails them. Both would otherwise be a query each, per target.
-    targets = list(post.targets.select_related("social_account__workspace", "post__author"))
+    targets = list(
+        delivery_targets(post).select_related("social_account__workspace", "post__author")
+    )
     if not targets:
         targets = build_targets(post)
 
