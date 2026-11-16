@@ -32,7 +32,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 
 from ai.ad_template_seed import CAPTURES, GOALS
 from ai.models import CreativeKind, CreativeOption, Generation, GenerationKind, GenerationMode
-from ai.services import claims, references, template_results
+from ai.services import claims, references, template_results, video_prompt
 from billing.services.entitlements import Entitlements, entitlements_for
 from billing.services.flags import AD_TEMPLATES_S17, flag_enabled
 from billing.services.plans import suggest_upgrade
@@ -74,7 +74,20 @@ CAST_FEATURES = {"avatars": "ad_avatars_per_ad", "products": "ad_products_per_ad
 #: What a template needs beyond the product (S17-33): an app screenshot, a real
 #: offer and its end date (asked at render), three variants' photos, four
 #: photos for a grid, or the brand's own place photos.
-NEEDS = ("", "app_screenshot", "offer", "variants", "photos", "places", "reviews")
+NEEDS = (
+    "",
+    "app_screenshot",
+    "offer",
+    "variants",
+    "photos",
+    "places",
+    "reviews",
+    "parts",
+    "claims",
+)
+#: S19-12: an orbit of ingredients or an exploded view shows only what the
+#: product's confirmed identity card lists, and at least this many of them.
+PARTS_MIN = 3
 VARIANTS_MIN = 3
 GRID_PHOTOS_MIN = 4
 #: A multi-shot template's shots (T3): `frame` animates the first frame,
@@ -210,6 +223,10 @@ def validate_metadata(meta: Any) -> None:
         errors["capture"] = f"One of {', '.join(CAPTURES)}."
     if not isinstance(meta.get("negative", ""), str) or len(meta.get("negative", "")) > PROMPT_MAX:
         errors["negative"] = f"Text of at most {PROMPT_MAX} characters."
+    if "direction" in meta:
+        problems = video_prompt.validate_direction(meta["direction"])
+        if problems:
+            errors["direction"] = " ".join(problems)
     if errors:
         raise DjangoValidationError(
             {"metadata": [f"{field}: {message}" for field, message in errors.items()]}
@@ -319,8 +336,16 @@ def shots_of(row: CreativeOption) -> list[dict[str, Any]]:
     return list(row.metadata.get("shots") or [])
 
 
+def is_two_photos(row: CreativeOption) -> bool:
+    """An FL scene (S19-09): it opens and closes on two real photos, never on
+    a drawn frame."""
+    return (video_prompt.direction_of(row) or {}).get("route") == "FL"
+
+
 def has_frame(row: CreativeOption) -> bool:
     """Whether the template opens on a drawn first frame (a keyframe)."""
+    if is_two_photos(row):
+        return False
     shots = shots_of(row)
     return not shots or any(shot["use"] == "frame" for shot in shots)
 
@@ -350,8 +375,14 @@ def fit_of(
         plain = [pk for pk in photo_ids or set() if tags.get(pk) != SCREEN_TAG]
         if len(plain) < (VARIANTS_MIN if needs == "variants" else GRID_PHOTOS_MIN):
             return "needs_variants" if needs == "variants" else "needs_photos"
-    if needs == "places" and (product is None or not _has_places(product.workspace)):
+    if needs == "places" and (
+        product is None or _places_count(product.workspace) < (2 if is_two_photos(row) else 1)
+    ):
         return "needs_places"
+    if needs == "parts" and (product is None or len(card_parts(product)) < PARTS_MIN):
+        return "needs_parts"
+    if needs == "claims" and (product is None or not proven_claims(product)):
+        return "needs_claims"
     if needs == "reviews" and (product is None or consented_review(product) is None):
         return "needs_reviews"
     return None
@@ -366,12 +397,28 @@ def consented_review(product: Product) -> dict[str, Any] | None:
     return None
 
 
-def _has_places(workspace: Workspace) -> bool:
+def _places_count(workspace: Workspace) -> int:
     from brand.models import BrandPlace, PlaceSource
 
     return BrandPlace.objects.filter(
         workspace=workspace, source=PlaceSource.UPLOAD, media__isnull=False
-    ).exists()
+    ).count()
+
+
+def card_parts(product: Product) -> list[str]:
+    """The ingredients or parts on the product's confirmed identity card."""
+    if product.identity_confirmed_at is None:
+        return []
+    return [str(part) for part in (product.identity or {}).get("parts") or [] if part]
+
+
+def proven_claims(product: Product) -> list[str]:
+    """The product's claims that carry proof (S17-36): the only ones a test may show."""
+    return [
+        str(claim.get("key"))
+        for claim in product.claims or []
+        if isinstance(claim, dict) and claim.get("key") and claim.get("proof_media")
+    ]
 
 
 FIT_MESSAGES = {
@@ -383,6 +430,10 @@ FIT_MESSAGES = {
     "needs_reviews": (
         "Needs a customer review given with their consent: add one on the product page."
     ),
+    "needs_parts": (
+        f"Needs at least {PARTS_MIN} ingredients or parts on the product's confirmed identity card."
+    ),
+    "needs_claims": "Needs a claim with its proof: add one on the product page.",
 }
 
 
@@ -416,9 +467,11 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     )
     results = template_results.results_for(workspace)
     out = []
+    pro = video_prompt.is_on(workspace)
+    can = video_prompt.capabilities(workspace) if pro else set()
     for row in _rows():
         meta = row.metadata
-        if meta.get("hidden"):
+        if meta.get("hidden") or (meta.get("pro") and not pro):
             continue
         feature = TIER_FEATURE[meta["tier"]]
         lock = None
@@ -462,6 +515,16 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "preview": str(meta.get("preview") or ""),
                 "poster": str(meta.get("poster") or ""),
                 "frame": has_frame(row),
+                # S19-14: a Pro scene, and what it needs that this package's
+                # video model cannot do (the estimate's 422 `route_cannot`).
+                "pro": bool(meta.get("pro")),
+                "cannot": video_prompt.missing(
+                    workspace,
+                    list((video_prompt.direction_of(row) or {}).get("requires") or []),
+                    can,
+                )
+                if pro
+                else [],
                 "fit": fit_of(row, product, photo_ids=photo_ids),
                 "lock": lock,
                 # A person on an optional template is a `people` render.
@@ -563,7 +626,8 @@ def resolve(
     row = CreativeOption.objects.filter(
         kind=CreativeKind.AD_TEMPLATE, key=str(key), is_active=True
     ).first()
-    if row is None:
+    if row is None or (row.metadata.get("pro") and not video_prompt.is_on(workspace)):
+        # A Pro scene (S19-12) does not exist for a workspace without Pro rendering.
         raise ValidationError({"template": f"'{key}' is not in the template catalogue."})
     if product is None:
         raise ValidationError({"product": "Pick the product this ad is for."})
@@ -695,12 +759,15 @@ def length_units(row: CreativeOption, length_key: str) -> int:
 @dataclass(frozen=True)
 class Place:
     """Where a template is set (S17-27): what the camera sees, the light it is
-    locked to, where the product stands, and what it must never show."""
+    locked to, where the product stands, and what it must never show. A video
+    (S19-07) also reads what sits in front and behind, and the room's sound."""
 
     set: str
     light: str = ""
     zone: str = ""
     forbid: str = ""
+    depth: str = ""
+    ambient: str = ""
 
 
 def place_text(scene: str, workspace: Workspace | None) -> str:
@@ -760,6 +827,8 @@ def place_of(row: CreativeOption, location: str, *, workspace: Workspace | None 
         light=str(meta.get("light") or ""),
         zone=str(meta.get("zone") or ""),
         forbid=str(meta.get("forbid") or ""),
+        depth=str(meta.get("depth") or ""),
+        ambient=str(meta.get("ambient") or ""),
     )
 
 
@@ -978,11 +1047,15 @@ def ends_label(ends: str, language: str) -> str:
 def check_reroll(workspace: Workspace, root: Generation) -> None:
     """A re-roll is a model call: the nth beyond `ad_rerolls` is a 402. Hand
     edits to the script are never counted — they never reach this."""
-    entitlements = entitlements_for(workspace)
-    limit = entitlements.int_feature("ad_rerolls")
     used = Generation.objects.filter(
         workspace=workspace, creative__ad_template__root=root.pk
     ).count()
+    require_reroll(entitlements_for(workspace), used)
+
+
+def require_reroll(entitlements: Any, used: int) -> None:
+    """The re-roll after `ad_rerolls` is a 402: a keyframe's, or a draft's (S19)."""
+    limit = entitlements.int_feature("ad_rerolls")
     if used >= limit:
         raise RerollLimitError(
             f"This ad has used its {limit} re-roll{'s' if limit != 1 else ''}.",
@@ -1029,6 +1102,8 @@ def create_keyframe(
             code="no_frame",
         )
     from ai.services import pipeline
+
+    video_prompt.check_light(workspace, row, location, look)
 
     root: Generation | None = None
     if reroll_of is not None:

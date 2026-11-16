@@ -14,7 +14,7 @@ from django.core.management.base import BaseCommand, CommandParser
 from django.db import transaction
 
 from ai.models import AIModelRoute, AIModelRouteChange
-from ai.route_seed import FIELDS, ROUTES
+from ai.route_seed import FIELDS, PRO_ROUTES, ROUTES
 from billing.models import Plan
 
 
@@ -31,7 +31,7 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
         created = refreshed = skipped = 0
-        for spec in ROUTES:
+        for spec in [*ROUTES, *PRO_ROUTES]:
             plan = None
             if spec["plan"]:
                 plan = Plan.objects.filter(code=spec["plan"]).first()
@@ -40,7 +40,7 @@ class Command(BaseCommand):
                     continue
             defaults = {key: spec[key] for key in FIELDS}
             route, was_created = AIModelRoute.objects.get_or_create(
-                task=spec["task"], plan=plan, defaults=defaults
+                task=spec["task"], plan=plan, flag=spec.get("flag", ""), defaults=defaults
             )
             if was_created:
                 created += 1

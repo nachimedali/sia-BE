@@ -38,7 +38,7 @@ from content.models import (
 )
 from content.services.revisions import UNEDITABLE_STATUSES
 from reminders.services import arm_reminder, withdraw
-from scheduling.publishing import build_targets
+from scheduling.publishing import build_targets, ensure_media_fits
 from workspaces.services import approvals
 
 if TYPE_CHECKING:
@@ -110,6 +110,10 @@ def schedule_post(
     from checks.services import ensure_not_blocked
 
     ensure_not_blocked(post, actor=actor)
+    if delivery_mode == DeliveryMode.AUTO_PUBLISH:
+        # Before the trial post is spent: a post whose media no content type
+        # takes would only fail at its slot, with nobody watching.
+        ensure_media_fits(post)
     post = _gate_approval(post, actor=actor)
 
     # L-4/P0-20: the quota trial is metered here, at the moment a post is

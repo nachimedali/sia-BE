@@ -20,6 +20,7 @@ from collaboration.services import add_comment, open_thread
 from common.visibility import Visibility
 from content.models import PostStatus
 from content.services.posts import create_post
+from scheduling.tests.media import an_image
 from workspaces.models import ApprovalAction
 from workspaces.services import approvals
 
@@ -33,7 +34,10 @@ def _packet(token: str) -> str:
 @pytest.fixture
 def post(advanced_workspace: Any, contributor_user: Any) -> Any:
     return create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="Launch copy"
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="Launch copy",
+        media_assets=[an_image(advanced_workspace)],
     )
 
 
@@ -333,7 +337,12 @@ def test_a_guest_approval_schedules_the_authors_proposed_time(
     schedule is attributed to the member who proposed the time, because a
     person with no account cannot spend a workspace's quota."""
     when = timezone.now() + dt.timedelta(days=1)
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Launch")
+    post = create_post(
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="Launch",
+        media_assets=[an_image(advanced_workspace)],
+    )
     approvals.submit_for_review(
         post, actor=contributor_user, delivery_mode="AUTO_PUBLISH", scheduled_at=when
     )

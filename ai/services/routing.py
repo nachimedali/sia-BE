@@ -71,13 +71,18 @@ def _settings_model(kind: str) -> str:
     return str(getattr(settings, _SETTINGS[kind][1]))
 
 
-def resolve(task: str, *, plan: Any = None) -> Route:
+def resolve(task: str, *, plan: Any = None, organization: Any = None) -> Route:
     kind = kind_of(task)
     provider = configured_provider(kind)
     scope = Q(plan__isnull=True) | (Q(plan=plan) if plan is not None else Q(pk__in=[]))
-    rows = AIModelRoute.objects.filter(scope, task=task, is_active=True, provider=provider)
-    # A package's own row beats the default: nulls sort last on `plan_id`.
-    row = rows.order_by(F("plan_id").asc(nulls_last=True)).first()
+    rows = AIModelRoute.objects.filter(
+        scope, task=task, is_active=True, provider=provider
+    ).order_by(F("plan_id").asc(nulls_last=True), "-flag")
+    # A package's own row beats the default (nulls sort last on `plan_id`); in
+    # one scope, a flagged row (S19) beats the unflagged one, but only for an
+    # organization with its flag on. One query; a flag is read only when its
+    # row comes first.
+    row = next((row for row in rows if not row.flag or _flag_on(row.flag, organization)), None)
     if row is None:
         return Route(task=task, provider=provider, model=_settings_model(kind))
     return Route(
@@ -90,15 +95,23 @@ def resolve(task: str, *, plan: Any = None) -> Route:
     )
 
 
+def _flag_on(flag: str, organization: Any) -> bool:
+    if organization is None:
+        return False
+    from billing.services.flags import flag_enabled
+
+    return flag_enabled(organization, flag)
+
+
 def resolve_for(task: str, workspace: Any = None) -> Route:
     """The route for a workspace's package, or the default when there is no
     workspace in hand (bulk work on comments, rephrasing)."""
-    plan = None
-    if workspace is not None:
-        from billing.services.entitlements import entitlements_for
+    if workspace is None:
+        return resolve(task)
+    from billing.services.entitlements import entitlements_for
 
-        plan = entitlements_for(workspace).plan
-    return resolve(task, plan=plan)
+    plan = entitlements_for(workspace).plan
+    return resolve(task, plan=plan, organization=workspace.organization)
 
 
 def is_rate_limited(exc: ProviderError) -> bool:

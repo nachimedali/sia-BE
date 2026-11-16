@@ -13,7 +13,7 @@ import pytest
 from django.apps import apps
 from django.db.models import Model
 
-from ai.models import AIModelRoute, CreativeOption, GenerationCost
+from ai.models import AIModelRoute, CreativeOption, GenerationCost, VideoModelProfile
 from billing.models import Currency, Pack, Plan, PlanPrice, TaxRate
 from categories.models import Category
 from tools.models import ToolConfig
@@ -45,6 +45,8 @@ SEEDS = [
     "ai.migrations.0024_spark_wan_routes",
     "ai.migrations.0028_discovery_routes",
     "ai.migrations.0047_text_routes_2026_11",
+    "ai.migrations.0050_seed_video_profiles_and_pro_routes",
+    "ai.migrations.0053_pro_scenes",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -58,6 +60,7 @@ MODELS: list[type[Model]] = [
     CreativeOption,
     GenerationCost,
     AIModelRoute,
+    VideoModelProfile,
     Category,
     ToolConfig,
     TrendSource,
@@ -88,6 +91,11 @@ def test_the_seed_migrations_populate_every_catalogue_a_fresh_install_needs() ->
     clip = CreativeOption.objects.get(kind="video_length", key="clip-5")
     assert clip.metadata["credits"] == 25  # priced for a $0.10 credit (pricing.audit.md §8)
     assert TrendSource.objects.filter(workspace__isnull=True).count() == counts["TrendSource"]
+    # S19: the Pro scenes land hidden behind their flag, the Pro routes flagged.
+    assert CreativeOption.objects.filter(kind="ad_template", metadata__pro=True).count() == 26
+    assert set(AIModelRoute.objects.exclude(flag="").values_list("flag", flat=True)) == {
+        "pro_rendering_s19"
+    }
 
 
 def test_running_them_again_adds_nothing() -> None:

@@ -84,6 +84,35 @@ def _duration(path: Path) -> float:
         return 0.0
 
 
+def _has_audio(path: Path) -> bool:
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        timeout=60,
+        check=False,
+        text=True,
+    )
+    return bool(out.stdout.strip())
+
+
+def _motion(speed: float, fps: int) -> list[str]:
+    """S19-06: a speed-up, then a frame-rate drop held back up to the reel's
+    rate (each frame repeated: the stop-motion look). Nothing for neither."""
+    filters = [f"setpts=PTS/{speed:g}"] if speed != 1.0 else []
+    return [*filters, f"fps={fps}"] if fps else filters
+
+
 class FfmpegVideoComposer:
     def __init__(self) -> None:
         font = Path(getattr(settings, "VIDEO_FONT_FILE", "") or "")
@@ -102,6 +131,7 @@ class FfmpegVideoComposer:
         kinetic: bool,
         color: str = "white",
         box: str = "black@0.45",
+        x: str = "(w-text_w)/2",
     ) -> str:
         """A drawtext filter. The words go through a file, so no quote or
         colon in a caption can break the filter graph. Lines wrap inside the
@@ -115,7 +145,7 @@ class FfmpegVideoComposer:
         return (
             f"drawtext={self.font}textfile={path}:fontsize={size}:fontcolor={color}"
             f":line_spacing={size // 4}{backing}"
-            f":x=(w-text_w)/2:y='{y}{rise}'{alpha}"
+            f":x={x}:y='{y}{rise}'{alpha}"
         )
 
     # --- shots ----------------------------------------------------------------
@@ -128,9 +158,14 @@ class FfmpegVideoComposer:
         if shot.clip is not None:
             source = work / f"shot{index}.mp4"
             source.write_bytes(shot.clip)
+            if shot.right is not None:
+                source = self._side_by_side(work, index, source, shot.right, length, size)
             head = ["-i", str(source)]
             # A clip shorter than its shot holds on its last frame.
-            filters += [f"fps={FPS}", f"tpad=stop_mode=clone:stop_duration={length}"]
+            filters += [
+                f"fps={FPS}",
+                f"tpad=stop_mode=clone:stop_duration={length}",
+            ]
         else:
             source = work / f"shot{index}.img"
             source.write_bytes(shot.image)
@@ -139,6 +174,20 @@ class FfmpegVideoComposer:
             filters.append(
                 f"zoompan=z='1+0.08*on/{frames}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2'"
                 f":d=1:s={width}x{height}:fps={FPS}"
+            )
+        if shot.badge:
+            # A step number, top left inside the safe area (S19-06).
+            filters.append(
+                self._text(
+                    work,
+                    f"badge{index}",
+                    shot.badge,
+                    size=width // 9,
+                    y="h*0.12",
+                    width=width,
+                    kinetic=False,
+                    x="w*0.08",
+                )
             )
         if shot.overlay:
             filters.append(
@@ -177,6 +226,79 @@ class FfmpegVideoComposer:
             ]
         )
         return out
+
+    def _side_by_side(
+        self, work: Path, index: int, left: Path, right: bytes, length: float, size: tuple[int, int]
+    ) -> Path:
+        """Two clips in two halves (S19-06): the left plays for the first half
+        of the shot while the right holds its first frame, then the right plays
+        while the left holds its last. The left clip's sound is kept."""
+        width, height = size
+        half = length / 2
+        other = work / f"shot{index}-right.mp4"
+        other.write_bytes(right)
+        cover = (
+            f"scale={width // 2}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width // 2}:{height},fps={FPS}"
+        )
+        graph = (
+            f"[0:v]{cover},trim=duration={half},setpts=PTS-STARTPTS,"
+            f"tpad=stop_mode=clone:stop_duration={half}[l];"
+            f"[1:v]{cover},trim=duration={half},setpts=PTS-STARTPTS,"
+            f"tpad=start_mode=clone:start_duration={half}[r];"
+            "[l][r]hstack=inputs=2,format=yuv420p[v]"
+        )
+        out = work / f"pair{index}.mp4"
+        _run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(left),
+                "-i",
+                str(other),
+                "-filter_complex",
+                graph,
+                "-map",
+                "[v]",
+                "-t",
+                f"{length}",
+                "-r",
+                str(FPS),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "20",
+                str(out),
+            ]
+        )
+        return out
+
+    def _audio(
+        self, work: Path, shots: list[ReelShot], lengths: list[float], first: int
+    ) -> tuple[list[str], list[str]]:
+        """One sound track per part (S19-10): a clip's own sound,
+        padded or cut to the part's length; silence for a still or the end card.
+        `first` is the index the first extra input will have. Returns the extra
+        inputs and the filters labelling each part's track `[a<n>]`."""
+        inputs: list[str] = []
+        graph: list[str] = []
+        for index, length in enumerate(lengths):
+            shot = shots[index] if index < len(shots) else None
+            source = work / f"shot{index}.mp4"
+            if shot is not None and shot.clip is not None and _has_audio(source):
+                inputs += ["-i", str(source)]
+            else:
+                inputs += ["-f", "lavfi", "-t", f"{length}", "-i", "anullsrc=r=48000:cl=stereo"]
+            graph.append(
+                f"[{first + index}:a]aresample=48000,aformat=channel_layouts=stereo,"
+                f"apad,atrim=0:{length},asetpts=PTS-STARTPTS[a{index}]"
+            )
+        return inputs, graph
 
     def _end_card(self, work: Path, card: EndCard, size: tuple[int, int]) -> Path:
         """The brand card (S17-26): the kit's colour, the real logo file at the
@@ -283,6 +405,7 @@ class FfmpegVideoComposer:
         captions: list[CaptionCue],
         end_card: EndCard | None,
         duration_seconds: float,
+        keep_audio: bool = False,
     ) -> VideoResult:
         started = time.monotonic()
         size = SIZES.get(aspect, SIZES["9:16"])
@@ -332,9 +455,33 @@ class FfmpegVideoComposer:
             graph.append(f"{current}format=yuv420p[v]")
 
             audio: list[str] = []
-            if music_path is not None:
+            fade_out = max(0.0, duration_seconds - 1.0)
+            if keep_audio:
+                extra, tracks = self._audio(
+                    work, shots, [length for _, length in parts], inputs.count("-i")
+                )
+                graph += tracks
+                inputs += extra
+                if fade and len(parts) > 1:
+                    joined = "[a0]"
+                    for index in range(1, len(parts)):
+                        graph.append(f"{joined}[a{index}]acrossfade=d={fade}[ax{index}]")
+                        joined = f"[ax{index}]"
+                else:
+                    labels = "".join(f"[a{i}]" for i in range(len(parts)))
+                    graph.append(f"{labels}concat=n={len(parts)}:v=0:a=1[ajoin]")
+                    joined = "[ajoin]"
+                if music_path is not None:
+                    # The bed ducked under the model's own sound.
+                    inputs += ["-stream_loop", "-1", "-i", str(music_path)]
+                    bed = inputs.count("-i") - 1
+                    graph.append(f"[{bed}:a]volume=0.25[bed]")
+                    graph.append(f"{joined}[bed]amix=inputs=2:duration=first:normalize=0[mix]")
+                    joined = "[mix]"
+                graph.append(f"{joined}afade=t=out:st={fade_out}:d=1[a]")
+                audio = ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]
+            elif music_path is not None:
                 inputs += ["-stream_loop", "-1", "-i", str(music_path)]
-                fade_out = max(0.0, duration_seconds - 1.0)
                 graph.append(f"[{len(parts)}:a]afade=t=out:st={fade_out}:d=1[a]")
                 audio = ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]
             out = work / "reel.mp4"
@@ -374,8 +521,46 @@ class FfmpegVideoComposer:
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
 
+    # --- stills for review (S19-13) ---------------------------------------------
+    def frames(self, *, clip: bytes, at: list[float]) -> list[bytes]:
+        with tempfile.TemporaryDirectory(prefix="frames-") as tmp:
+            work = Path(tmp)
+            source = work / "clip.mp4"
+            source.write_bytes(clip)
+            out: list[bytes] = []
+            for index, seconds in enumerate(at):
+                still = work / f"beat{index}.png"
+                _run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-v",
+                        "error",
+                        "-ss",
+                        f"{seconds:.2f}",
+                        "-i",
+                        str(source),
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        "scale=360:-2",
+                        str(still),
+                    ]
+                )
+                out.append(still.read_bytes())
+            return out
+
     # --- one clip, words burned in ----------------------------------------------
-    def caption(self, *, clip: bytes, captions: list[CaptionCue], aspect: str) -> VideoResult:
+    def caption(
+        self,
+        *,
+        clip: bytes,
+        captions: list[CaptionCue],
+        aspect: str,
+        speed: float = 1.0,
+        fps: int = 0,
+        seconds: float | None = None,
+    ) -> VideoResult:
         """The clip at the frame's size with each cue drawn on its window; its
         length and its sound are the clip's own (the sound re-encoded, never
         dropped: a vendor's ambient track is part of what was paid for)."""
@@ -386,7 +571,9 @@ class FfmpegVideoComposer:
             source = work / "clip.mp4"
             source.write_bytes(clip)
             filters = [
-                f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
+                *_motion(speed, fps),
+                *([f"fps={FPS}"] if fps else []),
             ]
             for index, cue in enumerate(captions):
                 text = self._text(
@@ -420,6 +607,8 @@ class FfmpegVideoComposer:
                     "veryfast",
                     "-crf",
                     "20",
+                    *(["-af", f"atempo={speed:g}"] if speed != 1.0 else []),
+                    *(["-t", f"{seconds}"] if seconds else []),
                     "-c:a",
                     "aac",
                     "-b:a",

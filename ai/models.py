@@ -447,7 +447,13 @@ ROUTE_PARAMS: dict[str, dict[str, tuple[Any, ...]]] = {
     # `chat_template_kwargs.enable_thinking`; off, an answer takes seconds, not tens.
     AIKind.TEXT: {"thinking": (True, False)},
     AIKind.IMAGE: {"image_size": ("1K", "2K", "4K"), "batch": (True, False)},
-    AIKind.VIDEO: {"resolution": ("480p", "720p", "1080p"), "audio": (True, False)},
+    # `fallback_audio` (S19-08): the fallback's own audio setting, when its
+    # sound costs more than the unit can carry (Kling 3.0: +50%).
+    AIKind.VIDEO: {
+        "resolution": ("480p", "720p", "1080p"),
+        "audio": (True, False),
+        "fallback_audio": (True, False),
+    },
 }
 
 
@@ -485,6 +491,10 @@ class AIModelRoute(models.Model):
     )
     params = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
+    #: S19: a rollout flag (`billing.services.flags`) this row waits for. Blank
+    #: = always eligible; set = resolved only for an organization with the flag
+    #: on, and then before the unflagged row of the same scope.
+    flag = models.CharField(max_length=40, blank=True, default="")
     note = models.TextField(blank=True)
 
     updated_by = models.ForeignKey(
@@ -500,11 +510,13 @@ class AIModelRoute(models.Model):
     class Meta:
         ordering: ClassVar[list[str]] = ["task", "plan__sort_order"]
         constraints: ClassVar[list[models.BaseConstraint]] = [
-            models.UniqueConstraint(fields=["task", "plan"], name="unique_model_route_per_plan"),
             models.UniqueConstraint(
-                fields=["task"],
+                fields=["task", "plan", "flag"], name="unique_model_route_per_plan_flag"
+            ),
+            models.UniqueConstraint(
+                fields=["task", "flag"],
                 condition=models.Q(plan__isnull=True),
-                name="unique_default_model_route",
+                name="unique_default_model_route_flag",
             ),
         ]
 
@@ -523,6 +535,7 @@ class AIModelRoute(models.Model):
             "fallback_model": self.fallback_model,
             "params": self.params,
             "is_active": self.is_active,
+            "flag": self.flag,
         }
 
     def clean(self) -> None:
@@ -553,6 +566,11 @@ class AIModelRoute(models.Model):
                     options = ", ".join(str(option) for option in allowed[key])
                     errors["params"] = f"'{key}' must be one of: {options}."
                     break
+        if self.flag:
+            from billing.services.flags import ROLLOUT_DEFAULTS
+
+            if self.flag not in ROLLOUT_DEFAULTS:
+                errors["flag"] = f"'{self.flag}' is not a rollout flag."
         if errors:
             raise ValidationError(errors)
 
@@ -566,7 +584,17 @@ class AIModelRouteChange(AppendOnly):
 
     # PROTECT: a route with history is deactivated, not deleted — deleting it
     # would take its record of changes with it.
-    route = models.ForeignKey(AIModelRoute, on_delete=models.PROTECT, related_name="changes")
+    route = models.ForeignKey(
+        AIModelRoute, null=True, blank=True, on_delete=models.PROTECT, related_name="changes"
+    )
+    #: S19-01: a change to a video model profile is recorded here too.
+    profile = models.ForeignKey(
+        "VideoModelProfile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="changes",
+    )
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -582,7 +610,97 @@ class AIModelRouteChange(AppendOnly):
         ordering: ClassVar[list[str]] = ["-created_at"]
 
     def __str__(self) -> str:
-        return f"route {self.route_id} changed at {self.created_at:%Y-%m-%d %H:%M}"
+        what = f"route {self.route_id}" if self.route_id else f"profile {self.profile_id}"
+        return f"{what} changed at {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class Timecodes(models.TextChoices):
+    """How a model is told when each beat happens (`upgrade_rendering.md` §6.2)."""
+
+    NONE = "none", "No times: the beats in order"
+    SECONDS = "seconds", "0-2 s: …"
+    BRACKETS = "brackets", "[0:00-0:02] …"
+    SHOTS = "shots", "Shot 1 (0-2 s): …"
+
+
+class VideoModelProfile(models.Model):
+    """What one video model accepts and how it is best told (S19-01).
+
+    One row per model slug, the same slug an `AIModelRoute` names. The facts
+    (lengths, last frame, seed, audio) come from OpenRouter's model list; the
+    word budget and the timecode syntax from the prompting guides. A new model
+    is a row, not a deploy. A slug with no row gets `cautious()`: it is assumed
+    to take nothing it has not been shown to take.
+    """
+
+    slug = models.CharField(max_length=128, unique=True)
+    label = models.CharField(max_length=80, blank=True)
+    budget_words = models.PositiveSmallIntegerField(
+        default=120, help_text="The most words a prompt sends; SCENE and STYLE are cut first."
+    )
+    timecodes = models.CharField(
+        max_length=10, choices=Timecodes.choices, default=Timecodes.SECONDS
+    )
+    durations = models.JSONField(
+        default=list, help_text="Every clip length the model accepts, in whole seconds."
+    )
+    last_frame = models.BooleanField(default=False, help_text="Lands on a given last frame.")
+    seed = models.BooleanField(default=False, help_text="Honours a seed.")
+    audio = models.BooleanField(default=False, help_text="Generates its own sound.")
+    note = models.TextField(blank=True)
+
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["slug"]
+
+    def __str__(self) -> str:
+        return self.label or self.slug
+
+    @classmethod
+    def cautious(cls, slug: str) -> VideoModelProfile:
+        """An unsaved profile for a model nobody described: no last frame, no
+        seed, no audio, and the lengths every model takes."""
+        return cls(slug=slug, budget_words=100, durations=[5, 10])
+
+    @classmethod
+    def for_slug(cls, slug: str) -> VideoModelProfile:
+        return cls.objects.filter(slug=slug).first() or cls.cautious(slug)
+
+    def fit_seconds(self, wanted: float) -> int:
+        """The shortest length the model takes that covers `wanted`; its longest
+        when none does (the composer trims, never stretches)."""
+        lengths = sorted(int(n) for n in self.durations or [5, 10])
+        return next((n for n in lengths if n >= wanted), lengths[-1])
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "budget_words": self.budget_words,
+            "timecodes": self.timecodes,
+            "durations": self.durations,
+            "last_frame": self.last_frame,
+            "seed": self.seed,
+            "audio": self.audio,
+        }
+
+    def clean(self) -> None:
+        durations = self.durations
+        if (
+            not isinstance(durations, list)
+            or not durations
+            or any(not isinstance(n, int) or isinstance(n, bool) or n < 1 for n in durations)
+        ):
+            raise ValidationError({"durations": "A non-empty list of whole seconds."})
+        if self.budget_words < 30:
+            raise ValidationError({"budget_words": "At least 30 words: ACTION and AVOID must fit."})
 
 
 # -----------------------------------------------------------------------------
@@ -806,6 +924,9 @@ class VideoRender(models.Model):
     #: traced and made again from the same inputs. Vendors may ignore it;
     #: `None` on renders made before seeds were kept.
     seed = models.PositiveBigIntegerField(null=True, blank=True)
+    #: S19-13: a still at the middle of each beat, `[{at, label, media}]`,
+    #: shown at review beside the clip. Advisory: approval never waits on it.
+    beat_frames = models.JSONField(default=list, blank=True)
     #: What the machine measured on the finished file (S17-35): black frames,
     #: freezes, a still or silent opening, the product's likeness at the end —
     #: `[{code, ok, detail, score?}]`, shown at review, never a refusal.

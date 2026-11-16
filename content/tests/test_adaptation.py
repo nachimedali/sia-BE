@@ -112,13 +112,26 @@ def test_media_dropped_beyond_the_platform_cap() -> None:
 
 
 def test_media_kind_not_supported_by_platform_is_dropped() -> None:
-    assets = [_FakeAsset(1, MediaKind.IMAGE, "/media/1.png")]
+    # A pin is an image: a video has no Pinterest content type to move to.
+    assets = [_FakeAsset(1, MediaKind.VIDEO, "/media/1.mp4")]
     payload = adapt_for_platform(
-        master_body="new video", media_assets=assets, platform=Platform.TIKTOK
+        master_body="new video", media_assets=assets, platform=Platform.PINTEREST
     )
 
     assert payload.media == []
     assert any("does not support that media type" in warning for warning in payload.warnings)
+
+
+def test_an_image_on_tiktok_goes_out_as_its_photo_post() -> None:
+    # TikTok's plain post is a video; its photo post takes the image instead
+    # of the image being dropped.
+    assets = [_FakeAsset(1, MediaKind.IMAGE, "/media/1.png")]
+    payload = adapt_for_platform(
+        master_body="new photo", media_assets=assets, platform=Platform.TIKTOK
+    )
+
+    assert payload.post_format == "CAROUSEL"
+    assert [m.id for m in payload.media] == [1]
 
 
 def test_as_dict_is_json_shaped() -> None:

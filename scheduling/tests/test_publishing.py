@@ -26,6 +26,7 @@ from content.models import Post, PostStatus, PostTarget, PostTargetState
 from content.services.posts import create_post
 from scheduling import publishing, tasks
 from scheduling.services import schedule_post
+from scheduling.tests.media import an_image
 from workspaces.models import Membership
 from workspaces.services import approvals
 
@@ -33,7 +34,13 @@ pytestmark = pytest.mark.django_db
 
 
 def _scheduled_post(workspace: Any, user: Any, *, body: str = "New drop is live") -> Post:
-    post = create_post(workspace=workspace, author=user, master_body=body)
+    # One image: the test account is Instagram, which publishes nothing without media.
+    post = create_post(
+        workspace=workspace,
+        author=user,
+        master_body=body,
+        media_assets=[an_image(workspace)],
+    )
     schedule_post(
         post=post,
         delivery_mode="AUTO_PUBLISH",
@@ -89,7 +96,11 @@ def test_rendered_payload_is_what_preview_would_have_returned(
 
     preview = auth_client.post(
         "/api/v1/posts/preview/",
-        {"master_body": post.master_body, "platforms": ["instagram"]},
+        {
+            "master_body": post.master_body,
+            "media_asset_ids": [m.pk for m in post.ordered_media()],
+            "platforms": ["instagram"],
+        },
         format="json",
     )
 
@@ -461,7 +472,10 @@ def test_role_revoked_after_scheduling_blocks_publish(
     the two must not have their approval still count.
     """
     post = create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="New drop",
+        media_assets=[an_image(advanced_workspace)],
     )
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)
@@ -500,7 +514,10 @@ def test_role_revoked_recheck_is_not_retried(
     human decision (re-approve, reschedule) can move this forward, and Beat
     must not keep re-trying it every minute in the meantime."""
     post = create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="New drop",
+        media_assets=[an_image(advanced_workspace)],
     )
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)
@@ -535,7 +552,10 @@ def test_a_demoted_but_still_admin_approver_still_counts(
     would still be senior enough. Modelled here the more reachable way: an
     ADMIN stays an ADMIN, and publish proceeds."""
     post = create_post(
-        workspace=advanced_workspace, author=contributor_user, master_body="New drop"
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="New drop",
+        media_assets=[an_image(advanced_workspace)],
     )
     post = approvals.submit_for_review(post, actor=contributor_user)
     post = approvals.approve(post, actor=admin_user)

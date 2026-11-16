@@ -42,13 +42,15 @@ from common.mail import Email, get_mail_sender
 from common.ratelimit import ProviderRateLimiter
 from content.models import (
     DeliveryMode,
+    Platform,
     Post,
     PostStatus,
     PostTarget,
     PostTargetState,
     ProviderState,
 )
-from content.services.adaptation import render_post
+from content.services.adaptation import UNSUPPORTED_MEDIA, render_post
+from content.services.rules import format_rule
 from scheduling.journal import TargetJournal, publish_media
 from workspaces.services import approvals
 
@@ -71,15 +73,16 @@ class NoConnectedAccountsError(OCCSError):
     default_detail = "Connect at least one account before scheduling an auto-publish post."
 
 
-def build_targets(post: Post) -> list[PostTarget]:
-    """One target per publishable connected account, created when the post is
-    scheduled rather than when it fires.
+class MediaDoesNotFitError(OCCSError):
+    """Per platform, keyed like the options error, so the editor marks
+    the platform whose content type the media cannot make."""
 
-    Doing it at schedule time is what makes the calendar honest: the user can
-    see where a post is going before it goes, and `idempotency_key` — which
-    must survive every retry — is minted once here rather than by whichever
-    attempt happens to run first.
-    """
+    default_code = "media_does_not_fit"
+    default_detail = "This post's media does not make a post on every platform it goes to."
+
+
+def publish_accounts(post: Post) -> list[SocialAccount]:
+    """The connected accounts this post goes to."""
     accounts = list(channel_services.active_accounts(post.workspace))
     # The editor's per-platform switch: a post planned for some platforms goes
     # only to those. An empty plan is every connected account, as before — a
@@ -89,6 +92,49 @@ def build_targets(post: Post) -> list[PostTarget]:
     # S18: a template that chose its accounts publishes to those only.
     if post.planned_accounts:
         accounts = [account for account in accounts if account.pk in post.planned_accounts]
+    return accounts
+
+
+def ensure_media_fits(post: Post) -> None:
+    """Refuse an auto-publish the provider would refuse for its media.
+
+    The renderer already moves a post to the content type its media makes; this
+    is the case where no type fits (an image-only platform given a video, a
+    platform that needs media given none, more items than any type takes).
+    Caught here, the person scheduling can fix it; caught at publish, the post
+    fails at its slot with nobody watching.
+    """
+    platforms = list(dict.fromkeys(account.platform for account in publish_accounts(post)))
+    problems: dict[str, dict[str, str]] = {}
+    for platform, payload in render_post(post, platforms).items():
+        spec = format_rule(platform, payload.post_format)
+        if (
+            spec is not None
+            and len(payload.media) >= spec.min_media
+            and not any(UNSUPPORTED_MEDIA in warning for warning in payload.warnings)
+        ):
+            continue
+        label = Platform(platform).label
+        problems[platform] = {
+            "post_format": (
+                f"{label} cannot publish this media as any of its content types. "
+                f"Change the media, or turn {label} off for this post."
+            )
+        }
+    if problems:
+        raise MediaDoesNotFitError(detail=problems)
+
+
+def build_targets(post: Post) -> list[PostTarget]:
+    """One target per publishable connected account, created when the post is
+    scheduled rather than when it fires.
+
+    Doing it at schedule time is what makes the calendar honest: the user can
+    see where a post is going before it goes, and `idempotency_key` — which
+    must survive every retry — is minted once here rather than by whichever
+    attempt happens to run first.
+    """
+    accounts = publish_accounts(post)
     if not accounts:
         raise NoConnectedAccountsError(detail={"workspace": post.workspace_id})
 

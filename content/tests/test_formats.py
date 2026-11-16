@@ -20,7 +20,7 @@ import pytest
 
 from content.models import MediaKind, Platform, PostFormat
 from content.services.adaptation import adapt_for_platform
-from content.services.rules import PLATFORM_RULES, format_rule, formats_for
+from content.services.rules import PLATFORM_RULES, fitting_format, format_rule, formats_for
 
 pytestmark = pytest.mark.django_db
 
@@ -95,18 +95,20 @@ class TestResolution:
 
 
 class TestAdaptationUsesTheFormat:
-    def test_a_reel_keeps_one_video_where_the_carousel_would_keep_ten(self) -> None:
+    def test_a_reel_given_three_videos_goes_out_as_a_carousel(self) -> None:
+        # The media decides the shape when the chosen one cannot carry it:
+        # three videos make a carousel, not a reel with two thrown away.
         videos = [_Asset(index, MediaKind.VIDEO) for index in range(1, 4)]
 
-        reel = adapt_for_platform(
+        payload = adapt_for_platform(
             master_body="Hello",
             media_assets=videos,
             platform=Platform.INSTAGRAM,
             post_format=PostFormat.REEL,
         )
 
-        assert len(reel.media) == 1
-        assert any("at most 1" in warning for warning in reel.warnings)
+        assert payload.post_format == PostFormat.CAROUSEL
+        assert len(payload.media) == 3
 
     def test_a_carousel_keeps_the_carousels_cap(self) -> None:
         images = [_Asset(index) for index in range(1, 12)]
@@ -120,14 +122,25 @@ class TestAdaptationUsesTheFormat:
 
         assert len(carousel.media) == 10
 
-    def test_a_reel_drops_an_image_because_its_format_takes_video(self) -> None:
-        # Platform-level, Instagram allows images. Format-level, a reel does
-        # not — which is the whole point of moving the constraint (P4-05).
+    def test_a_reel_given_an_image_goes_out_as_a_post(self) -> None:
+        # Platform-level, Instagram allows images; format-level, a reel does
+        # not (P4-05). The image is kept and the shape follows it.
         payload = adapt_for_platform(
             master_body="Hello",
             media_assets=[_Asset(1, MediaKind.IMAGE)],
             platform=Platform.INSTAGRAM,
             post_format=PostFormat.REEL,
+        )
+
+        assert payload.post_format == PostFormat.FEED
+        assert [m.id for m in payload.media] == [1]
+
+    def test_media_no_content_type_takes_is_still_dropped_and_said(self) -> None:
+        # A pin is an image: a video has no Pinterest shape to move to.
+        payload = adapt_for_platform(
+            master_body="Hello",
+            media_assets=[_Asset(1, MediaKind.VIDEO)],
+            platform=Platform.PINTEREST,
         )
 
         assert payload.media == []
@@ -227,3 +240,61 @@ def test_an_instagram_post_is_one_image_and_a_pin_never_a_video() -> None:
         assert rule is not None
         assert rule.allowed_media_kinds == {MediaKind.IMAGE}, platform
     assert format_rule(Platform.INSTAGRAM, PostFormat.FEED).max_media == 1  # type: ignore[union-attr]
+
+
+class TestTheMediaDecidesTheShape:
+    """`fitting_format`: the chosen type while the media fits it, else the
+    first declared type it does fit. Read from the table, so one rule serves
+    every platform."""
+
+    IMAGE, VIDEO = MediaKind.IMAGE, MediaKind.VIDEO
+
+    @pytest.mark.parametrize(
+        ("kinds", "expected"),
+        [
+            ([IMAGE], PostFormat.FEED),
+            ([VIDEO], PostFormat.REEL),
+            ([IMAGE, IMAGE], PostFormat.CAROUSEL),
+            ([IMAGE, VIDEO, IMAGE], PostFormat.CAROUSEL),
+        ],
+    )
+    def test_instagram_left_on_post_follows_its_media(
+        self, kinds: list[str], expected: str
+    ) -> None:
+        assert fitting_format(Platform.INSTAGRAM, PostFormat.FEED, kinds) == expected
+
+    def test_a_choice_the_media_still_fits_is_kept(self) -> None:
+        # A story takes one image or one video: the person's pick stands.
+        assert fitting_format(Platform.INSTAGRAM, PostFormat.STORY, [MediaKind.VIDEO]) == (
+            PostFormat.STORY
+        )
+        assert (
+            fitting_format(Platform.LINKEDIN, PostFormat.CAROUSEL, [MediaKind.IMAGE] * 3)
+            == PostFormat.CAROUSEL
+        )
+
+    def test_a_carousel_cut_down_to_one_image_becomes_a_post(self) -> None:
+        assert fitting_format(Platform.INSTAGRAM, PostFormat.CAROUSEL, [MediaKind.IMAGE]) == (
+            PostFormat.FEED
+        )
+
+    def test_the_same_rule_reads_another_platforms_table(self) -> None:
+        # TikTok: a video is its plain post, images are its photo post.
+        assert fitting_format(Platform.TIKTOK, PostFormat.FEED, [MediaKind.VIDEO]) == (
+            PostFormat.FEED
+        )
+        assert fitting_format(Platform.TIKTOK, PostFormat.FEED, [MediaKind.IMAGE] * 2) == (
+            PostFormat.CAROUSEL
+        )
+
+    def test_when_nothing_fits_the_choice_stands(self) -> None:
+        # No media for Instagram, a video for Pinterest, eleven for a carousel:
+        # nothing to move to, so scheduling is what refuses it.
+        assert fitting_format(Platform.INSTAGRAM, PostFormat.FEED, []) == PostFormat.FEED
+        assert fitting_format(Platform.PINTEREST, PostFormat.FEED, [MediaKind.VIDEO]) == (
+            PostFormat.FEED
+        )
+        assert (
+            fitting_format(Platform.INSTAGRAM, PostFormat.CAROUSEL, [MediaKind.IMAGE] * 11)
+            == PostFormat.CAROUSEL
+        )

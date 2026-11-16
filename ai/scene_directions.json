@@ -1,0 +1,3610 @@
+{
+ "slow-unbox": {
+  "label": "Slow unbox",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "close-up at eye level on a closed gift box on a table.",
+  "camera": "slow dolly in for the whole clip.",
+  "sound": "the lid sliding off the cardboard, over room tone.",
+  "avoid": "the box changing size.",
+  "composer": "the end card over 8–10 s.",
+  "beats": [
+   [
+    0,
+    2,
+    "the closed box, with a hand resting on the lid."
+   ],
+   [
+    2,
+    5,
+    "the lid lifts straight up and out of frame."
+   ],
+   [
+    5,
+    8,
+    "light falls across {product} inside the box."
+   ],
+   [
+    8,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "gift-reveal": {
+  "label": "Gift reveal",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "close-up on a wrapped present on a table.",
+  "camera": "static for 0–6 s, then a slow dolly in for 6–10 s.",
+  "sound": "ribbon and paper rustle.",
+  "beats": [
+   [
+    0,
+    2,
+    "a hand pulls the ribbon."
+   ],
+   [
+    2,
+    6,
+    "the paper folds open."
+   ],
+   [
+    6,
+    10,
+    "{product} sits revealed in the open paper."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "first-look": {
+  "label": "First look",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium shot at a table, {person} holding the unopened box toward the lens.",
+  "camera": "handheld with a light micro-shake.",
+  "sound": "cardboard and room tone, with no speech.",
+  "beats": [
+   [
+    0,
+    2,
+    "{person} looks from the box to the lens."
+   ],
+   [
+    2,
+    5,
+    "opens the flaps."
+   ],
+   [
+    5,
+    8,
+    "lifts {product} and turns the label to the camera."
+   ],
+   [
+    8,
+    10,
+    "holds it and smiles."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "stair-unbox": {
+  "label": "Loft stair unbox",
+  "premium": true,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "{person} sitting on an open-tread loft staircase, a shipping box on their knees.",
+  "camera": "handheld.",
+  "sound": "cardboard, the room's quiet.",
+  "beats": [
+   [
+    0,
+    2,
+    "{person} sits with the box on their knees, the lid half open."
+   ],
+   [
+    2,
+    5,
+    "opens the box."
+   ],
+   [
+    5,
+    8,
+    "lifts {product} and turns it once in the window light."
+   ],
+   [
+    8,
+    10,
+    "holds it toward the lens."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "doorstep-delivery": {
+  "label": "Doorstep delivery",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "top-down on a parcel on a doormat.",
+  "camera": "handheld, following the hands a moment late.",
+  "sound": "tape tearing and cardboard.",
+  "beats": [
+   [
+    0,
+    2,
+    "the parcel on the mat; hands enter with a key."
+   ],
+   [
+    2,
+    4,
+    "the key slits the tape."
+   ],
+   [
+    4,
+    7,
+    "the flaps fold back."
+   ],
+   [
+    7,
+    10,
+    "{product} is lifted out into daylight."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "pour-shot": {
+  "label": "Pour proof",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "close-up at counter height.",
+  "camera": "slow dolly in toward the bowl for the whole clip, with no zoom and no focus change.",
+  "subject": "{product}, held in one right hand above a white ceramic bowl.",
+  "sound": "the soft sound of the pour.",
+  "avoid": "a second bottle; a second hand.",
+  "beats": [
+   [
+    0,
+    2,
+    "the hand lifts {product} into frame from the right edge."
+   ],
+   [
+    2,
+    6,
+    "the hand tilts it, and one steady stream pours into the bowl."
+   ],
+   [
+    6,
+    8,
+    "the pour stops, and the hand turns the label square to the camera."
+   ],
+   [
+    8,
+    10,
+    "the hand holds still while the surface in the bowl settles."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "market-stroll": {
+  "label": "Market stroll",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium shot at eye level in a market aisle.",
+  "camera": "truck right at walking pace for the whole clip.",
+  "sound": "market murmur.",
+  "avoid": "other brands' labels readable on the stalls.",
+  "beats": [
+   [
+    0,
+    2,
+    "{person} walks into frame along the stalls."
+   ],
+   [
+    2,
+    5,
+    "picks {product} up from a stall."
+   ],
+   [
+    5,
+    8,
+    "turns the label to the camera."
+   ],
+   [
+    8,
+    10,
+    "holds it still at chest height."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "hand-turn": {
+  "label": "Hand turn 360",
+  "premium": false,
+  "route": "F",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up at eye level against a clean background.",
+  "camera": "static.",
+  "sound": "studio room tone.",
+  "avoid": "a full spin; text on the back that is not in the reference photos.",
+  "beats": [
+   [
+    0,
+    3,
+    "the hand holds {product} with the front to the camera."
+   ],
+   [
+    3,
+    7,
+    "a half-turn shows the side and the back."
+   ],
+   [
+    7,
+    10,
+    "it turns back to the front and stays still."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "morning-ritual": {
+  "label": "Morning ritual",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium close-up on the counter in morning light.",
+  "camera": "handheld, following the hands.",
+  "sound": "a kettle or a tap, and birds outside.",
+  "beats": [
+   [
+    0,
+    2,
+    "morning light on the counter; a hand reaches in."
+   ],
+   [
+    2,
+    6,
+    "the routine with {product}."
+   ],
+   [
+    6,
+    8,
+    "the hand sets it down, label out."
+   ],
+   [
+    8,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "bag-check": {
+  "label": "Bag check",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium close-up, an open bag held toward the lens.",
+  "camera": "handheld.",
+  "sound": "a zip and a rustle.",
+  "beats": [
+   [
+    0,
+    2,
+    "the bag opens toward the lens."
+   ],
+   [
+    2,
+    5,
+    "a hand pulls {product} out."
+   ],
+   [
+    5,
+    8,
+    "holds it up to the camera."
+   ],
+   [
+    8,
+    10,
+    "a small tilt, so the label catches the light."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "close-detail": {
+  "label": "Close to the lens",
+  "premium": false,
+  "route": "F",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "shot": "macro, {product} almost touching the lens.",
+  "camera": "a focus pull for 0–2 s, a dolly out for 2–6 s, then static for 6–10 s.",
+  "sound": "room tone.",
+  "beats": [
+   [
+    0,
+    2,
+    "{product} fills the frame, soft, and the focus lands on the label."
+   ],
+   [
+    2,
+    6,
+    "the camera dollies out to show all of it."
+   ],
+   [
+    6,
+    10,
+    "the hand turns it so the light rakes across the texture."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "trail-test": {
+  "label": "Trail test",
+  "premium": true,
+  "route": "2S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "sound": "wind and footsteps on gravel.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 5,
+    "beats": [
+     [
+      0,
+      2,
+      "{person} walks the trail and holds {product} up beside their face."
+     ],
+     [
+      2,
+      5,
+      "uses it."
+     ]
+    ],
+    "camera": "handheld selfie, following {person}"
+   },
+   {
+    "use": "frame",
+    "start": 5,
+    "end": 10,
+    "beats": [
+     [
+      5,
+      10,
+      "the view, with {product} in hand in the foreground."
+     ]
+    ],
+    "camera": "a slow pan right"
+   }
+  ],
+  "origin": "revised"
+ },
+ "street-carry": {
+  "label": "Street carry",
+  "premium": true,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium shot, {person} walking down a city street.",
+  "camera": "dolly out at walking pace for 0–6 s, then static for 6–10 s.",
+  "sound": "street traffic and footsteps.",
+  "avoid": "passers-by in sharp focus.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} walks toward the lens, {product} carried in view."
+   ],
+   [
+    3,
+    6,
+    "glances at the camera."
+   ],
+   [
+    6,
+    8,
+    "stops."
+   ],
+   [
+    8,
+    10,
+    "lifts {product} to the lens."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "flat-lay": {
+  "label": "Flat lay",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "top-down on a wooden table.",
+  "camera": "static, top-down.",
+  "sound": "soft taps as each item lands.",
+  "beats": [
+   [
+    0,
+    3,
+    "an empty surface; the first items are placed."
+   ],
+   [
+    3,
+    7,
+    "more items, one at a time."
+   ],
+   [
+    7,
+    9,
+    "{product} is set in the centre."
+   ],
+   [
+    9,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "reaction-reveal": {
+  "label": "Reaction + reveal",
+  "premium": true,
+  "route": "3S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "composer": "a hard cut at 4 s; the hook over shot 1 and the call to action over shot 3.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      4,
+      "{person} glances up, eyebrows raised, eyes on something just out of frame."
+     ]
+    ],
+    "camera": "slow dolly in"
+   },
+   {
+    "use": "photo",
+    "start": 4,
+    "end": 7,
+    "beats": [
+     [
+      4,
+      7,
+      "{product}, with light gliding across the label."
+     ]
+    ],
+    "camera": "static macro"
+   },
+   {
+    "use": "photo",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "{product}, still."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "revised"
+ },
+ "mirror-try-on": {
+  "label": "Mirror try-on",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium shot, {person} facing a mirror, the reflection visible.",
+  "camera": "slow dolly in.",
+  "sound": "room tone.",
+  "avoid": "the reflection not matching the person.",
+  "beats": [
+   [
+    0,
+    2,
+    "{person} faces the mirror with {product} in hand."
+   ],
+   [
+    2,
+    6,
+    "applies or wears it."
+   ],
+   [
+    6,
+    8,
+    "turns the head to check."
+   ],
+   [
+    8,
+    10,
+    "smiles at the reflection."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "before-after": {
+  "label": "Old way, new way",
+  "premium": false,
+  "route": "2S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "side_by_side": true,
+  "sound": "the sounds of each task.",
+  "avoid": "different hands or a different light in the two halves.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 5,
+    "beats": [
+     [
+      0,
+      5,
+      "the hands do the task the usual way, slowly and awkwardly: {problem}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "frame",
+    "start": 5,
+    "end": 10,
+    "beats": [
+     [
+      5,
+      10,
+      "the same hands do the same task with {product}, quickly and cleanly."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "revised"
+ },
+ "get-ready": {
+  "label": "Get ready with me",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "shot": "medium close-up at a vanity, as a front camera sees it.",
+  "camera": "static.",
+  "sound": "room tone.",
+  "avoid": "make-up appearing before it is applied.",
+  "beats": [
+   [
+    0,
+    2,
+    "{person} waves at the lens, without speaking."
+   ],
+   [
+    2,
+    7,
+    "step 1, with {product}."
+   ],
+   [
+    7,
+    12,
+    "step 2, with the second product."
+   ],
+   [
+    12,
+    15,
+    "turns to show the final look."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "seaside-wear": {
+  "label": "Seaside wear",
+  "premium": true,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium shot on a terrace above the sea.",
+  "camera": "a slow arc, a quarter turn around {person}.",
+  "light": "golden hour cinematography, with warm flare from the low sun.",
+  "sound": "waves, distant gulls and wind.",
+  "beats": [
+   [
+    0,
+    2,
+    "the view, with {person} in frame."
+   ],
+   [
+    2,
+    6,
+    "{person} turns to the camera, wearing {product}."
+   ],
+   [
+    6,
+    8,
+    "touches it."
+   ],
+   [
+    8,
+    10,
+    "smiles."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "beach-day": {
+  "label": "Beach day",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "overhead, {person} lying on a beach towel.",
+  "camera": "static, top-down, with micro-shake.",
+  "sound": "waves, with no speech.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} lies on the towel."
+   ],
+   [
+    3,
+    6,
+    "lifts {product} into the sun."
+   ],
+   [
+    6,
+    10,
+    "turns to the lens and laughs."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "swatch-test": {
+  "label": "Swatch test",
+  "premium": false,
+  "route": "F",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "shot": "close-up of a forearm on a white surface.",
+  "camera": "static macro.",
+  "sound": "a soft swipe.",
+  "avoid": "a shade different from the product's own.",
+  "composer": "drops the frame rate to 12 fps for the stop-motion feel.",
+  "beats": [
+   [
+    0,
+    2,
+    "a clean arm, with {product} just above it."
+   ],
+   [
+    2,
+    5,
+    "{product} swipes across the skin, and a swatch appears."
+   ],
+   [
+    5,
+    8,
+    "a fingertip blends it."
+   ],
+   [
+    8,
+    10,
+    "{product} is set down beside the swatch."
+   ]
+  ],
+  "fps": 12,
+  "origin": "revised"
+ },
+ "floor-read": {
+  "label": "Floor break",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "floor level, low angle, {person} lying on a patterned rug.",
+  "camera": "static, at floor level.",
+  "sound": "a quiet room.",
+  "beats": [
+   [
+    0,
+    2,
+    "{person} lies on the rug, using {product}."
+   ],
+   [
+    2,
+    5,
+    "keeps using it."
+   ],
+   [
+    5,
+    7,
+    "looks up at the lens."
+   ],
+   [
+    7,
+    10,
+    "tilts {product} toward the camera."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "desk-break": {
+  "label": "Desk break",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium shot at eye level, like a laptop camera on the desk.",
+  "camera": "static, locked off, with no movement, no zoom and no focus change.",
+  "sound": "quiet room tone and keyboard taps.",
+  "avoid": "a second person; extra products.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} types on the laptop, then glances at the camera."
+   ],
+   [
+    3,
+    5,
+    "pushes the laptop aside with one hand and picks up {product}."
+   ],
+   [
+    5,
+    8,
+    "uses {product} once, unhurried."
+   ],
+   [
+    8,
+    10,
+    "holds {product} up to the lens, label facing the camera, and smiles."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "macro-sizzle": {
+  "label": "Macro sizzle",
+  "premium": false,
+  "route": "F",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "shot": "macro tabletop, {product} on a rustic board.",
+  "camera": "slow dolly in.",
+  "sound": "the crack and crumbs falling on wood.",
+  "beats": [
+   [
+    0,
+    2,
+    "the whole {product} on the board."
+   ],
+   [
+    2,
+    6,
+    "hands break it open, and crumbs fall."
+   ],
+   [
+    6,
+    8,
+    "the texture, close."
+   ],
+   [
+    8,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "tap-through": {
+  "label": "Tap-through",
+  "premium": false,
+  "route": "F",
+  "capture": "device_screen",
+  "base": 10,
+  "shot": "a hand holding a phone toward the camera.",
+  "camera": "static.",
+  "sound": "a soft tap.",
+  "beats": [
+   [
+    0,
+    2,
+    "the phone in hand, screen to the lens."
+   ],
+   [
+    2,
+    4,
+    "one thumb tap."
+   ],
+   [
+    4,
+    8,
+    "the phone tilts slightly toward the lens."
+   ],
+   [
+    8,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "feature-in-15": {
+  "label": "Feature in 15",
+  "premium": false,
+  "route": "F",
+  "capture": "device_screen",
+  "base": 10,
+  "shot": "a phone on a desk.",
+  "camera": "static for 0–6 s, then a slow dolly in for 6–10 s.",
+  "sound": "room tone.",
+  "beats": [
+   [
+    0,
+    2,
+    "the hand lifts the phone into frame."
+   ],
+   [
+    2,
+    6,
+    "the thumb scrolls once."
+   ],
+   [
+    6,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "app-walkthrough": {
+  "label": "App walkthrough",
+  "premium": false,
+  "route": "Reel",
+  "capture": "device_screen",
+  "base": 10,
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      2,
+      "the hand brings the phone closer."
+     ],
+     [
+      2,
+      4,
+      "the thumb hovers, then taps."
+     ]
+    ],
+    "camera": "slow dolly in"
+   },
+   {
+    "use": "screen",
+    "start": 4,
+    "end": 7,
+    "beats": [
+     [
+      4,
+      7,
+      "the first screenshot."
+     ]
+    ]
+   },
+   {
+    "use": "screen",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "the second screenshot, with \"Done in seconds\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "gate-app": {
+  "label": "On the go app",
+  "premium": false,
+  "route": "F",
+  "capture": "device_screen",
+  "base": 10,
+  "shot": "a hand holding a phone up on the move, the street soft behind.",
+  "camera": "handheld, following at walking pace.",
+  "sound": "street ambience and footsteps.",
+  "beats": [
+   [
+    0,
+    3,
+    "walking, the phone held out."
+   ],
+   [
+    3,
+    6,
+    "a glance down at the screen."
+   ],
+   [
+    6,
+    8,
+    "one thumb tap."
+   ],
+   [
+    8,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "gym-tablet": {
+  "label": "Gym tablet",
+  "premium": false,
+  "route": "F",
+  "capture": "device_screen",
+  "base": 10,
+  "shot": "a tablet held up in a bright gym.",
+  "camera": "slow dolly in.",
+  "sound": "gym echo and a distant weight clank.",
+  "beats": [
+   [
+    0,
+    3,
+    "the tablet tilts toward the lens."
+   ],
+   [
+    3,
+    7,
+    "a finger scrolls once."
+   ],
+   [
+    7,
+    10,
+    "hold."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "reaction-demo": {
+  "label": "Reaction + demo",
+  "premium": false,
+  "route": "Reel",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      4,
+      "{person} looks at the phone, eyebrows up, with a half laugh of disbelief."
+     ]
+    ],
+    "camera": "slow dolly in"
+   },
+   {
+    "use": "screen",
+    "start": 4,
+    "end": 7,
+    "beats": [
+     [
+      4,
+      7,
+      "the app's screen."
+     ]
+    ]
+   },
+   {
+    "use": "screen",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "the result screen."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "space-tour": {
+  "label": "Space tour",
+  "premium": false,
+  "route": "3S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "sound": "the room's quiet.",
+  "avoid": "people; objects moving.",
+  "shots": [
+   {
+    "use": "photo",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "through the entrance."
+     ]
+    ],
+    "camera": "dolly in, gimbal-smooth"
+   },
+   {
+    "use": "photo",
+    "start": 3,
+    "end": 7,
+    "beats": [
+     [
+      3,
+      7,
+      "along the main room."
+     ]
+    ],
+    "camera": "dolly in with gentle parallax"
+   },
+   {
+    "use": "photo",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "onto one detail."
+     ]
+    ],
+    "camera": "slow dolly in"
+   }
+  ],
+  "origin": "revised"
+ },
+ "room-reveal": {
+  "label": "Room reveal",
+  "premium": true,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "a wide shot of a styled room in soft daylight.",
+  "camera": "a slow pan right for 0–7 s, then static on {product} for 7–10 s.",
+  "sound": "the room's quiet.",
+  "avoid": "people; anything in the room moving.",
+  "beats": [
+   [
+    0,
+    7,
+    "across the room."
+   ],
+   [
+    7,
+    10,
+    "{product} in its place, still."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "shop-tour": {
+  "label": "Your shop tour",
+  "premium": false,
+  "route": "Reel",
+  "capture": "phone_ugc",
+  "base": 10,
+  "sound": "the shop's ambient sound.",
+  "shots": [
+   {
+    "use": "place",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "through the open door."
+     ]
+    ],
+    "camera": "dolly in"
+   },
+   {
+    "use": "place",
+    "start": 3,
+    "end": 6,
+    "beats": [
+     [
+      3,
+      6,
+      "along the counter."
+     ]
+    ],
+    "camera": "dolly in"
+   },
+   {
+    "use": "photo",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "{product} on its shelf, with light shifting slowly across it."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "the call to action."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "made-by-hand": {
+  "label": "Made by hand",
+  "premium": true,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "close-up on a workbench in a small workshop, in window light.",
+  "camera": "static for 0–3 s, a slow dolly in for 3–7 s, then a rack focus for 7–10 s.",
+  "sound": "tools on wood.",
+  "beats": [
+   [
+    0,
+    3,
+    "the workshop, its tools and the light."
+   ],
+   [
+    3,
+    7,
+    "the hands give {product} its finishing touch."
+   ],
+   [
+    7,
+    10,
+    "the focus moves to the finished piece on the bench."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "packing-order": {
+  "label": "Packing your order",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "top-down on a packing table.",
+  "camera": "static, top-down.",
+  "sound": "tissue paper and tape.",
+  "composer": "plays the clip at 1.25× speed.",
+  "beats": [
+   [
+    0,
+    2,
+    "the order slip on the table."
+   ],
+   [
+    2,
+    5,
+    "the hands wrap {product} in tissue."
+   ],
+   [
+    5,
+    8,
+    "place it in the box with the note."
+   ],
+   [
+    8,
+    10,
+    "close the lid."
+   ]
+  ],
+  "speed": 1.25,
+  "origin": "revised"
+ },
+ "liquid-splash": {
+  "label": "Liquid splash",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up, {product} standing alone, lit as a hero.",
+  "camera": "static.",
+  "lands": "the hero still, with droplets suspended.",
+  "sound": "a slow splash.",
+  "beats": [
+   [
+    0,
+    3,
+    "{product} stands still."
+   ],
+   [
+    3,
+    7,
+    "a splash of liquid rises around it in slow motion."
+   ],
+   [
+    7,
+    10,
+    "the droplets hang still around it."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "levitate": {
+  "label": "Levitate",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium shot, a plinth under soft rim light.",
+  "camera": "static.",
+  "lands": "the hero still on the plinth.",
+  "sound": "a soft air hum, then a light touch-down.",
+  "beats": [
+   [
+    0,
+    3,
+    "{product} floats in the air, turning slowly."
+   ],
+   [
+    3,
+    8,
+    "it drifts down."
+   ],
+   [
+    8,
+    10,
+    "it comes to rest on the plinth."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "hero-orbit": {
+  "label": "Hero orbit",
+  "premium": true,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "{product} alone on a round plinth against a seamless colour backdrop.",
+  "camera": "a 180° arc.",
+  "lands": "the hero still, front on.",
+  "sound": "studio room tone.",
+  "avoid": "the product moving; only the camera moves.",
+  "beats": [
+   [
+    0,
+    7,
+    "the camera moves halfway around {product}."
+   ],
+   [
+    7,
+    10,
+    "it settles on the front."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "offer-ad": {
+  "label": "Offer ad",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "a soft landing thud.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"{offer}\", with \"{ends}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 6,
+    "beats": [
+     [
+      2,
+      6,
+      "{product} drops into frame and settles on the surface."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "\"{body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "offer-drop": {
+  "label": "Offer drop",
+  "premium": true,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "a landing thud, then quiet.",
+  "shots": [
+   {
+    "use": "photo",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "{product} drops into frame and lands; the hook card sits over it."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "photo",
+    "start": 3,
+    "end": 7,
+    "beats": [
+     [
+      3,
+      7,
+      "one slow band of light passes across {product}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "photo",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "{product} holds still under the call to action."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "revised"
+ },
+ "black-friday": {
+  "label": "Black Friday",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "light": "chiaroscuro lighting on a low-key set.",
+  "sound": "a deep landing thud.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"{offer}\", with \"{ends}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 6,
+    "beats": [
+     [
+      2,
+      6,
+      "{product} drops into a pool of hard light on a black set and settles."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "\"{body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "summer-sale": {
+  "label": "Summer offer",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "light": "hard midday sun.",
+  "sound": "a light breeze and distant cicadas.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"{offer}\", with \"{ends}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 6,
+    "beats": [
+     [
+      2,
+      6,
+      "leaf shadows drift across {product} in hard sun."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "\"{body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "ramadan-offer": {
+  "label": "Ramadan offer",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "light": "blue hour with warm practical lights.",
+  "sound": "a quiet evening.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"{offer}\", with \"{ends}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 6,
+    "beats": [
+     [
+      2,
+      6,
+      "behind {product}, warm lantern lights glow on one after another at blue hour."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "\"{body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "eid-offer": {
+  "label": "Eid offer",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "light": "blue hour with warm practical lights.",
+  "sound": "a festive murmur in the distance.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"{offer}\", with \"{ends}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 6,
+    "beats": [
+     [
+      2,
+      6,
+      "behind {product}, string lights glow on and gently twinkle."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "\"{body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "back-to-school": {
+  "label": "Back to school",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "a pencil rolling and paper.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"{offer}\", with \"{ends}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 6,
+    "beats": [
+     [
+      2,
+      6,
+      "a hand sets {product} on a desk among notebooks and pencils."
+     ]
+    ],
+    "camera": "static, top-down"
+   },
+   {
+    "use": "card",
+    "start": 6,
+    "end": 8,
+    "beats": [
+     [
+      6,
+      8,
+      "\"{body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "value-stack": {
+  "label": "Three reasons, no talking",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "studio room tone.",
+  "shots": [
+   {
+    "use": "photo",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "a soft band of light passes across {product} from left to right."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "photo",
+    "start": 3,
+    "end": 7,
+    "beats": [
+     [
+      3,
+      7,
+      "a soft shadow drifts slowly across the surface beside {product}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "photo",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "{product} holds still in even light."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "revised"
+ },
+ "value-prop": {
+  "label": "Value prop",
+  "premium": false,
+  "route": "Reel",
+  "capture": "",
+  "base": 10,
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "the promise, \"{hook}\"."
+     ]
+    ]
+   },
+   {
+    "use": "cutout",
+    "start": 3,
+    "end": 5,
+    "beats": [
+     [
+      3,
+      5,
+      "benefit 1, \"{claim1}\"."
+     ]
+    ]
+   },
+   {
+    "use": "cutout",
+    "start": 5,
+    "end": 7,
+    "beats": [
+     [
+      5,
+      7,
+      "benefit 2, \"{claim2}\"."
+     ]
+    ]
+   },
+   {
+    "use": "cutout",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "benefit 3, \"{claim3}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "lineup": {
+  "label": "The lineup",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "studio room tone.",
+  "shots": [
+   {
+    "use": "photo",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "past {product_1}, under the hook."
+     ]
+    ],
+    "camera": "truck left"
+   },
+   {
+    "use": "photo",
+    "start": 2,
+    "end": 5,
+    "beats": [
+     [
+      2,
+      5,
+      "past {product_2}."
+     ]
+    ],
+    "camera": "truck left"
+   },
+   {
+    "use": "photo",
+    "start": 5,
+    "end": 8,
+    "beats": [
+     [
+      5,
+      8,
+      "past {product_3}."
+     ]
+    ],
+    "camera": "truck left"
+   },
+   {
+    "use": "photo",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "all of them, still, under the call to action."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "revised"
+ },
+ "variant-swipe": {
+  "label": "Variant swipe",
+  "premium": false,
+  "route": "Reel",
+  "capture": "",
+  "base": 10,
+  "shots": [
+   {
+    "use": "cutout",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "variant 1."
+     ]
+    ]
+   },
+   {
+    "use": "cutout",
+    "start": 3,
+    "end": 5,
+    "beats": [
+     [
+      3,
+      5,
+      "variant 2."
+     ]
+    ]
+   },
+   {
+    "use": "cutout",
+    "start": 5,
+    "end": 7,
+    "beats": [
+     [
+      5,
+      7,
+      "variant 3."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "mosaic-reveal": {
+  "label": "Mosaic reveal",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "studio room tone.",
+  "shots": [
+   {
+    "use": "grid",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "every photo at once, with the hook."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 3,
+    "end": 8,
+    "beats": [
+     [
+      3,
+      8,
+      "one slow band of light passes across {product}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "proof-card": {
+  "label": "Customer quote",
+  "premium": false,
+  "route": "Reel",
+  "capture": "studio_hero",
+  "base": 10,
+  "sound": "studio room tone.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      4,
+      "\"{review}\", with \"{review_author}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 4,
+    "end": 8,
+    "beats": [
+     [
+      4,
+      8,
+      "one slow band of light passes across {product}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "myth-fact": {
+  "label": "Myth vs fact",
+  "premium": false,
+  "route": "Reel",
+  "capture": "phone_ugc",
+  "base": 10,
+  "sound": "room tone.",
+  "shots": [
+   {
+    "use": "card",
+    "start": 0,
+    "end": 2,
+    "beats": [
+     [
+      0,
+      2,
+      "\"Myth: {hook}\", struck through."
+     ]
+    ]
+   },
+   {
+    "use": "card",
+    "start": 2,
+    "end": 5,
+    "beats": [
+     [
+      2,
+      5,
+      "\"Fact: {body}\"."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 5,
+    "end": 8,
+    "beats": [
+     [
+      5,
+      8,
+      "one slow band of light passes across {product}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "chat-reveal": {
+  "label": "Chat reveal",
+  "premium": false,
+  "route": "Reel",
+  "capture": "phone_ugc",
+  "base": 10,
+  "sound": "a message pop on each bubble, added by the composer.",
+  "shots": [
+   {
+    "use": "chat",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      4,
+      "the question and the answer as chat bubbles."
+     ]
+    ]
+   },
+   {
+    "use": "photo",
+    "start": 4,
+    "end": 8,
+    "beats": [
+     [
+      4,
+      8,
+      "one slow band of light passes across {product}."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "card",
+    "start": 8,
+    "end": 10,
+    "beats": [
+     [
+      8,
+      10,
+      "\"{cta}\"."
+     ]
+    ]
+   }
+  ],
+  "origin": "revised"
+ },
+ "founder-story": {
+  "label": "Founder story",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "proud and plain, like telling a friend why they started.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} looks up from {product} to the lens and says: \"{hook}\""
+   ],
+   [
+    3,
+    8,
+    "says: \"{body}\""
+   ],
+   [
+    8,
+    12,
+    "lifts {product} into frame."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\", and nods."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "three-reasons": {
+  "label": "3 reasons",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "sure of it, slightly amused that people still ask.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} says: \"{hook}\""
+   ],
+   [
+    3,
+    7,
+    "says reason 1."
+   ],
+   [
+    7,
+    11,
+    "says reason 2, with {product} in hand."
+   ],
+   [
+    11,
+    15,
+    "says reason 3, then smiles."
+   ]
+  ],
+  "origin": "revised"
+ },
+ "myth-vs-fact": {
+  "label": "Myth vs fact (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "patient, about to clear something up.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} shakes their head slightly and says: \"{hook}\""
+   ],
+   [
+    3,
+    8,
+    "says: \"{body}\""
+   ],
+   [
+    8,
+    12,
+    "shows {product} to the lens."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "quick-tip": {
+  "label": "Quick tip (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "helpful, letting the viewer in on a trick.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} says: \"{hook}\""
+   ],
+   [
+    3,
+    9,
+    "shows the tip with {product}, using both hands."
+   ],
+   [
+    9,
+    12,
+    "says why it works."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "customer-letter": {
+  "label": "Customer letter (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "warm, glad someone asked.",
+  "composer": "the question shown as a card over 0–4 s.",
+  "beats": [
+   [
+    0,
+    4,
+    "{person} reads the question from a phone, then looks up."
+   ],
+   [
+    4,
+    9,
+    "says: \"{body}\""
+   ],
+   [
+    9,
+    12,
+    "lifts {product} to the lens."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "expert-take": {
+  "label": "Expert take (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "calm authority; they do this every day.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} looks up from their work and says: \"{hook}\""
+   ],
+   [
+    3,
+    7,
+    "names the problem."
+   ],
+   [
+    7,
+    12,
+    "says what works, with {product} in hand."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "investigation": {
+  "label": "I looked into it (hidden)",
+  "premium": false,
+  "route": "3S",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "curious and a little sceptical, then convinced.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 5,
+    "beats": [
+     [
+      0,
+      5,
+      "{person} walks, looks around and says: \"{hook}\""
+     ]
+    ],
+    "camera": "handheld selfie, following {person}"
+   },
+   {
+    "use": "frame",
+    "start": 5,
+    "end": 10,
+    "beats": [
+     [
+      5,
+      10,
+      "the finding: {product}'s label, close, in {person}'s hand."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "frame",
+    "start": 10,
+    "end": 15,
+    "beats": [
+     [
+      10,
+      15,
+      "{person} says: \"{body}\", then \"{cta}\""
+     ]
+    ],
+    "camera": "static selfie"
+   }
+  ],
+  "origin": "revised"
+ },
+ "underdog": {
+  "label": "Underdog story (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "quietly determined, a small team against big brands.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} says: \"{hook}\""
+   ],
+   [
+    3,
+    7,
+    "says why they started."
+   ],
+   [
+    7,
+    12,
+    "rests a hand on {product} and says: \"{body}\""
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "green-screen": {
+  "label": "Green-screen take (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "background": "the product's photo, placed behind the person by the composer. The model renders the person alone, against a plain backdrop.",
+  "attitude": "excited to show something.",
+  "beats": [
+   [
+    0,
+    4,
+    "{person} points up and behind and says: \"{hook}\""
+   ],
+   [
+    4,
+    9,
+    "says: \"{body}\""
+   ],
+   [
+    9,
+    12,
+    "gives the proof in one line."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "comment-reply": {
+  "label": "Reply to a comment",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "relaxed and honest, answering a friend.",
+  "composer": "the comment bubble over 0–3 s.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} looks at the phone, reading the comment."
+   ],
+   [
+    3,
+    9,
+    "looks up and says: \"{body}\""
+   ],
+   [
+    9,
+    12,
+    "lifts {product} to the lens."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "problem-to-app": {
+  "label": "Problem → app (hidden)",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "fed up with the old way, relieved by the new one.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} says: \"{hook}\""
+   ],
+   [
+    3,
+    7,
+    "holds up the phone and says: \"{body}\""
+   ],
+   [
+    7,
+    12,
+    "turns the phone's screen to the lens; the screen is added by the composer."
+   ],
+   [
+    12,
+    15,
+    "says: \"{cta}\""
+   ]
+  ],
+  "origin": "revised"
+ },
+ "street-question": {
+  "label": "Street question (hidden)",
+  "premium": false,
+  "route": "2S",
+  "capture": "phone_ugc",
+  "base": 15,
+  "attitude": "caught off guard, then genuinely keen.",
+  "composer": "the question as a caption over shot 1, and a punch-in on {product} at the end.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      4,
+      "a handheld microphone moves toward {person}, who holds {product}."
+     ]
+    ],
+    "camera": "handheld"
+   },
+   {
+    "use": "frame",
+    "start": 4,
+    "end": 15,
+    "beats": [
+     [
+      4,
+      12,
+      "{person} answers: \"{body}\""
+     ],
+     [
+      12,
+      15,
+      "lifts {product} toward the lens."
+     ]
+    ],
+    "camera": "handheld"
+   }
+  ],
+  "origin": "revised"
+ },
+ "two-chairs": {
+  "label": "Two chairs (hidden)",
+  "premium": false,
+  "route": "3S",
+  "capture": "phone_ugc",
+  "base": 15,
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 5,
+    "beats": [
+     [
+      0,
+      5,
+      "{person_a} asks: \"{hook}\""
+     ]
+    ],
+    "camera": "static medium shot of {person_a}"
+   },
+   {
+    "use": "frame",
+    "start": 5,
+    "end": 12,
+    "beats": [
+     [
+      5,
+      12,
+      "{person_b} answers: \"{body}\""
+     ]
+    ],
+    "camera": "static medium shot of {person_b}"
+   },
+   {
+    "use": "frame",
+    "start": 12,
+    "end": 15,
+    "beats": [
+     [
+      12,
+      15,
+      "{product} on the side table, with no speech."
+     ]
+    ],
+    "camera": "static close-up"
+   }
+  ],
+  "origin": "revised"
+ },
+ "car-chat": {
+  "label": "Car conversation (hidden)",
+  "premium": false,
+  "route": "2S",
+  "capture": "phone_ugc",
+  "base": 15,
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 5,
+    "beats": [
+     [
+      0,
+      5,
+      "the driver asks: \"{hook}\""
+     ]
+    ],
+    "camera": "static, from the dashboard on the driver"
+   },
+   {
+    "use": "frame",
+    "start": 5,
+    "end": 15,
+    "beats": [
+     [
+      5,
+      12,
+      "the passenger answers: \"{body}\""
+     ],
+     [
+      12,
+      15,
+      "the passenger glances at {product} and lifts it."
+     ]
+    ],
+    "camera": "static, from the dashboard on the passenger"
+   }
+  ],
+  "origin": "revised"
+ },
+ "ingredient-orbit": {
+  "label": "Ingredients around it",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up, {product} centred on a low plinth.",
+  "camera": "static, locked off.",
+  "subject": "{product}, plus three ingredients from its identity card: {ingredient_1}, {ingredient_2} and {ingredient_3}.",
+  "lands": "the approved still with the ingredients around the base.",
+  "sound": "a soft air whoosh as each ingredient passes, over studio room tone.",
+  "avoid": "any ingredient that is not on the identity card; any ingredient covering the label.",
+  "shown_when": "the identity card lists at least three ingredients.",
+  "beats": [
+   [
+    0,
+    3,
+    "{product} stands alone in the light."
+   ],
+   [
+    3,
+    7,
+    "the three ingredients drift in from the edges and circle it slowly."
+   ],
+   [
+    7,
+    10,
+    "they settle around its base, and nothing moves."
+   ]
+  ],
+  "origin": "new"
+ },
+ "exploded-view": {
+  "label": "Every part",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium shot, {product} centred against a plain backdrop.",
+  "camera": "static.",
+  "subject": "{product}, made of the parts listed on its identity card: {parts}.",
+  "lands": "the whole product, exactly as in the first frame.",
+  "sound": "soft mechanical slides, and a click as it closes.",
+  "avoid": "parts that are not on the identity card; parts changing shape; movement on more than one axis.",
+  "shown_when": "the product is physical and its card lists its parts. It is hidden for food and services.",
+  "beats": [
+   [
+    0,
+    3,
+    "{product} stands whole."
+   ],
+   [
+    3,
+    6,
+    "its parts slide apart along one vertical axis, evenly spaced."
+   ],
+   [
+    6,
+    10,
+    "they slide back together and close with a click."
+   ]
+  ],
+  "origin": "new"
+ },
+ "light-sweep": {
+  "label": "Light reveal",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up from a low angle, against a dark seamless backdrop.",
+  "camera": "static.",
+  "light": "chiaroscuro lighting; one soft strip light moves across the set.",
+  "lands": "the approved hero still, fully lit.",
+  "sound": "a soft airy whoosh that follows the sweep.",
+  "avoid": "the label unreadable in the last 3 s; lens flare across the label.",
+  "beats": [
+   [
+    0,
+    2,
+    "near darkness; a rim light traces the edge of {product}."
+   ],
+   [
+    2,
+    7,
+    "a soft band of light sweeps across {product} from left to right."
+   ],
+   [
+    7,
+    10,
+    "{product} is fully lit and still."
+   ]
+  ],
+  "origin": "new"
+ },
+ "freeze-moment": {
+  "label": "Frozen splash",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up, {product} in mid-air.",
+  "camera": "a slow 90° arc to the right around {product}, for the whole clip.",
+  "subject": "{product} inside a frozen burst of {material}: water for drinks and skincare, powder for cosmetics, crumbs for food.",
+  "lands": "the approved hero still, with the label square to the camera.",
+  "sound": "near silence, with a faint airy hush.",
+  "avoid": "droplets moving or falling; the product rotating (only the camera moves).",
+  "beats": [
+   [
+    0,
+    3,
+    "the camera starts on the side of {product}; every droplet hangs still."
+   ],
+   [
+    3,
+    8,
+    "the camera travels around it; time stays frozen."
+   ],
+   [
+    8,
+    10,
+    "the camera stops square on the label."
+   ]
+  ],
+  "origin": "new"
+ },
+ "colour-morph": {
+  "label": "Every colour",
+  "premium": false,
+  "route": "FL",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up against a neutral grey backdrop.",
+  "camera": "static.",
+  "subject": "{product} in {variant_a} at the start and in {variant_b} at the end.",
+  "frames": "the first frame is a real photo of variant A and the last frame is a real photo of variant B, taken from the same angle in the same light.",
+  "avoid": "the shape changing during the wipe; any colour that is not in the two photos.",
+  "shown_when": "the product has two variant photos taken from the same angle.",
+  "beats": [
+   [
+    0,
+    4,
+    "variant A stands still."
+   ],
+   [
+    4,
+    8,
+    "one smooth colour wipe passes over {product} from top to bottom."
+   ],
+   [
+    8,
+    10,
+    "variant B stands still."
+   ]
+  ],
+  "origin": "new"
+ },
+ "scale-check": {
+  "label": "Real size",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium close-up at eye level on a counter.",
+  "camera": "static.",
+  "subject": "{product}, with a plain white coffee mug beside it for scale.",
+  "sound": "room tone, and a soft knock as it is lifted.",
+  "avoid": "the product changing size between beats; an oversized mug.",
+  "beats": [
+   [
+    0,
+    3,
+    "{product} stands alone on the counter."
+   ],
+   [
+    3,
+    6,
+    "a hand picks it up."
+   ],
+   [
+    6,
+    10,
+    "the hand holds it still beside the mug."
+   ]
+  ],
+  "origin": "new"
+ },
+ "problem-fix": {
+  "label": "Problem, then fixed",
+  "premium": false,
+  "route": "2S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "sound": "room tone, a small clatter in shot 1, and a clean click in shot 2.",
+  "avoid": "an exaggerated mess; a face showing disgust.",
+  "composer": "a hard cut at 4 s, and the caption {hook} over shot 1.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      2,
+      "the problem in plain view: {problem}, taken from the brief's buyer situation and top objection (S17-34)."
+     ],
+     [
+      2,
+      4,
+      "the hands try the usual way and give up."
+     ]
+    ],
+    "camera": "handheld with micro-shake"
+   },
+   {
+    "use": "frame",
+    "start": 4,
+    "end": 10,
+    "beats": [
+     [
+      4,
+      7,
+      "the hands use {product}."
+     ],
+     [
+      7,
+      10,
+      "the result, still, with the label to the camera."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "new"
+ },
+ "three-steps": {
+  "label": "How to, in 3 steps",
+  "premium": false,
+  "route": "3S",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "sound": "the sounds of each step, close.",
+  "avoid": "the hands changing between shots (same sleeves, same rings); the surface changing.",
+  "composer": "a number (1, 2, 3) in the corner of each shot, and a cut on each step.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "the hands do step 1: {step_1}."
+     ]
+    ],
+    "camera": "static, top-down"
+   },
+   {
+    "use": "frame",
+    "start": 3,
+    "end": 6,
+    "beats": [
+     [
+      3,
+      6,
+      "the hands do step 2: {step_2}."
+     ]
+    ],
+    "camera": "static, top-down"
+   },
+   {
+    "use": "frame",
+    "start": 6,
+    "end": 9,
+    "beats": [
+     [
+      6,
+      9,
+      "the hands do step 3, and the result is visible: {step_3}."
+     ]
+    ],
+    "camera": "static, top-down"
+   },
+   {
+    "use": "end",
+    "start": 9,
+    "end": 10,
+    "beats": [
+     [
+      9,
+      10,
+      "the end card."
+     ]
+    ]
+   }
+  ],
+  "numbers": true,
+  "origin": "new"
+ },
+ "satisfying": {
+  "label": "Oddly satisfying",
+  "premium": false,
+  "route": "L",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "shot": "close-up, top-down or at 45°.",
+  "camera": "static.",
+  "lands": "the first frame, so the clip loops without a seam.",
+  "sound": "the sound of the action, close and crisp.",
+  "avoid": "a second action; any part breaking.",
+  "beats": [
+   [
+    0,
+    2,
+    "the hands rest beside {product}."
+   ],
+   [
+    2,
+    8,
+    "one tactile action, done slowly and once: {action} (a click, a peel, a snap, a scoop or a twist)."
+   ],
+   [
+    8,
+    10,
+    "everything returns to exactly how it started."
+   ]
+  ],
+  "origin": "new"
+ },
+ "texture-sound": {
+  "label": "Sound on",
+  "premium": false,
+  "route": "F",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "shot": "macro, very close, with the plane of focus on the texture.",
+  "camera": "slow dolly in for the whole clip.",
+  "sound": "the scoop, crunch or fizz, recorded close and loud over silence. This is the one scene where the model's sound leads: the composer leaves the music bed off or lowers it well under.",
+  "avoid": "liquid or crumbs moving with no visible cause.",
+  "beats": [
+   [
+    0,
+    3,
+    "a spoon or a fingertip moves toward the texture of {product}."
+   ],
+   [
+    3,
+    8,
+    "it scoops, crunches or fizzes, close and loud."
+   ],
+   [
+    8,
+    10,
+    "it pulls away and the texture settles."
+   ]
+  ],
+  "origin": "new"
+ },
+ "put-to-test": {
+  "label": "Put to the test",
+  "premium": false,
+  "route": "2S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shown_when": "the brand has approved the test as a claim (S17-36). Without an approved claim, the scene is hidden for that product.",
+  "sound": "the sound of the test, then quiet.",
+  "avoid": "any damage shown; a result more dramatic than the claim; numbers on screen.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 5,
+    "beats": [
+     [
+      0,
+      2,
+      "{product} in place."
+     ],
+     [
+      2,
+      5,
+      "the test: {test} (for example water poured over it, a drop onto a cushion, or a stretch)."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "frame",
+    "start": 5,
+    "end": 10,
+    "beats": [
+     [
+      5,
+      8,
+      "the result, close: {product} unchanged."
+     ],
+     [
+      8,
+      10,
+      "hold."
+     ]
+    ],
+    "camera": "static, closer"
+   }
+  ],
+  "origin": "new"
+ },
+ "cook-with-it": {
+  "label": "Cook with it",
+  "premium": false,
+  "route": "3S",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "sound": "a knife on the board, a sizzle, and a clink at the end.",
+  "avoid": "the label covered; ingredients the brand forbids.",
+  "shown_when": "the product is food.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "the hands chop or prepare {ingredients}."
+     ]
+    ],
+    "camera": "slow dolly in"
+   },
+   {
+    "use": "frame",
+    "start": 3,
+    "end": 7,
+    "beats": [
+     [
+      3,
+      7,
+      "{product} is poured or sprinkled into the pan or bowl, label to the camera."
+     ]
+    ],
+    "camera": "static"
+   },
+   {
+    "use": "frame",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "the finished dish, with steam rising."
+     ]
+    ],
+    "camera": "a slow 45° arc"
+   }
+  ],
+  "origin": "new"
+ },
+ "pov-use": {
+  "label": "POV",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "first-person view from eye height, with the forearms in frame.",
+  "camera": "handheld at eye height, following the hands.",
+  "sound": "the place's room tone and the sounds of use.",
+  "avoid": "any face or body other than the forearms; a third hand.",
+  "composer": "the caption \"POV: {hook}\".",
+  "beats": [
+   [
+    0,
+    2,
+    "the hands reach for {product}."
+   ],
+   [
+    2,
+    7,
+    "the hands use it: {use}."
+   ],
+   [
+    7,
+    10,
+    "the hands lift it toward the eyes, label out."
+   ]
+  ],
+  "origin": "new"
+ },
+ "showing-a-friend": {
+  "label": "Showing a friend",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "a medium two-shot at a table, at eye level.",
+  "camera": "static.",
+  "subject": "{person_a} and {person_b}, each with their lock sentence word for word.",
+  "sound": "room tone and a short laugh, with no words.",
+  "avoid": "the two faces or outfits swapping; a third person.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person_a} slides {product} across the table to {person_b}."
+   ],
+   [
+    3,
+    7,
+    "{person_b} tries it."
+   ],
+   [
+    7,
+    10,
+    "both look at it and laugh."
+   ]
+  ],
+  "origin": "new"
+ },
+ "a-day-with-it": {
+  "label": "A day with it",
+  "premium": false,
+  "route": "4S",
+  "capture": "phone_ugc",
+  "base": 15,
+  "sound": "each place's ambient sound.",
+  "avoid": "the person's face or clothes changing between shots; the product changing between shots.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 4,
+    "beats": [
+     [
+      0,
+      4,
+      "morning: {person} picks up {product} from the bedside table."
+     ]
+    ],
+    "camera": "handheld"
+   },
+   {
+    "use": "frame",
+    "start": 4,
+    "end": 8,
+    "beats": [
+     [
+      4,
+      8,
+      "the commute: {person} walks with {product} in hand."
+     ]
+    ],
+    "camera": "handheld follow"
+   },
+   {
+    "use": "frame",
+    "start": 8,
+    "end": 12,
+    "beats": [
+     [
+      8,
+      12,
+      "at work: {person} uses {product} at the desk."
+     ]
+    ],
+    "camera": "handheld"
+   },
+   {
+    "use": "frame",
+    "start": 12,
+    "end": 15,
+    "beats": [
+     [
+      12,
+      15,
+      "evening: {person} sets {product} down at home, label out."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "new"
+ },
+ "fit-check": {
+  "label": "Fit check",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "a full-length mirror selfie, the phone at chest height.",
+  "camera": "static; the mirror shows the shot.",
+  "sound": "room tone and the rustle of fabric.",
+  "avoid": "the reflection not matching; the phone covering the product; the clothes changing.",
+  "shown_when": "the product is worn.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} faces the mirror, wearing {product}."
+   ],
+   [
+    3,
+    6,
+    "turns to the side."
+   ],
+   [
+    6,
+    9,
+    "turns to show the back."
+   ],
+   [
+    9,
+    10,
+    "faces the front again."
+   ]
+  ],
+  "origin": "new"
+ },
+ "outfit-switch": {
+  "label": "Outfit switch",
+  "premium": false,
+  "route": "FL",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "full-length, from the front.",
+  "camera": "static.",
+  "frames": "the first frame is the avatar in outfit A and the last frame is the avatar in outfit B wearing the product, both approved stills.",
+  "sound": "a whoosh on the spin.",
+  "avoid": "the face or body changing through the spin.",
+  "beats": [
+   [
+    0,
+    4,
+    "{person} stands in outfit A."
+   ],
+   [
+    4,
+    5,
+    "one quick spin."
+   ],
+   [
+    5,
+    10,
+    "{person} stands in outfit B, wearing {product}."
+   ]
+  ],
+  "origin": "new"
+ },
+ "shared-table": {
+  "label": "Shared table",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium wide, along a table.",
+  "camera": "truck right along the table at walking pace, for the whole clip.",
+  "light": "golden hour.",
+  "sound": "a murmur of voices with no clear words, cutlery, and a clink of glasses at the end.",
+  "avoid": "more people than the cast; faces swapping.",
+  "beats": [
+   [
+    0,
+    4,
+    "the table with plates and glasses, and the people talking."
+   ],
+   [
+    4,
+    8,
+    "{product} passes from hand to hand."
+   ],
+   [
+    8,
+    10,
+    "a toast and a laugh."
+   ]
+  ],
+  "origin": "new"
+ },
+ "packed-for-trip": {
+  "label": "Packed for the trip",
+  "premium": false,
+  "route": "L",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "top-down on an open bag on a bed.",
+  "camera": "static, top-down.",
+  "lands": "the approved still of the bag with {product} on top.",
+  "sound": "rustling fabric and the zip.",
+  "beats": [
+   [
+    0,
+    6,
+    "the hands pack folded clothes and travel things."
+   ],
+   [
+    6,
+    8,
+    "{product} goes in last, on top, label up."
+   ],
+   [
+    8,
+    10,
+    "the hands pull the zip half closed, with {product} still in view."
+   ]
+  ],
+  "origin": "new"
+ },
+ "night-out": {
+  "label": "Night out",
+  "premium": false,
+  "route": "F",
+  "capture": "phone_ugc",
+  "base": 10,
+  "shot": "medium close-up, on a street at night.",
+  "camera": "handheld, gentle.",
+  "light": "neon gel lighting, magenta and teal, with reflections on wet pavement.",
+  "sound": "the street at night, distant traffic and footsteps.",
+  "avoid": "readable signs; sharp faces in the crowd.",
+  "beats": [
+   [
+    0,
+    3,
+    "{person} walks into the light under a neon sign."
+   ],
+   [
+    3,
+    7,
+    "{person} uses {product}: {use}."
+   ],
+   [
+    7,
+    10,
+    "{person} looks at the lens with a half smile."
+   ]
+  ],
+  "origin": "new"
+ },
+ "every-season": {
+  "label": "Every season",
+  "premium": false,
+  "route": "FL",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up, {product} centred on the same surface throughout.",
+  "camera": "static.",
+  "frames": "the first frame is the product in the summer set and the last frame is the product in the winter set, both approved stills from the same angle.",
+  "avoid": "the product moving or changing in any way.",
+  "beats": [
+   [
+    0,
+    3,
+    "{product} on a sunlit summer table."
+   ],
+   [
+    3,
+    7,
+    "the set changes around it: the light cools, leaves turn, and snow begins to fall outside the window."
+   ],
+   [
+    7,
+    10,
+    "the same {product} in a winter setting."
+   ]
+  ],
+  "origin": "new"
+ },
+ "launch-tease": {
+  "label": "Coming soon",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "medium close-up against a dark backdrop.",
+  "camera": "static.",
+  "light": "chiaroscuro lighting.",
+  "lands": "the approved hero still.",
+  "sound": "cloth sliding, then quiet.",
+  "avoid": "the shape under the cloth not matching the product's silhouette.",
+  "composer": "the date card \"{launch_date}\" over 7–10 s.",
+  "beats": [
+   [
+    0,
+    4,
+    "a silhouette under a dark cloth, lit from behind."
+   ],
+   [
+    4,
+    7,
+    "the cloth slides off to the left."
+   ],
+   [
+    7,
+    10,
+    "{product} is lit and still."
+   ]
+  ],
+  "origin": "new"
+ },
+ "bundle-build": {
+  "label": "Build the bundle",
+  "premium": false,
+  "route": "L",
+  "capture": "studio_hero",
+  "base": 10,
+  "shot": "top-down on an open gift box.",
+  "camera": "static, top-down.",
+  "subject": "{product_1}, {product_2} and {product_3}, the products in the bundle (S17-21).",
+  "lands": "the approved still of the full box.",
+  "sound": "a soft drop for each product.",
+  "avoid": "products changing size; products that are not in the bundle.",
+  "composer": "the bundle price card.",
+  "beats": [
+   [
+    0,
+    2,
+    "the empty box."
+   ],
+   [
+    2,
+    7,
+    "the products drop in, one at a time."
+   ],
+   [
+    7,
+    10,
+    "a hand lays a ribbon across the top, and the products stay in view."
+   ]
+  ],
+  "origin": "new"
+ },
+ "service-result": {
+  "label": "The result",
+  "premium": false,
+  "route": "FL",
+  "capture": "phone_ugc",
+  "base": 10,
+  "frames": "the first and last frames are the brand's own real before and after photos, from its place photos (S17-28). They are never invented.",
+  "shot": "the same angle as the two photos.",
+  "camera": "static.",
+  "sound": "the sounds of the work.",
+  "avoid": "a result better than the after photo; customers' faces.",
+  "shown_when": "the brand has uploaded a before and after pair.",
+  "beats": [
+   [
+    0,
+    3,
+    "before."
+   ],
+   [
+    3,
+    7,
+    "hands at work, quickly."
+   ],
+   [
+    7,
+    10,
+    "after."
+   ]
+  ],
+  "origin": "new"
+ },
+ "kitchen-pass": {
+  "label": "From our kitchen",
+  "premium": false,
+  "route": "F",
+  "capture": "macro_tabletop",
+  "base": 10,
+  "shot": "close-up on the pass.",
+  "camera": "slow dolly in.",
+  "sound": "a kitchen sizzle and the ticket bell at the end.",
+  "shown_when": "the business is a restaurant or a food service.",
+  "beats": [
+   [
+    0,
+    4,
+    "the chef's hands plate {product}, the dish."
+   ],
+   [
+    4,
+    7,
+    "a final touch: sauce, herbs or zest."
+   ],
+   [
+    7,
+    10,
+    "the plate slides onto the pass under the heat lamp."
+   ]
+  ],
+  "origin": "new"
+ },
+ "our-team": {
+  "label": "Our team at work",
+  "premium": false,
+  "route": "3S",
+  "capture": "phone_ugc",
+  "base": 10,
+  "people": "hands and backs only. Faces appear only with `real_avatars` consent (S17-13, Scale).",
+  "sound": "the place's ambient sound.",
+  "shots": [
+   {
+    "use": "frame",
+    "start": 0,
+    "end": 3,
+    "beats": [
+     [
+      0,
+      3,
+      "hands at work on {task}."
+     ]
+    ],
+    "camera": "handheld"
+   },
+   {
+    "use": "frame",
+    "start": 3,
+    "end": 7,
+    "beats": [
+     [
+      3,
+      7,
+      "a team member at work, seen over the shoulder."
+     ]
+    ],
+    "camera": "handheld"
+   },
+   {
+    "use": "frame",
+    "start": 7,
+    "end": 10,
+    "beats": [
+     [
+      7,
+      10,
+      "the finished work, or {product} on the counter."
+     ]
+    ],
+    "camera": "static"
+   }
+  ],
+  "origin": "new"
+ }
+}

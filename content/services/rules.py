@@ -13,6 +13,7 @@ price ComposeVision charges, so a constants module is the right home for it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -440,3 +441,27 @@ def format_rule(platform: str, post_format: str) -> FormatRule | None:
     served declarations — handle the `None` explicitly and visibly.
     """
     return formats_for(platform).get(post_format)
+
+
+def media_fits(spec: FormatRule, kinds: Sequence[str]) -> bool:
+    """Whether this media, as it is, makes one post of this format: the count
+    within the format's range and every item a kind it takes."""
+    return spec.min_media <= len(kinds) <= spec.max_media and all(
+        kind in spec.allowed_media_kinds for kind in kinds
+    )
+
+
+def fitting_format(platform: str, chosen: str, kinds: Sequence[str]) -> str:
+    """The content type a post goes out as: the one chosen while its media fits
+    it, otherwise the first declared type the media does fit.
+
+    The media decides the shape (one image is a post, one video a reel, several
+    a carousel), so a choice the media has outgrown follows it instead of being
+    sent with its media stripped out. When nothing fits, the choice stands and
+    scheduling refuses it (`scheduling.publishing.ensure_media_fits`).
+    """
+    formats = formats_for(platform)
+    spec = formats.get(chosen)
+    if spec is not None and media_fits(spec, kinds):
+        return chosen
+    return next((name for name, rule in formats.items() if media_fits(rule, kinds)), chosen)

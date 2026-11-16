@@ -42,9 +42,12 @@ is what the portrait prompt says.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from ai.creative_seed import SEED_VERSION
+from ai.video_look_seed import PLACES as _VIDEO_PLACES
 
 _PLAY = ["M8 5v14l11-7z"]
 
@@ -350,6 +353,10 @@ PLACES: list[dict[str, Any]] = [
     ),
 ]
 
+# S19-07: each place's room tone and depth for a video prompt (metadata only).
+for _row in PLACES:
+    _row["metadata"] = {**_VIDEO_PLACES.get(_row["key"], {}), **_row["metadata"]}
+
 _NEGATIVE = (
     "no resemblance to any real or famous person, no brand logos except the product's own, "
     "no readable text except the product's own, no extra fingers, no warped hands, no product "
@@ -360,6 +367,8 @@ _NEGATIVE = (
 #: that end its first frame, and what that capture must never look like, added
 #: to the negative. A phone video and a studio hero shot fail in different ways;
 #: one finish for all asked a levitating product to look like a phone video.
+#: The `video_*` words are the clip's (S19, §8): its format, its camera when the
+#: scene names none, and what it gets wrong in motion.
 CAPTURES: dict[str, dict[str, str]] = {
     "phone_ugc": {
         "finish": (
@@ -372,6 +381,9 @@ CAPTURES: dict[str, dict[str, str]] = {
             "over-sharpening, no studio lighting, no portrait blur, no stock-photo smile, "
             "no third hand"
         ),
+        "video_format": "shot on a phone's main camera",
+        "video_camera": "handheld with a light micro-shake",
+        "video_avoid": "no beauty-filter skin, no studio lighting, no third hand",
     },
     "studio_hero": {
         "finish": (
@@ -382,6 +394,9 @@ CAPTURES: dict[str, dict[str, str]] = {
             "no dust or fingerprints, no blown-out highlight across the label, no cluttered "
             "props, no duplicate product"
         ),
+        "video_format": "a studio product shot",
+        "video_camera": "locked off",
+        "video_avoid": "no flare or blown highlight across the label, no dust",
     },
     "macro_tabletop": {
         "finish": (
@@ -392,6 +407,9 @@ CAPTURES: dict[str, dict[str, str]] = {
             "no plastic-looking surfaces or food, no oversaturated colour, no liquid, "
             "crumbs or powder floating without a visible cause"
         ),
+        "video_format": "a macro tabletop shot",
+        "video_camera": "static",
+        "video_avoid": "no liquid, crumbs or powder moving without a visible cause",
     },
     "device_screen": {
         "finish": (
@@ -399,6 +417,9 @@ CAPTURES: dict[str, dict[str, str]] = {
             "deep focus, natural light."
         ),
         "avoid": "no invented app screens, no made-up interface text, no warped or cracked phone",
+        "video_format": "a real phone in a real hand",
+        "video_camera": "static; the hand tilts the device",
+        "video_avoid": "no invented app screens or interface text",
     },
 }
 
@@ -634,6 +655,7 @@ def _template(
     land: bool = False,
     transition: str = "",
     script_hint: str = "",
+    protect: str = "",
 ) -> dict[str, Any]:
     person_line = {
         "required": " {person} is in the frame, natural and unposed.",
@@ -668,7 +690,7 @@ def _template(
             # S17-32: what it is for, the detail that must not be lost, and
             # whether the gallery shows it at all.
             "goal": _GOAL_OVERRIDE.get(key, _GOAL_BY_CATEGORY[category]),
-            "protect": _PROTECT[key],
+            "protect": protect or _PROTECT[key],
             **({"hidden": True} if key in _HIDDEN else {}),
             **(preview_of(key) if key in PREVIEWS else {"poster": still_of(key)}),
             # S17-31: filmed towards its first frame, which the clip ends on.
@@ -2078,6 +2100,60 @@ TEMPLATES: list[dict[str, Any]] = [
         )
     ],
 ]
+
+# --- S19: each template's timed direction (`upgrade_rendering/*.md`) -----------
+#: Written by `upgrade_rendering/build_directions.py` from the scene files.
+_DIRECTION_FIELDS = (
+    "route",
+    "capture",
+    "base",
+    "shot",
+    "camera",
+    "subject",
+    "light",
+    "attitude",
+    "beats",
+    "shots",
+    "sound",
+    "avoid",
+    "lands",
+    "fps",
+    "speed",
+    "numbers",
+    "side_by_side",
+)
+#: What a scene needs from the model beyond its route (S19-09): its own sound
+#: (AU) or two or more people in one frame (MP). L and FL follow the route.
+_REQUIRES: dict[str, list[str]] = {
+    "texture-sound": ["AU"],
+    "cook-with-it": ["AU"],
+    "kitchen-pass": ["AU"],
+    "showing-a-friend": ["MP"],
+    "shared-table": ["MP"],
+}
+
+
+def _directions() -> dict[str, dict[str, Any]]:
+    raw = json.loads(Path(__file__).with_name("scene_directions.json").read_text())
+    out: dict[str, dict[str, Any]] = {}
+    for key, scene in raw.items():
+        direction = {field: scene[field] for field in _DIRECTION_FIELDS if field in scene}
+        route = str(scene.get("route") or "F")
+        direction["requires"] = [
+            *(["L"] if route == "L" else []),
+            *(["FL"] if route == "FL" else []),
+            *_REQUIRES.get(key, []),
+        ]
+        out[key] = direction
+    return out
+
+
+#: Every scene's direction, by template key: the 67 seeded templates and the 26
+#: added by S19-12.
+DIRECTIONS: dict[str, dict[str, Any]] = _directions()
+
+for _spec in TEMPLATES:
+    _spec["metadata"]["direction"] = DIRECTIONS[_spec["key"]]
 
 #: The rail, in order: key, label.
 CATEGORIES: list[tuple[str, str]] = [

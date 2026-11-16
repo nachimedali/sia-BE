@@ -11,6 +11,7 @@ from django.utils import timezone
 from content.models import PostStatus
 from content.services.posts import create_post
 from reminders.models import Reminder, ReminderState
+from scheduling.tests.media import an_image
 
 pytestmark = pytest.mark.django_db
 
@@ -84,7 +85,12 @@ def test_schedule_auto_publish_sets_scheduled_on_a_plan_with_the_feature(
 ) -> None:
     """A connected account is a precondition as of Phase 9 — scheduling now
     builds one `PostTarget` per account, so there has to be one to build."""
-    post = create_post(workspace=paid_workspace, author=user, master_body="Auto-publish me")
+    post = create_post(
+        workspace=paid_workspace,
+        author=user,
+        master_body="Auto-publish me",
+        media_assets=[an_image(paid_workspace)],
+    )
     soon = timezone.now() + dt.timedelta(days=1)
 
     response = auth_client.post(
@@ -144,7 +150,12 @@ def test_schedule_accepts_an_approved_post_when_approval_is_required(
 ) -> None:
     from workspaces.services import approvals
 
-    post = create_post(workspace=advanced_workspace, author=contributor_user, master_body="Draft")
+    post = create_post(
+        workspace=advanced_workspace,
+        author=contributor_user,
+        master_body="Draft",
+        media_assets=[an_image(advanced_workspace)],
+    )
     post = approvals.submit_for_review(post, actor=contributor_user)
     approvals.approve(post, actor=admin_user)
     soon = timezone.now() + dt.timedelta(days=1)

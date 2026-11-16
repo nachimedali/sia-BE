@@ -514,13 +514,13 @@ def test_the_admin_says_which_cost_row_a_route_is_charged_at(generation_costs) -
 # The seed
 # -----------------------------------------------------------------------------
 def test_the_seed_routes_every_task_and_the_package_overrides(plans) -> None:
-    from ai.route_seed import ROUTES
+    from ai.route_seed import PRO_ROUTES, ROUTES
 
     call_command("seed_model_routes", verbosity=0)
 
     defaults = set(AIModelRoute.objects.filter(plan__isnull=True).values_list("task", flat=True))
     assert defaults == {task.value for task in AITask}
-    assert AIModelRoute.objects.count() == len(ROUTES)
+    assert AIModelRoute.objects.count() == len(ROUTES) + len(PRO_ROUTES)
     spark = resolve(AITask.IMAGE_STUDIO, plan=plans["spark"])
     assert (spark.model, spark.params) == ("gemini-nano-banana-2.1", {"image_size": "1K"})
     essential = resolve(AITask.VIDEO_START, plan=plans["essential"])

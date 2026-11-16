@@ -24,6 +24,7 @@ from ai.models import (
     GenerationVariant,
     QualityCheck,
     QualityGateConfig,
+    VideoModelProfile,
     VideoRender,
     VoiceProfile,
 )
@@ -166,7 +167,7 @@ class AIModelRouteAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         "is_active",
         "updated_at",
     )
-    list_filter = ("task", "plan", "provider", "is_active")
+    list_filter = ("task", "plan", "provider", "is_active", "flag")
     search_fields = ("model", "fallback_model", "note")
     ordering = ("task", "plan__sort_order")
     readonly_fields = ("charged_at", "updated_by", "created_at", "updated_at")
@@ -178,6 +179,7 @@ class AIModelRouteAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         "fallback_model",
         "params",
         "is_active",
+        "flag",
         "note",
         "charged_at",
         "updated_by",
@@ -219,6 +221,45 @@ class AIModelRouteAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
             actor=obj.updated_by,
             before=before,
             after=obj.snapshot(),
+        )
+
+
+class ProfileChangeInline(AIModelRouteChangeInline):
+    fk_name = "profile"
+
+
+@admin.register(VideoModelProfile)
+class VideoModelProfileAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
+    """What each video model accepts and how it is told (S19-01). The slug is
+    the one a model route names; a slug with no row is treated cautiously (no
+    last frame, no seed, no audio). Every save is recorded below the form."""
+
+    list_display = (
+        "slug",
+        "label",
+        "budget_words",
+        "timecodes",
+        "last_frame",
+        "seed",
+        "audio",
+        "updated_at",
+    )
+    search_fields = ("slug", "label", "note")
+    readonly_fields = ("updated_by", "created_at", "updated_at")
+    inlines = (ProfileChangeInline,)
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return obj is None or not obj.changes.exists()
+
+    @transaction.atomic
+    def save_model(
+        self, request: HttpRequest, obj: VideoModelProfile, form: Any, change: bool
+    ) -> None:
+        before = VideoModelProfile.objects.get(pk=obj.pk).snapshot() if change and obj.pk else {}
+        obj.updated_by = request.user if request.user.is_authenticated else None
+        super().save_model(request, obj, form, change)
+        AIModelRouteChange.objects.create(
+            profile=obj, actor=obj.updated_by, before=before, after=obj.snapshot()
         )
 
 

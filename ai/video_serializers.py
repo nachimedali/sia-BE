@@ -97,6 +97,10 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
     prompt = serializers.CharField(
         max_length=ad_templates.DIRECTION_MAX, required=False, allow_blank=True, default=""
     )
+    #: S19-11, Pro rendering: a 720p draft at the render's seed, paid with one
+    #: of the ad's re-rolls; then the final, the draft's id, at the same seed.
+    draft = serializers.BooleanField(required=False, default=False)
+    final_of = serializers.IntegerField(required=False, allow_null=True, default=None)
 
     def validate_creative(self, value: Any) -> dict[str, Any]:
         return creative_service.video_look(value)
@@ -149,6 +153,12 @@ class RenderCheckSerializer(serializers.Serializer[Any]):
     score = serializers.FloatField(required=False, allow_null=True)
 
 
+class BeatFrameSerializer(serializers.Serializer[Any]):
+    at = serializers.FloatField()
+    label = serializers.CharField()  # type: ignore[assignment]
+    url = serializers.CharField(allow_null=True)
+
+
 class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
     output = MediaAssetSerializer(read_only=True, allow_null=True)
     lines = VideoEstimateLineSerializer(many=True, read_only=True)
@@ -161,6 +171,8 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
     charged_units = serializers.SerializerMethodField()
     #: What the machine measured on the finished file (S17-35), advisory.
     checks = RenderCheckSerializer(many=True, read_only=True)
+    #: S19-13: a still at the middle of each beat (Pro rendering), advisory.
+    beat_frames = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoRender
@@ -180,6 +192,7 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
             "keyframe",
             "labels",
             "checks",
+            "beat_frames",
             "lines",
             "render_s",
             "spec",
@@ -220,6 +233,21 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
                     "id": media_id,
                     "url": asset.file.url if asset and asset.file else None,
                     "text": text,
+                }
+            )
+        return out
+
+    @extend_schema_field(BeatFrameSerializer(many=True))
+    def get_beat_frames(self, obj: VideoRender) -> list[dict[str, Any]]:
+        assets: dict[int, MediaAsset] = self.context.get("assets", {})
+        out = []
+        for frame in obj.beat_frames or []:
+            asset = assets.get(frame.get("media"))
+            out.append(
+                {
+                    "at": frame.get("at"),
+                    "label": frame.get("label", ""),
+                    "url": asset.file.url if asset and asset.file else None,
                 }
             )
         return out

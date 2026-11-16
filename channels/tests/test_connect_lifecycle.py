@@ -21,6 +21,7 @@ from channels.models import SocialAccount, SocialAccountStatus
 from content.models import DeliveryMode, Post, PostStatus, PostTarget
 from content.services.posts import create_post
 from scheduling.services import schedule_post
+from scheduling.tests.media import an_image
 from workspaces.models import Membership, Role
 from workspaces.services.provisioning import provision_extra_workspace, provision_workspace
 
@@ -42,7 +43,13 @@ def _member(workspace: Any, role: str, email: str) -> Any:
 
 
 def _scheduled(workspace: Any, user: Any, *, in_hours: int = 24) -> Post:
-    post = create_post(workspace=workspace, author=user, master_body="Spring drop")
+    # One image: the test account is Instagram, which publishes nothing without media.
+    post = create_post(
+        workspace=workspace,
+        author=user,
+        master_body="Spring drop",
+        media_assets=[an_image(workspace)],
+    )
     return schedule_post(
         post=post,
         delivery_mode=DeliveryMode.AUTO_PUBLISH,

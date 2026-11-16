@@ -1372,6 +1372,19 @@ SUGGESTIONS = [
     for slug, label in entries
 ]
 
+
+# S19-07: what a light, a mood and a cast vibe add to a video prompt, in their
+# metadata only (`ai/video_look_seed.py`); `prompt_fragment` is untouched.
+def _with_video_look() -> None:
+    from ai.video_look_seed import BY_KIND
+
+    for rows, kind in ((LIGHTS, "light"), (MOODS, "mood"), (VIBES, "vibe")):
+        for row in rows:
+            row["metadata"] = {**BY_KIND[kind].get(row["key"], {}), **row["metadata"]}
+
+
+_with_video_look()
+
 #: The look controls that show a thumbnail (`metadata.image`, served from the
 #: frontend's `public/studio/<kind>/<key>.webp`; built by
 #: `app-FE/scripts/studio-images.py`). An option with no picture yet keeps its
