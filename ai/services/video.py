@@ -71,7 +71,15 @@ from ai.models import (
 )
 from ai.providers.base import CaptionCue, EndCard, ReelShot, VideoResult
 from ai.providers.video import get_video_composer, get_video_provider
-from ai.services import ad_templates, disclosure, graphics, quality, render_checks, rephrase
+from ai.services import (
+    ad_templates,
+    disclosure,
+    graphics,
+    quality,
+    render_checks,
+    rephrase,
+    video_prompt,
+)
 from ai.services import creative as creative_service
 from ai.services.creative import VIDEO_KINDS
 from billing.services import ledger
@@ -231,6 +239,9 @@ class Spec:
     #: The script's angle and hook style (S17-37), kept for results.
     angle: str = ""
     family: str = ""
+    #: S19-11: a draft (720p, paid by a re-roll), or the final of a draft.
+    draft: bool = False
+    final_of: VideoRender | None = None
 
     @property
     def seconds(self) -> int:
@@ -262,6 +273,8 @@ class Spec:
                 **({"offer": self.offer} if self.offer else {}),
                 **({"angle": self.angle} if self.angle else {}),
                 **({"family": self.family} if self.family else {}),
+                **({"draft": True} if self.draft else {}),
+                **({"final_of": self.final_of.pk} if self.final_of else {}),
             }
         elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
@@ -449,6 +462,8 @@ def _parse_template(
     length = common["length"]
     ad_templates.length_units(row, length.key)
     location = str(data.get("location") or "")
+    video_prompt.check_light(workspace, row, location, common["creative"])
+    video_prompt.check_capabilities(workspace, row)
     # 400 on a bad location, 404 on another brand's own place.
     ad_templates.keyframe_prompt(row, product=product, location=location, workspace=workspace)
     # A template made only from the product's photos has no first frame to pick.
@@ -463,6 +478,7 @@ def _parse_template(
     offer = (
         ad_templates.clean_offer(data.get("offer")) if row.metadata.get("needs") == "offer" else {}
     )
+    draft, final_of = _draft_or_final(workspace, data, row, source=source, length=length)
     return Spec(
         **{
             **common,
@@ -482,7 +498,75 @@ def _parse_template(
         extra_avatars=people,
         extra_products=others,
         location=location,
+        draft=draft,
+        final_of=final_of,
     )
+
+
+DRAFT_RESOLUTION = "720p"
+
+
+def _draft_or_final(
+    workspace: Workspace,
+    data: dict[str, Any],
+    row: CreativeOption,
+    *,
+    source: MediaAsset | None,
+    length: CreativeOption,
+) -> tuple[bool, VideoRender | None]:
+    """S19-11 (D4): a draft is the same render at 720p and the same seed, paid
+    with one of the ad's re-rolls; its final is the draft's spec at the route's
+    resolution, paid in units. Only with Pro rendering, only on a model that
+    honours a seed (else the final would not be the draft), and only once the
+    first frame is picked (it is what the drafts of one ad share)."""
+    draft = bool(data.get("draft"))
+    final_id = data.get("final_of")
+    if not draft and final_id is None:
+        return False, None
+    if draft and final_id is not None:
+        raise ValidationError({"draft": "A render is a draft or a final, not both."})
+    if video_prompt.active_direction(row, workspace) is None:
+        raise ValidationError({"draft": "Drafts come with Pro rendering."})
+    _, profile = video_prompt.route_profile(workspace, ad_templates.role_of(row))
+    if not profile.seed:
+        raise video_prompt.RouteCannotError(
+            "Your package's video model cannot repeat a render from its seed, so a draft "
+            "would not be what the final looks like.",
+            detail={"template": row.key, "needs": ["seed"]},
+        )
+    if source is None:
+        raise ValidationError({"source": "Pick the first frame before making a draft."})
+    if final_id is None:  # exactly one of the two is set here: this is a draft
+        return True, None
+    original = VideoRender.objects.filter(
+        workspace=workspace,
+        pk=final_id,
+        spec__draft=True,
+        status=VideoRenderStatus.SUCCEEDED,
+    ).first()
+    if original is None:
+        raise NotFound("That draft is not in this workspace.")
+    same = (
+        original.spec.get("template") == row.key
+        and original.spec.get("source") == source.pk
+        and original.spec.get("length") == length.key
+    )
+    if not same:
+        raise ValidationError(
+            {"final_of": "A final keeps its draft's template, first frame and length."}
+        )
+    return False, original
+
+
+def drafts_used(workspace: Workspace, source_id: int) -> int:
+    """The re-rolls an ad's drafts have used: one per draft of its first frame
+    that is rendering or rendered. A failed draft uses none."""
+    return VideoRender.objects.filter(
+        workspace=workspace,
+        spec__draft=True,
+        spec__source=source_id,
+        status__in=(*ACTIVE, VideoRenderStatus.SUCCEEDED),
+    ).count()
 
 
 # -----------------------------------------------------------------------------
@@ -548,13 +632,14 @@ def quote(spec: Spec, *, free: bool = False, units: bool = False) -> Quote:
     if spec.template is not None:
         label = f"{spec.length.label} · {spec.template.label}"
         render_s = int(spec.length.metadata.get("render_s", 0)) + (8 if keyframe else 0)
-        if free:
-            free_line = [(f"{label} · free", 0)]
+        if spec.draft or free:
+            # A draft is paid with one of the ad's re-rolls, never in units.
+            line = [(f"{label} · {'draft' if spec.draft else 'free'}", 0)]
             return Quote(
-                lines=free_line,
+                lines=line,
                 credits=0,
                 render_s=render_s,
-                estimate_id=_digest(free_line, 0, keyframe),
+                estimate_id=_digest(line, "draft" if spec.draft else 0, keyframe),
                 keyframe_credits=keyframe,
             )
         # A template only exists with the S17 flag on, so it is always paid
@@ -768,7 +853,10 @@ def start_render(
             )
             if existing is not None:
                 return existing
-        if priced.units:
+        if spec.draft:
+            assert spec.source is not None
+            ad_templates.require_reroll(entitlements, drafts_used(workspace, spec.source.pk))
+        elif priced.units:
             entitlements.require_video_units(priced.units, held=held_units(workspace))
         else:
             entitlements.require_credits(priced.credits, held=held_credits(workspace))
@@ -809,7 +897,8 @@ def start_render(
             avatar=spec.avatar,
             keyframe=keyframe,
             labels=disclosure.labels_for(spec.avatar),
-            seed=secrets.randbelow(SEED_RANGE),
+            # A final repeats its draft's seed (S19-11).
+            seed=spec.final_of.seed if spec.final_of else secrets.randbelow(SEED_RANGE),
         )
         if retry_of is not None:
             retry_of.review = VideoReview.RETRIED
@@ -946,17 +1035,24 @@ def _end_card(render: VideoRender) -> EndCard:
     return brand_end_card(render.workspace, render.product, title=title, call_to_action=short)
 
 
+def _template_of(render: VideoRender) -> CreativeOption | None:
+    if not render.template:
+        return None
+    return CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=render.template).first()
+
+
 def _render_clip(render: VideoRender) -> VideoResult:
-    template = (
-        CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=render.template).first()
-        if render.template
-        else None
-    )
-    if template is not None and ad_templates.shots_of(template):
-        return _render_template_reel(render, template)
+    template = _template_of(render)
+    direction = video_prompt.active_direction(template, render.workspace)
+    if template is not None and (
+        ad_templates.shots_of(template) or (direction and direction.get("shots"))
+    ):
+        return _render_template_reel(render, template, direction)
     provider = get_video_provider(workspace=render.workspace)
     if provider is None:
         raise VideoUnavailableError
+    if template is not None and direction is not None:
+        return _render_directed_clip(render, template, direction, provider)
     assert render.source is not None
     motion = (
         None
@@ -1012,17 +1108,96 @@ def _render_clip(render: VideoRender) -> VideoResult:
     return result
 
 
-def _burn_in_beats(render: VideoRender, clip: VideoResult) -> VideoResult:
+def _first_and_last(render: VideoRender, template: CreativeOption) -> tuple[bytes, bytes | None]:
+    """The clip's opening still, and for an FL scene (S19-12) its closing one:
+    two real photos — the brand's own places, or two of the product's variant
+    photos — never a drawn frame."""
+    if not ad_templates.is_two_photos(template):
+        assert render.source is not None
+        return _bytes(render.source), None
+    if template.metadata.get("needs") == "places":
+        pool = _own_places(render.workspace)
+    else:
+        assert render.product is not None
+        tags = render.product.reference_tags or {}
+        pool = [
+            asset
+            for asset in identity_photos(render.product)
+            if tags.get(str(asset.pk)) != ad_templates.SCREEN_TAG
+        ]
+    if len(pool) < 2:
+        raise VideoUnavailableError
+    return _bytes(pool[0]), _bytes(pool[-1])
+
+
+def _draft_resolution(render: VideoRender) -> dict[str, str]:
+    return {"resolution": DRAFT_RESOLUTION} if render.spec.get("draft") else {}
+
+
+def _render_directed_clip(
+    render: VideoRender, template: CreativeOption, direction: dict[str, Any], provider: Any
+) -> VideoResult:
+    """S19: one clip from the template's timed direction, compiled for the
+    model the route resolves to — never rewritten (S19-03): the rewrite flattens
+    the beats it is given. A speed-up asks the model for the longer clip the
+    composer then plays faster, so the paid length is what is delivered."""
+    seconds = float(render.spec["seconds"])
+    speed = float(direction.get("speed") or 1.0)
+    image, last_image = _first_and_last(render, template)
+    role = "end" if last_image is not None else render.spec.get("role", "start")
+    route, profile = video_prompt.route_profile(render.workspace, role)
+    audio = video_prompt.wants_audio(route, profile)
+    asked = float(profile.fit_seconds(seconds * speed))
+    context = video_prompt.context_for(render, template)
+    shot = video_prompt.shots_for(direction, asked)[0]
+    prompt = video_prompt.prompt_for(context, shot, profile, audio=audio)
+    _record_prompt(render, prompt)
+    _advance(render, *PHASES[1])
+    result: VideoResult = provider.animate(
+        image=image,
+        role="start" if last_image is not None else role,
+        prompt=prompt,
+        aspect=REEL_ASPECT,
+        duration_seconds=asked,
+        seed=render.seed,
+        **_draft_resolution(render),
+        **({"last_image": last_image} if last_image is not None else {}),
+    )
+    return _burn_in_beats(
+        render,
+        result,
+        speed=speed,
+        fps=int(direction.get("fps") or 0),
+        seconds=seconds if asked != seconds else None,
+    )
+
+
+def _burn_in_beats(
+    render: VideoRender,
+    clip: VideoResult,
+    *,
+    speed: float = 1.0,
+    fps: int = 0,
+    seconds: float | None = None,
+) -> VideoResult:
     """A single-clip template's hook, body and call to action burned in on
     their beats (S17-26), so the ad reads with the sound off. The clip keeps
     its vendor, model and length; with no composer, or one that fails, the
     clip goes out as it came — words are never worth a paid animation."""
     composer = get_video_composer()
     cues = beat_cues(dict(render.spec.get("script") or {}), float(render.spec["seconds"]))
-    if composer is None or not cues:
+    edits = speed != 1.0 or fps or seconds is not None
+    if composer is None or not (cues or edits):
         return clip
     try:
-        burned = composer.caption(clip=clip.content, captions=cues, aspect=REEL_ASPECT)
+        burned = composer.caption(
+            clip=clip.content,
+            captions=cues,
+            aspect=REEL_ASPECT,
+            speed=speed,
+            fps=fps,
+            seconds=seconds,
+        )
     except ProviderError:
         logger.warning("render %s: beats not burned in", render.pk, exc_info=True)
         return clip
@@ -1046,7 +1221,9 @@ def _record_prompt(render: VideoRender, prompt: str) -> None:
 MOVING_USES = frozenset({"frame", "photo", "place"})
 
 
-def _render_template_reel(render: VideoRender, template: CreativeOption) -> VideoResult:
+def _render_template_reel(
+    render: VideoRender, template: CreativeOption, direction: dict[str, Any] | None
+) -> VideoResult:
     """A multi-shot template (T3): one clip per `frame`, `photo` or `place`
     shot, the app screenshot set in as a still, the drawn shots (S17-33: text
     cards, cutouts on a colour field, a photo grid, chat bubbles) made in code,
@@ -1056,7 +1233,11 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
     composer = get_video_composer()
     if composer is None:
         raise VideoUnavailableError
-    shots_meta = ad_templates.shots_of(template)
+    # S19-05: with Pro rendering, each moving shot has its own beats, prompt,
+    # first frame, seed and length, from the template's direction.
+    shots_meta = (
+        _directed_shots(template, direction) if direction else ad_templates.shots_of(template)
+    )
     product = render.product
     assert product is not None
     script = dict(render.spec.get("script") or {})
@@ -1082,20 +1263,47 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
         call_to_action=script.get("cta", "")[:OVERLAY_MAX],
     )
     per_shot = round((seconds - card.seconds) / len(shots_meta), 2)
-    prompt = " ".join(
-        filter(
-            None,
-            [
-                _directed(ad_templates.motion_prompt(template), render),
-                ad_templates.avoid_line(
-                    template,
-                    ad_templates.place_forbid(
-                        template, str(render.spec.get("location") or ""), render.workspace
+    lengths = [per_shot] * len(shots_meta)
+    # Per shot: the words, the length asked of the model and the seed.
+    calls: list[tuple[str, float, int | None]] = []
+    audio = False
+    if direction:
+        planned = video_prompt.shots_for(direction, seconds - card.seconds)
+        lengths = [round(shot.end - shot.start, 2) for shot in planned]
+        route, profile = video_prompt.route_profile(render.workspace, "start")
+        audio = video_prompt.wants_audio(route, profile)
+        context = video_prompt.context_for(render, template)
+        for index, part in enumerate(planned):
+            asked = float(profile.fit_seconds(part.end - part.start))
+            call = video_prompt.on_clock(part, asked, hook=index == 0)
+            words = (
+                video_prompt.prompt_for(context, call, profile, audio=audio)
+                if part.use in MOVING_USES
+                else ""
+            )
+            # Its own seed per shot, still reproducible from the render's.
+            seed = (render.seed + index) % SEED_RANGE if render.seed is not None else None
+            calls.append((words, asked, seed))
+        # Every model call's words, in shot order, as one record.
+        prompt = "\n\n".join(words for words, _, _ in calls if words)
+    else:
+        prompt = " ".join(
+            filter(
+                None,
+                [
+                    _directed(ad_templates.motion_prompt(template), render),
+                    ad_templates.avoid_line(
+                        template,
+                        ad_templates.place_forbid(
+                            template, str(render.spec.get("location") or ""), render.workspace
+                        ),
                     ),
-                ),
-            ],
+                ],
+            )
         )
-    )
+        # One prompt and one seed for every shot, so they drift less; the
+        # models' shortest clip, which the composer trims to the shot.
+        calls = [(prompt, float(max(5, -(-per_shot // 1))), render.seed)] * len(shots_meta)
     _record_prompt(render, prompt)
     _advance(render, *PHASES[1])
     shots: list[ReelShot] = []
@@ -1108,7 +1316,7 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
         counts[use] += 1
         return picked
 
-    for shot in shots_meta:
+    for index, shot in enumerate(shots_meta):
         use = shot["use"]
         line = ad_templates.shot_line(str(shot.get("text") or ""), product, script, offer)
         overlay = line
@@ -1145,19 +1353,37 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
         clip = None
         if use in MOVING_USES:
             assert provider is not None
+            words, asked, seed = calls[index]
             clip = provider.animate(
                 image=image,
                 role="start",
-                prompt=prompt,
+                prompt=words,
                 aspect=REEL_ASPECT,
-                # The models' shortest clip; the composer trims it to the shot.
-                duration_seconds=float(max(5, -(-per_shot // 1))),
-                # One seed for every shot of the render, so they drift less.
-                seed=render.seed,
+                duration_seconds=asked,
+                seed=seed,
+                **_draft_resolution(render),
             ).content
         shots.append(
-            ReelShot(image=image, seconds=per_shot, overlay=overlay[:OVERLAY_MAX], clip=clip)
+            ReelShot(
+                image=image,
+                seconds=lengths[index],
+                overlay=overlay[:OVERLAY_MAX],
+                clip=clip,
+                badge=str(index + 1) if direction and direction.get("numbers") else "",
+            )
         )
+    if direction and direction.get("side_by_side") and len(shots) == 2:
+        # S19-06: the two halves of one frame, each playing in turn.
+        left, right = shots
+        shots = [
+            ReelShot(
+                image=left.image,
+                seconds=left.seconds + right.seconds,
+                overlay=left.overlay,
+                clip=left.clip,
+                right=right.clip,
+            )
+        ]
     result: VideoResult = composer.compose(
         shots=shots,
         aspect=REEL_ASPECT,
@@ -1166,8 +1392,22 @@ def _render_template_reel(render: VideoRender, template: CreativeOption) -> Vide
         captions=[],
         end_card=card,
         duration_seconds=seconds,
+        keep_audio=audio,
     )
     return result
+
+
+def _directed_shots(template: CreativeOption, direction: dict[str, Any]) -> list[dict[str, Any]]:
+    """The reel's shots from the direction, the end card left to the composer.
+    A template that already had shots keeps each shot's words; a scene that
+    became several shots (S19) puts the hook on the first and the call to
+    action on the last."""
+    own = ad_templates.shots_of(template)
+    planned = [shot for shot in direction["shots"] if shot.get("use") != "end"]
+    if len(own) == len(planned):
+        return [{**own[i], "use": planned[i]["use"]} for i in range(len(planned))]
+    lines = ["{hook}", *([""] * (len(planned) - 2)), "{cta}"] if len(planned) > 1 else ["{hook}"]
+    return [{"use": shot["use"], "text": lines[i]} for i, shot in enumerate(planned)]
 
 
 def _own_places(workspace: Workspace) -> list[MediaAsset]:
@@ -1295,14 +1535,18 @@ def run_render(render_id: int) -> VideoRender:
             render, "quality_gate_failed", f"{check.rejected_reason} No credits were taken."
         )
 
-    render.checks = _measure(render, result)
+    template = _template_of(render)
+    render.checks = _measure(render, result, template)
+    stills = _beat_stills(render, result, template)
     entitlements = entitlements_for(render.workspace)
     try:
         with transaction.atomic():
             locked = VideoRender.objects.select_for_update().get(pk=render.pk)
             if locked.status != VideoRenderStatus.RUNNING:
                 return locked
-            if render.units:
+            if render.spec.get("draft"):
+                pass  # paid with a re-roll: the draft row itself is the count
+            elif render.units:
                 locked.unit_charge = ledger.debit_video_units(
                     render.workspace,
                     render.units,
@@ -1317,6 +1561,7 @@ def run_render(render_id: int) -> VideoRender:
                     note=f"video render {render.pk}",
                 )
             locked.output = _persist(locked, result)
+            locked.beat_frames = _store_stills(locked, stills)
             locked.status = VideoRenderStatus.SUCCEEDED
             locked.phase = "DONE"
             locked.progress = 1.0
@@ -1343,15 +1588,47 @@ def run_render(render_id: int) -> VideoRender:
         )
 
 
-def _measure(render: VideoRender, result: VideoResult) -> list[dict[str, Any]]:
+def _beat_stills(
+    render: VideoRender, result: VideoResult, template: CreativeOption | None
+) -> list[tuple[float, str, bytes]]:
+    """S19-13: a still at the middle of each beat of a Pro render, for review.
+    Advisory, like the checks: a composer that cannot make them costs the
+    stills, never the render."""
+    direction = video_prompt.active_direction(template, render.workspace)
+    composer = get_video_composer()
+    if direction is None or composer is None:
+        return []
+    card = END_CARD_SECONDS if direction.get("shots") else 0.0
+    marks = video_prompt.beat_marks(direction, float(render.spec["seconds"]), card=card)
+    try:
+        pictures = composer.frames(clip=result.content, at=[at for at, _ in marks])
+    except ProviderError:
+        logger.warning("render %s: no beat frames", render.pk, exc_info=True)
+        return []
+    return [(at, label, picture) for (at, label), picture in zip(marks, pictures, strict=False)]
+
+
+def _store_stills(
+    render: VideoRender, stills: list[tuple[float, str, bytes]]
+) -> list[dict[str, Any]]:
+    out = []
+    for index, (at, label, picture) in enumerate(stills):
+        upload = SimpleUploadedFile(
+            f"render-{render.pk}-beat-{index}.png", picture, content_type="image/png"
+        )
+        asset = ingest_media(
+            workspace=render.workspace, upload=upload, source=MediaSource.GENERATED
+        )
+        out.append({"at": at, "label": label, "media": asset.pk})
+    return out
+
+
+def _measure(
+    render: VideoRender, result: VideoResult, template: CreativeOption | None
+) -> list[dict[str, Any]]:
     """The advisory checks on the finished file (S17-35); [] when unmeasurable."""
     from ai.models import QualityGateConfig
 
-    template = (
-        CreativeOption.objects.filter(kind=CreativeKind.AD_TEMPLATE, key=render.template).first()
-        if render.template
-        else None
-    )
     card = (template is not None and bool(ad_templates.shots_of(template))) or (
         render.mode == VideoMode.REEL and bool(render.spec.get("end_card"))
     )

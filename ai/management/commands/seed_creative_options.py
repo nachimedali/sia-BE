@@ -17,6 +17,7 @@ from ai.ad_template_seed import AD_TEMPLATE_CATALOG
 from ai.creative_i18n import translations_for
 from ai.creative_seed import CATALOG
 from ai.models import CreativeOption
+from ai.scene_seed_s19 import SCENES
 from ai.video_seed import VIDEO_CATALOG
 
 
@@ -33,7 +34,10 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args: Any, **options: Any) -> None:
         created = updated = 0
-        for kind, rows in {**CATALOG, **VIDEO_CATALOG, **AD_TEMPLATE_CATALOG}.items():
+        catalog = {**CATALOG, **VIDEO_CATALOG, **AD_TEMPLATE_CATALOG}
+        # S19-12: the Pro scenes, shown only with `pro_rendering_s19` on.
+        catalog["ad_template"] = [*catalog["ad_template"], *SCENES]
+        for kind, rows in catalog.items():
             for position, spec in enumerate(rows):
                 defaults = {**spec, "sort_order": position * 10, "is_active": True}
                 key = defaults.pop("key")

@@ -187,6 +187,7 @@ class VideoProvider(Protocol):
         resolution: str | None = None,
         audio: bool | None = None,
         seed: int | None = None,
+        last_image: bytes | None = None,
     ) -> VideoResult:
         """Animate one still into a clip (steps-plan S3).
 
@@ -199,6 +200,8 @@ class VideoProvider(Protocol):
         (`ai.services.routing`); `None` leaves the vendor's default. `seed` is
         the render's own (S17-26), the same for every shot of one render; a
         vendor that does not honour seeds ignores it, `None` sends none.
+        `last_image` (S19-09, an FL scene): `image` opens the clip and this
+        real photo closes it; only on a route whose model lands on a frame.
         """
         ...
 
@@ -213,6 +216,12 @@ class ReelShot:
     seconds: float
     overlay: str = ""
     clip: bytes | None = None
+    #: S19-06, the composer's edits: a second clip shown in the right half
+    #: while `clip` holds the left (each plays in turn, the other holds its
+    #: frame); a step number in the corner. A speed-up and a frame-rate drop
+    #: are `caption`'s, the single clips' path.
+    right: bytes | None = None
+    badge: str = ""
 
 
 @dataclass(frozen=True)
@@ -261,11 +270,30 @@ class VideoComposer(Protocol):
         captions: list[CaptionCue],
         end_card: EndCard | None,
         duration_seconds: float,
-    ) -> VideoResult: ...
+        keep_audio: bool = False,
+    ) -> VideoResult:
+        """`keep_audio` (S19-10): the clips' own sound runs under the reel,
+        joined like the pictures, the music bed ducked beneath it."""
+        ...
 
-    def caption(self, *, clip: bytes, captions: list[CaptionCue], aspect: str) -> VideoResult:
+    def caption(
+        self,
+        *,
+        clip: bytes,
+        captions: list[CaptionCue],
+        aspect: str,
+        speed: float = 1.0,
+        fps: int = 0,
+        seconds: float | None = None,
+    ) -> VideoResult:
         """Burn `captions` into one rendered clip (S17-26): the clip keeps its
-        length and its sound, only the words are added on their cues."""
+        length and its sound, only the words are added on their cues. S19-06:
+        played at `speed`, at `fps` frames a second, cut to `seconds`."""
+        ...
+
+    def frames(self, *, clip: bytes, at: list[float]) -> list[bytes]:
+        """One still (PNG) per time in `at`, in seconds (S19-13): what the
+        reviewer sees at the middle of each beat. Advisory, never a gate."""
         ...
 
 

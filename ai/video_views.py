@@ -60,6 +60,7 @@ def _context(workspace: Workspace, renders: list[VideoRender]) -> dict[str, Any]
         if render.spec.get("source") is not None:
             ids.add(render.spec["source"])
         ids.update(shot["media"] for shot in render.spec.get("shots", []))
+        ids.update(frame["media"] for frame in render.beat_frames or [])
     assets = {
         asset.pk: asset for asset in MediaAsset.objects.filter(workspace=workspace, pk__in=ids)
     }

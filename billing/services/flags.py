@@ -198,8 +198,17 @@ TEMPLATE_RULES_S18 = "template_rules_s18"
 #: default** — beta is deployed, so this one is promoted deliberately.
 TN_PAYMENTS_V1 = "tn_payments_v1"
 
+#: S19 — Pro rendering (`upgrade_rendering.md`): scenes as timed beats, one
+#: prompt per video model profile and per shot, the edits done by the composer,
+#: Growth and Scale on Gemini Omni 1.2 Flash (→ Kling 3.0 pro), native sound
+#: under the music, draft → final, and 26 new scenes. Off restores pre-step
+#: behaviour exactly: every package renders today's prompts on today's routes,
+#: and the new scenes are not shown. **Off by default**: beta is deployed.
+PRO_RENDERING_S19 = "pro_rendering_s19"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     TN_PAYMENTS_V1: False,
+    PRO_RENDERING_S19: False,
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
     PLANNING_V3: True,

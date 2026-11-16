@@ -1465,6 +1465,169 @@ TRANSLATIONS: dict[str, tuple[str, str, str, str]] = {
 }
 
 
+# S19-12: the 26 Pro scenes (`ai/scene_seed_s19.py`).
+TRANSLATIONS.update(
+    {
+        "ad_template|ingredient-orbit": (
+            "Ses ingrédients autour",
+            "Seul dans la lumière · Les ingrédients tournent · Ils se posent · Écran de fin",
+            "Gli ingredienti intorno",
+            "Da solo nella luce · Gli ingredienti girano · Si posano · Schermata finale",
+        ),
+        "ad_template|exploded-view": (
+            "Chaque pièce",
+            "Entier · Les pièces s'écartent · Elles se referment · Écran de fin",
+            "Ogni pezzo",
+            "Intero · I pezzi si separano · Si richiudono · Schermata finale",
+        ),
+        "ad_template|light-sweep": (
+            "Révélé par la lumière",
+            "Lumière de contour · Le balayage · Tout éclairé · Écran de fin",
+            "Svelato dalla luce",
+            "Luce di contorno · La passata · Tutto illuminato · Schermata finale",
+        ),
+        "ad_template|freeze-moment": (
+            "Éclaboussure figée",
+            "De profil · La caméra tourne · Face à l'étiquette · Écran de fin",
+            "Schizzo congelato",
+            "Di lato · La camera gira · Di fronte all'etichetta · Schermata finale",
+        ),
+        "ad_template|colour-morph": (
+            "Toutes les couleurs",
+            "Couleur A · Le fondu · Couleur B · Écran de fin",
+            "Tutti i colori",
+            "Colore A · La dissolvenza · Colore B · Schermata finale",
+        ),
+        "ad_template|scale-check": (
+            "Taille réelle",
+            "Sur le comptoir · On le prend · À côté du mug · Écran de fin",
+            "Dimensioni reali",
+            "Sul bancone · Lo si prende · Accanto alla tazza · Schermata finale",
+        ),
+        "ad_template|problem-fix": (
+            "Le problème, puis la solution",
+            "Le problème · La solution · Écran de fin",
+            "Il problema, poi la soluzione",
+            "Il problema · La soluzione · Schermata finale",
+        ),
+        "ad_template|three-steps": (
+            "Mode d'emploi en 3 étapes",
+            "Étape 1 · Étape 2 · Étape 3 · Écran de fin",
+            "Come si fa, in 3 passi",
+            "Passo 1 · Passo 2 · Passo 3 · Schermata finale",
+        ),
+        "ad_template|satisfying": (
+            "Étrangement satisfaisant",
+            "Départ · Le moment satisfaisant · Retour au départ",
+            "Stranamente soddisfacente",
+            "Inizio · Il momento soddisfacente · Ritorno all'inizio",
+        ),
+        "ad_template|texture-sound": (
+            "Avec le son",
+            "Une cuillère entre · Le croquant, de près · Le produit · Écran de fin",
+            "Con l'audio",
+            "Entra un cucchiaio · Il croccante, da vicino · Il prodotto · Schermata finale",
+        ),
+        "ad_template|put-to-test": (
+            "À l'épreuve",
+            "Le test · Le résultat · Écran de fin",
+            "Alla prova",
+            "Il test · Il risultato · Schermata finale",
+        ),
+        "ad_template|cook-with-it": (
+            "On cuisine avec",
+            "Préparation · On l'ajoute · Le plat · Écran de fin",
+            "Cucinaci",
+            "Preparazione · Lo si aggiunge · Il piatto · Schermata finale",
+        ),
+        "ad_template|pov-use": (
+            "Point de vue",
+            "Vos mains · On l'utilise · Terminé · Écran de fin",
+            "Punto di vista",
+            "Le tue mani · Lo si usa · Fatto · Schermata finale",
+        ),
+        "ad_template|showing-a-friend": (
+            "On le montre à un ami",
+            "On le tend · L'ami l'essaie · Ils rient · Écran de fin",
+            "Lo mostri a un amico",
+            "Lo si passa · L'amico lo prova · Ridono · Schermata finale",
+        ),
+        "ad_template|a-day-with-it": (
+            "Une journée avec",
+            "Matin · Trajet · Travail · Soir · Écran de fin",
+            "Una giornata insieme",
+            "Mattina · Tragitto · Lavoro · Sera · Schermata finale",
+        ),
+        "ad_template|fit-check": (
+            "Essayage",
+            "Le miroir · Un tour · Le détail · Écran de fin",
+            "Prova allo specchio",
+            "Lo specchio · Un giro · Il dettaglio · Schermata finale",
+        ),
+        "ad_template|outfit-switch": (
+            "Changement de tenue",
+            "S'ouvre et se ferme sur deux images dessinées ; un rendu en dessine une aujourd'hui. Bientôt.",
+            "Cambio d'outfit",
+            "Si apre e si chiude su due fotogrammi disegnati; oggi un render ne disegna uno. In arrivo.",
+        ),
+        "ad_template|shared-table": (
+            "Table partagée",
+            "La table · On se le passe · Un toast · Écran de fin",
+            "Tavola condivisa",
+            "La tavola · Passa di mano · Un brindisi · Schermata finale",
+        ),
+        "ad_template|packed-for-trip": (
+            "Dans la valise",
+            "Le sac · On le range · On ferme · Écran de fin",
+            "In valigia",
+            "La borsa · Lo si mette dentro · Si chiude · Schermata finale",
+        ),
+        "ad_template|night-out": (
+            "Soirée",
+            "Les lumières · Le produit · On sort · Écran de fin",
+            "Serata fuori",
+            "Le luci · Il prodotto · Si esce · Schermata finale",
+        ),
+        "ad_template|every-season": (
+            "Toutes les saisons",
+            "S'ouvre et se ferme sur deux images dessinées ; un rendu en dessine une aujourd'hui. Bientôt.",
+            "Ogni stagione",
+            "Si apre e si chiude su due fotogrammi disegnati; oggi un render ne disegna uno. In arrivo.",
+        ),
+        "ad_template|launch-tease": (
+            "Bientôt disponible",
+            "Silhouette · Un aperçu · La révélation · Écran de fin",
+            "Presto disponibile",
+            "Silhouette · Uno scorcio · La rivelazione · Schermata finale",
+        ),
+        "ad_template|bundle-build": (
+            "On compose le coffret",
+            "Un · Deux · Le coffret · Écran de fin",
+            "Componi il set",
+            "Uno · Due · Il set · Schermata finale",
+        ),
+        "ad_template|service-result": (
+            "Le résultat",
+            "Avant · Au travail · Après · Écran de fin",
+            "Il risultato",
+            "Prima · Al lavoro · Dopo · Schermata finale",
+        ),
+        "ad_template|kitchen-pass": (
+            "De notre cuisine",
+            "Dressé · La touche finale · Sur le passe · Écran de fin",
+            "Dalla nostra cucina",
+            "Impiattato · Il tocco finale · Al pass · Schermata finale",
+        ),
+        "ad_template|our-team": (
+            "Notre équipe au travail",
+            "Les mains au travail · Par-dessus l'épaule · Le travail fini · Écran de fin",
+            "Il nostro team al lavoro",
+            "Mani al lavoro · Da sopra la spalla · Il lavoro finito · Schermata finale",
+        ),
+    }
+)
+
+
 def translations_for(kind: str, key: str) -> dict[str, Any]:
     """The `translations` value for one seeded row, `{}` when it has none."""
     row = TRANSLATIONS.get(f"{kind}|{key}")

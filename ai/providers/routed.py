@@ -129,9 +129,15 @@ class RoutedVideoProvider:
         route = resolve_for(task, self.workspace)
         kwargs["resolution"] = resolution or route.params.get("resolution")
         kwargs["audio"] = audio if audio is not None else route.params.get("audio")
-        return _call(
-            route, model, lambda chosen: getattr(self.inner, method)(model=chosen, **kwargs)
-        )
+        fallback = {**kwargs}
+        if "fallback_audio" in route.params:
+            fallback["audio"] = route.params["fallback_audio"]
+
+        def send(chosen: str | None) -> Any:
+            sent = fallback if chosen and chosen == route.fallback_model else kwargs
+            return getattr(self.inner, method)(model=chosen, **sent)
+
+        return _call(route, model, send)
 
     def generate(
         self,
@@ -170,11 +176,16 @@ class RoutedVideoProvider:
         resolution: str | None = None,
         audio: bool | None = None,
         seed: int | None = None,
+        last_image: bytes | None = None,
     ) -> Any:
         from ai.models import AITask
 
+        if last_image is not None:
+            extra: dict[str, Any] = {"last_image": last_image}
+        else:
+            extra = {}
         return self._send(
-            AITask.VIDEO_END if role == "end" else AITask.VIDEO_START,
+            AITask.VIDEO_END if role == "end" or last_image is not None else AITask.VIDEO_START,
             "animate",
             model,
             resolution,
@@ -185,4 +196,5 @@ class RoutedVideoProvider:
             aspect=aspect,
             duration_seconds=duration_seconds,
             seed=seed,
+            **extra,
         )

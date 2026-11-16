@@ -427,10 +427,18 @@ class FakeVideoProvider:
         resolution: str | None = None,
         audio: bool | None = None,
         seed: int | None = None,
+        last_image: bytes | None = None,
     ) -> VideoResult:
         self.calls.append(prompt)
         self.requests.append(
-            {"role": role, "model": model, "resolution": resolution, "audio": audio, "seed": seed}
+            {
+                "role": role,
+                "model": model,
+                "resolution": resolution,
+                "audio": audio,
+                "seed": seed,
+                **({"last_image": True} if last_image is not None else {}),
+            }
         )
         manifest = {
             "kind": "clip",
@@ -476,6 +484,8 @@ class FakeVideoComposer:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        #: S19-13: the times each beat-frame request asked for.
+        self.frame_requests: list[list[float]] = []
 
     def compose(
         self,
@@ -487,8 +497,9 @@ class FakeVideoComposer:
         captions: list[CaptionCue],
         end_card: EndCard | None,
         duration_seconds: float,
+        keep_audio: bool = False,
     ) -> VideoResult:
-        manifest = {
+        manifest: dict[str, Any] = {
             "kind": "reel",
             "aspect": aspect,
             "seconds": duration_seconds,
@@ -500,6 +511,9 @@ class FakeVideoComposer:
                     "seconds": shot.seconds,
                     "overlay": shot.overlay,
                     "clip": shot.clip is not None,
+                    # S19-06 edits, only when asked: older manifests stay as they were.
+                    **({"right": True} if shot.right is not None else {}),
+                    **({"badge": shot.badge} if shot.badge else {}),
                 }
                 for shot in shots
             ],
@@ -518,6 +532,8 @@ class FakeVideoComposer:
                 else None
             ),
         }
+        if keep_audio:
+            manifest["keep_audio"] = True
         self.calls.append(manifest)
         return VideoResult(
             content=_fake_mp4(manifest),
@@ -528,27 +544,50 @@ class FakeVideoComposer:
             latency_ms=1,
         )
 
-    def caption(self, *, clip: bytes, captions: list[CaptionCue], aspect: str) -> VideoResult:
-        manifest = {
+    def caption(
+        self,
+        *,
+        clip: bytes,
+        captions: list[CaptionCue],
+        aspect: str,
+        speed: float = 1.0,
+        fps: int = 0,
+        seconds: float | None = None,
+    ) -> VideoResult:
+        manifest: dict[str, Any] = {
             "kind": "caption",
             "aspect": aspect,
             "clip": hashlib.sha256(clip).hexdigest()[:16],
             "captions": [[cue.text, cue.start, cue.end] for cue in captions],
         }
+        edits = {"speed": speed, "fps": fps, "seconds": seconds}
+        manifest |= {k: v for k, v in edits.items() if v not in (1.0, 0, None)}
         self.calls.append(manifest)
+        own = float(read_fake_manifest(clip).get("seconds", 0.0)) / speed
         return VideoResult(
             content=_fake_mp4(manifest),
             mime="video/mp4",
             # The clip's own length, read back from the fake clip: a burn-in
             # adds words, never seconds.
-            duration_seconds=float(read_fake_manifest(clip).get("seconds", 0.0)),
+            duration_seconds=min(own, seconds) if seconds else own,
             provider="fake",
             model="fake-composer-1",
             latency_ms=1,
         )
 
+    def frames(self, *, clip: bytes, at: list[float]) -> list[bytes]:
+        self.frame_requests.append(list(at))
+        out = []
+        for seconds in at:
+            buffer = io.BytesIO()
+            shade = int(seconds * 20) % 256
+            Image.new("RGB", (9, 16), (shade, shade, shade)).save(buffer, format="PNG")
+            out.append(buffer.getvalue())
+        return out
+
     def clear(self) -> None:
         self.calls.clear()
+        self.frame_requests.clear()
 
 
 _fake_video_provider = FakeVideoProvider()

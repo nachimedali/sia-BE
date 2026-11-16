@@ -206,3 +206,35 @@ ROUTES: list[dict[str, Any]] = [
         for task in ("video_start", "video_end")
     ),
 ]
+
+# --- S19-08: Pro rendering for Growth and Scale (`upgrade_rendering.md` §10) ---
+# Picked on price, with no live comparison (owner, 2026-11-15): the cheapest
+# model that takes a last frame and a seed, includes audio and renders 3-15 s
+# in one call. Kling 3.0 pro is the fallback (no seed). Kept out of `ROUTES`:
+# `ai/0021` iterates that list against a table with no `flag` column, and a
+# Pro row seeded unflagged would move Growth and Scale with the flag off.
+OMNI_FLASH = "google/gemini-omni-1.2-flash"
+KLING_3_PRO = "kwaivgi/kling-v3.0-pro"
+PRO_FLAG = "pro_rendering_s19"
+
+PRO_ROUTES: list[dict[str, Any]] = [
+    {
+        **_route(
+            task,
+            VIDEO,
+            OMNI_FLASH,
+            plan=plan,
+            fallback=KLING_3_PRO,
+            # Kling's audio costs 50% more and would take a 10 s unit past
+            # $2.02: the fallback renders silent (`avatar_upgrade/cost_model.py`).
+            params={"resolution": "1080p", "audio": True, "fallback_audio": False},
+            note=(
+                "Pro rendering (S19): Omni 1.2 Flash at 1080p, $0.104/s with audio; "
+                "Kling 3.0 pro, silent, on failure. Resolved only with pro_rendering_s19 on."
+            ),
+        ),
+        "flag": PRO_FLAG,
+    }
+    for plan in ("growth", "scale")
+    for task in ("video_start", "video_end")
+]

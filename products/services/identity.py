@@ -29,6 +29,8 @@ from products.services.completeness import recompute_completeness
 TEXT_MAX = {"shape": 160, "colours": 160, "keep": 200}
 LABEL_LINES = 6
 LABEL_MAX = 60
+PARTS_LINES = 6
+PART_MAX = 40
 #: The mode a clean is made in: an image of this product, held to its photos.
 CLEAN_MODE = GenerationMode.PRODUCT
 CLEAN_TAG = "front"
@@ -96,6 +98,19 @@ def clean_card(raw: Any) -> dict[str, Any]:
             {"label": f"At most {LABEL_LINES} lines of at most {LABEL_MAX} characters."}
         )
     out["label"] = [word.strip() for word in label if word.strip()]
+    # S19-12: the ingredients or parts the label lists, for the scenes that
+    # show them; optional, and never drafted by vision (it would guess).
+    parts = raw.get("parts", [])
+    if (
+        not isinstance(parts, list)
+        or len(parts) > PARTS_LINES
+        or any(not isinstance(part, str) or len(part) > PART_MAX for part in parts)
+    ):
+        raise ValidationError(
+            {"parts": f"At most {PARTS_LINES} ingredients or parts of {PART_MAX} characters."}
+        )
+    if parts:
+        out["parts"] = [part.strip() for part in parts if part.strip()]
     return out
 
 

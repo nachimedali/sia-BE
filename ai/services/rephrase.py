@@ -110,6 +110,8 @@ REFERENCE_SYSTEM = (
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 _LINK = re.compile(r"https?://|www\.", re.I)
+#: A beat's window, `0-2 s` or with an en dash (S17-31's `Timing:` line, S19's beats).
+_TIMECODE = re.compile(r"(\d+(?:\.\d+)?)\s*[-\u2013]\s*(\d+(?:\.\d+)?)\s*s\b")
 
 
 @dataclass(frozen=True)
@@ -176,10 +178,21 @@ def _clean(body: str) -> str:
 
 
 def acceptable(text: str, brief: str) -> bool:
-    """A rewrite is used only if it is a sane length, carries no link, and every
+    """A rewrite is used only if it is a sane length, carries no link, every
     number in it was already in the brief — a model asked for a picture must not
-    add a rating, a price or a count."""
-    return MIN_CHARS <= len(text) <= MAX_CHARS and adds_nothing(text, brief)
+    add a rating, a price or a count — and it kept every beat's time window
+    (S19-03): a timed brief flattened into one movement loses the ad's shape."""
+    return (
+        MIN_CHARS <= len(text) <= MAX_CHARS
+        and adds_nothing(text, brief)
+        and keeps_timecodes(text, brief)
+    )
+
+
+def keeps_timecodes(text: str, brief: str) -> bool:
+    """Every `a-b s` window of the brief is still in the rewrite."""
+    wanted = {(_digits(a), _digits(b)) for a, b in _TIMECODE.findall(brief)}
+    return wanted <= {(_digits(a), _digits(b)) for a, b in _TIMECODE.findall(text)}
 
 
 def adds_nothing(text: str, brief: str) -> bool:

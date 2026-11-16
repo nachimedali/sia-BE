@@ -133,6 +133,7 @@ class OpenRouterVideoProvider:
         resolution: str | None = None,
         audio: bool | None = None,
         seed: int | None = None,
+        last_image: bytes | None = None,
     ) -> VideoResult:
         body = self._body(prompt, aspect, duration_seconds, model, resolution, audio)
         if seed is not None:
@@ -144,6 +145,12 @@ class OpenRouterVideoProvider:
                 "frame_type": "last_frame" if role == "end" else "first_frame",
             }
         ]
+        if last_image is not None:
+            # S19-09: two real photos, the first opening the clip, this one closing it.
+            body["frame_images"] = [
+                {**image_url_part(image), "frame_type": "first_frame"},
+                {**image_url_part(last_image), "frame_type": "last_frame"},
+            ]
         return self._render(body, duration_seconds)
 
     @staticmethod

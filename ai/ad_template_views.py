@@ -89,6 +89,10 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     #: False when the template is made from the product's own photos (T3):
     #: there is no first frame to draw.
     frame = serializers.BooleanField()
+    #: S19: a Pro scene (Growth, Scale), and the needs (L, FL, AU) this
+    #: package's video model cannot meet — the estimate answers 422 for them.
+    pro = serializers.BooleanField()
+    cannot = serializers.ListField(child=serializers.CharField())
     #: Why it cannot be made for this product (`template_fit`,
     #: `needs_screenshot`), or null.
     fit = serializers.CharField(allow_null=True)
