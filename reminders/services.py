@@ -56,6 +56,7 @@ def _send_one(reminder: Reminder, moment: dt.datetime) -> None:
             subject="Time to post",
             template="reminder_packet",
             context={"post": post, "packet_url": packet_url},
+            language=post.author.language,
         )
     )
 

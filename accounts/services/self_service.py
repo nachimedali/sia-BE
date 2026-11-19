@@ -135,6 +135,7 @@ def request_email_change(user: User, *, email: str, password: str) -> User:
             "new_email": normalised,
             "confirm_url": app_url(f"/confirm-email?token={raw}"),
         },
+        language=user.language,
     )
     return user
 
@@ -262,6 +263,7 @@ def build_export(export: DataExport) -> DataExport:
                 "download_url": app_url(f"/app/settings/account?export={export.pk}#data"),
                 "days": DataExport.LINK_TTL.days,
             },
+            language=export.user.language,
         )
     )
     return export

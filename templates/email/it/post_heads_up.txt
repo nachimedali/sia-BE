@@ -1,0 +1,19 @@
+Il tuo post va online tra {{ countdown }}
+
+Ciao {{ first_name }},
+
+Un promemoria: il post qui sotto {% if auto_publish %}viene pubblicato su {{ platforms|join:", " }}{% else %}è previsto su {{ platforms|join:", " }}, e il tuo kit di pubblicazione arriva all’orario previsto{% endif %} tra {{ countdown }}.
+
+{{ slot_day }}, {{ slot_time }} ({{ timezone }}) · {{ workspace_name }}
+
+  {{ post_title }}
+  {{ caption_excerpt }}
+{% if fix_count %}
+{{ fix_count }} correzion{{ fix_count|pluralize:"e,i" }} prima dell’uscita: {{ fix_summary }}
+{% endif %}
+Rivedi il post: {{ post_url }}
+Riprogramma: {{ reschedule_url }}
+
+Va tutto bene? Non devi fare nulla. Per fermarlo, apri il post e scegli Rimuovi dalla programmazione.
+
+Ricevi questo messaggio {{ lead_time }} prima di ogni post programmato in {{ workspace_name }}.

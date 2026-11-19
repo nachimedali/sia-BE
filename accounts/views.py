@@ -77,6 +77,8 @@ class RegisterView(APIView):
             email=serializer.validated_data["email"],
             password=serializer.validated_data["password"],
             workspace_name=serializer.validated_data.get("workspace_name") or None,
+            # `LocaleMiddleware` reads the `Accept-Language` the BFF forwards.
+            language=getattr(request, "LANGUAGE_CODE", "en"),
         )
         return Response(SessionSerializer(issue_session(user)).data, status=status.HTTP_201_CREATED)
 

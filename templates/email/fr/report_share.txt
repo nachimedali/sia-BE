@@ -1,0 +1,9 @@
+Votre rapport : {{ report.name }}
+
+{{ workspace.name }} a partagé avec vous un rapport couvrant la période du {{ run.window_start|date:"j F Y" }} au {{ run.window_end|date:"j F Y" }}.
+
+{{ report_url }}
+
+Aucun compte n’est nécessaire. Les chiffres sont figés au moment où le rapport a été produit : ce lien vous montrera toujours exactement ce que vous lisez aujourd’hui.
+
+Ce lien n’est que pour vous : ne le transférez pas. Il cesse de fonctionner dans 30 jours, et la personne qui l’a envoyé peut le fermer plus tôt.

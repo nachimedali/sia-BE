@@ -116,6 +116,8 @@ REPURPOSE_MAX_SIMILARITY = 0.8
 #: judgement — "recognisably new, not the same picture" — and a second number
 #: would be a second opinion about what "too close" means.
 REFERENCE_MAX_SIMILARITY = REPURPOSE_MAX_SIMILARITY
+#: Product photos sent with a vision identity check: enough angles, bounded cost.
+VISION_REFERENCES = 3
 
 
 def run_image_quality_gate(
@@ -128,8 +130,13 @@ def run_image_quality_gate(
     identity_similarity_threshold: float,
     origin_images: list[bytes] | None = None,
     inspiration_images: list[bytes] | None = None,
+    identity_by_vision: bool = False,
 ) -> QualityResult:
-    """`origin_images` is the post being repurposed, when there is one.
+    """`identity_by_vision` (PR-24) is set for a template's first frame: the
+    product sits in a scene, where a whole-frame dHash scores it low against
+    its packshot whoever drew it, so the vision model judges identity instead.
+
+    `origin_images` is the post being repurposed, when there is one.
 
     It turns the identity check's floor into a *band*: still similar enough to
     the product's references, but no longer than `REPURPOSE_MAX_SIMILARITY` to
@@ -172,7 +179,14 @@ def run_image_quality_gate(
         reasons.append(f"resolution_and_aspect: {aspect_detail}")
 
     identity_score: float | None = None
-    if reference_images and candidate_hash is not None:
+    if reference_images and identity_by_vision:
+        same = text_provider.same_product(
+            image_bytes=content, reference_images=reference_images[:VISION_REFERENCES]
+        )
+        checks["product_identity"] = {"passed": same, "method": "vision"}
+        if not same:
+            reasons.append("product_identity: the vision check did not find the product")
+    elif reference_images and candidate_hash is not None:
         identity_score = max(_similarity_from_hash(candidate_hash, ref) for ref in reference_images)
         identity_ok = identity_score >= identity_similarity_threshold
         checks["product_identity"] = {

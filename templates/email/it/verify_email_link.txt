@@ -1,0 +1,7 @@
+Conferma il tuo indirizzo email
+
+Ti diamo il benvenuto su ComposeVision. Conferma {{ email }} per completare la configurazione del tuo spazio di lavoro:
+
+{{ verify_url }}
+
+Questo link scade tra 3 giorni e si può usare una sola volta. Se non hai creato un account, puoi ignorare questa email.

@@ -1,0 +1,9 @@
+Il tuo report: {{ report.name }}
+
+{{ workspace.name }} ha condiviso con te un report dal {{ run.window_start|date:"j F Y" }} al {{ run.window_end|date:"j F Y" }}.
+
+{{ report_url }}
+
+Non serve un account. I numeri sono fissati al momento in cui il report è stato prodotto, quindi questo link ti mostrerà sempre esattamente ciò che leggi oggi.
+
+Questo link è solo tuo: non inoltrarlo. Smette di funzionare tra 30 giorni, e chi te l’ha inviato può chiuderlo prima.

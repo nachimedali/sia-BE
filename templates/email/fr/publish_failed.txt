@@ -1,0 +1,9 @@
+Une publication programmée n’a pas pu être publiée
+
+Nous avons essayé de publier votre publication sur {{ target.platform }}, sans succès. Rien n’y a été publié et nous avons arrêté de réessayer :
+
+{{ error.message }}
+
+Ouvrez la publication pour la corriger et la reprogrammer :
+
+{{ site_url }}/app/posts/{{ post.id }}

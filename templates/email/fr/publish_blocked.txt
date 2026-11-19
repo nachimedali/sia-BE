@@ -1,0 +1,9 @@
+Une publication programmée n’a pas pu être publiée
+
+Nous avons arrêté une publication programmée avant sa mise en ligne :
+
+{{ reason }}
+
+Rien n’a été publié. Ouvrez la publication pour la revoir et la reprogrammer :
+
+{{ site_url }}/app/posts/{{ post.id }}

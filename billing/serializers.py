@@ -111,6 +111,13 @@ class PlanSerializer(serializers.ModelSerializer[Plan]):
         """The organization's locked currency, else its visitor's market (TN-13)."""
         return _market_currency(self, self._organization())
 
+    def to_representation(self, instance: Plan) -> dict[str, Any]:
+        data = super().to_representation(instance)
+        # X-01: the page's language (`Accept-Language`), English when untranslated.
+        for field in ("tagline", "support_response"):
+            data[field] = instance.localized(field)
+        return data
+
     @extend_schema_field(ResolvedPriceSerializer)
     def get_price(self, obj: Plan) -> dict[str, Any]:
         from billing.services import pricing
@@ -210,6 +217,11 @@ class PackSerializer(serializers.ModelSerializer[Pack]):
             "sort_order",
         )
         read_only_fields: ClassVar[tuple[str, ...]] = fields
+
+    def to_representation(self, instance: Pack) -> dict[str, Any]:
+        data = super().to_representation(instance)
+        data["tagline"] = instance.localized("tagline")  # X-01
+        return data
 
     @extend_schema_field(ResolvedPriceSerializer)
     def get_price(self, obj: Pack) -> dict[str, Any]:

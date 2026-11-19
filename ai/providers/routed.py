@@ -68,6 +68,19 @@ class RoutedTextProvider:
         )
         return result
 
+    def same_product(
+        self, *, image_bytes: bytes, reference_images: list[bytes], model: str | None = None
+    ) -> bool:
+        return bool(
+            _call(
+                self.route,
+                model,
+                lambda chosen: self.inner.same_product(
+                    image_bytes=image_bytes, reference_images=reference_images, model=chosen
+                ),
+            )
+        )
+
 
 class RoutedImageProvider:
     def __init__(self, inner: Any, route: Route) -> None:

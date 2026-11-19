@@ -1,0 +1,9 @@
+Un post programmato non è stato pubblicato
+
+Abbiamo fermato un post programmato prima che uscisse:
+
+{{ reason }}
+
+Non è stato pubblicato nulla. Apri il post per rivederlo e riprogrammarlo:
+
+{{ site_url }}/app/posts/{{ post.id }}

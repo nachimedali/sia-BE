@@ -1,0 +1,7 @@
+C’est l’heure de publier
+
+Votre publication est prévue maintenant. Ouvrez votre kit de publication pour copier la légende et les hashtags, récupérer vos médias, puis marquez-la comme publiée une fois en ligne :
+
+{{ packet_url }}
+
+Ce lien n’est que pour vous : ne le transférez pas.

@@ -154,6 +154,9 @@ class FakeTextProvider:
         self.captions: list[dict[str, Any]] = []
         #: The model each constraint check was routed to (`ai.services.routing`).
         self.constraint_models: list[str | None] = []
+        #: PR-24's vision verdicts; a test sets the answer to see a refusal.
+        self.identity_checks: list[dict[str, Any]] = []
+        self.same_product_answer = True
 
     def generate(
         self, *, system: str, prompt: str, n: int, model: str | None = None
@@ -262,10 +265,18 @@ class FakeTextProvider:
         self.constraint_models.append(model)
         return [r for r in restrictions if FORCE_VIOLATION_SENTINEL in r.upper()]
 
+    def same_product(
+        self, *, image_bytes: bytes, reference_images: list[bytes], model: str | None = None
+    ) -> bool:
+        self.identity_checks.append({"references": len(reference_images), "model": model})
+        return self.same_product_answer
+
     def clear(self) -> None:
         self.calls.clear()
         self.captions.clear()
         self.constraint_models.clear()
+        self.identity_checks.clear()
+        self.same_product_answer = True
 
 
 class FakeImageProvider:

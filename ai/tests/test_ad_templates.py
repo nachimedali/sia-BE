@@ -16,7 +16,7 @@ from django.core.management import call_command
 
 from ai.ad_template_seed import TEMPLATES
 from ai.models import CreativeKind, CreativeOption, Generation, VideoRender, VideoRenderStatus
-from ai.providers.fake import _fake_video_provider
+from ai.providers.fake import FORCE_LOW_SIMILARITY_SENTINEL, _fake_video_provider
 from ai.services import ad_templates, disclosure, video
 from ai.services.pipeline import _reference_image_bytes
 from billing.models import CreditLedger, FeatureFlag, VideoLedger
@@ -632,6 +632,31 @@ def test_language_matters_only_when_the_person_speaks(
 # -----------------------------------------------------------------------------
 # The person's own direction and look controls (plan `ad_prompt_edit`)
 # -----------------------------------------------------------------------------
+def test_a_keyframe_is_held_to_its_product_by_the_vision_check_not_dhash(
+    auth_client: Any, oil: Any, text_provider: Any
+) -> None:
+    """PR-24: a frame whose layout is nothing like the packshot passes when the
+    vision model finds the product in it."""
+    response = auth_client.post(
+        KEYFRAME,
+        {"template": "pour-shot", "product": oil.pk, "prompt": FORCE_LOW_SIMILARITY_SENTINEL},
+        format="json",
+    )
+    generation = Generation.objects.get(pk=response.json()["id"])
+    assert generation.status == "SUCCEEDED"
+    assert text_provider.identity_checks
+
+
+def test_a_keyframe_the_vision_check_rejects_fails(
+    auth_client: Any, oil: Any, text_provider: Any
+) -> None:
+    text_provider.same_product_answer = False
+    response = auth_client.post(
+        KEYFRAME, {"template": "pour-shot", "product": oil.pk}, format="json"
+    )
+    assert Generation.objects.get(pk=response.json()["id"]).status == "FAILED"
+
+
 def test_look_controls_and_a_prompt_reach_the_keyframe(auth_client: Any, oil: Any) -> None:
     scene = CreativeOption.objects.filter(kind=CreativeKind.SCENE, is_active=True).first()
     assert scene is not None

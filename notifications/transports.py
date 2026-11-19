@@ -56,6 +56,7 @@ class EmailTransport:
                 subject=payload.get("subject", "An update on your content"),
                 template="notification",
                 context={"workspace": workspace, "event_key": event_key, **payload},
+                language=user.language,
             )
         )
 

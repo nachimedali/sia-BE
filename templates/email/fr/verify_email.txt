@@ -1,0 +1,13 @@
+Votre code ComposeVision : {{ code }}
+
+Bonjour {{ first_name }},
+
+Saisissez ce code dans ComposeVision pour confirmer {{ email }} :
+
+    {{ code }}
+
+Il expire dans {{ expires_minutes }} minutes. Vous pouvez aussi ouvrir ce lien :
+
+{{ verify_url }}
+
+Vous n’avez pas créé de compte ? Ignorez cet e-mail : rien ne se passe sans le code. ComposeVision ne vous le demandera jamais par téléphone, par message ou sur les réseaux sociaux.

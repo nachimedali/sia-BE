@@ -1,0 +1,18 @@
+Ti diamo il benvenuto su ComposeVision, {{ first_name }}
+
+Il tuo spazio di lavoro {{ workspace_name }} è pronto. ComposeVision trasforma i tuoi prodotti in post coerenti con il tuo brand, pianifica quando pubblicarli e non pubblica mai nulla senza la tua approvazione.
+
+Tre passi verso il tuo primo post:
+
+1. Importa il tuo sito web: leggiamo logo, palette, tono di voce e prodotti per il tuo brand kit, poi rivedi ogni sezione.
+2. Aggiungi un prodotto: foto, tono e regole, oppure importalo dalla sua pagina prodotto.
+3. Componi e approva: genera varianti nello Studio, tieni la migliore e programmala. Non esce nulla finché qualcuno non la approva.
+
+Apri il tuo spazio di lavoro: {{ app_url }}
+
+Il tuo piano: {{ plan_name }}{% if trial_ends %} (prova fino al {{ trial_ends }}){% elif renews_on %} (rinnovo il {{ renews_on }}){% endif %}
+Crediti: {{ credits }}
+
+Domande? Rispondi a questa email. Una persona vera del nostro team legge ogni risposta.
+
+Il team ComposeVision

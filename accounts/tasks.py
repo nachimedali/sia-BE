@@ -24,10 +24,17 @@ logger = logging.getLogger(__name__)
     default_retry_delay=30,
 )
 def send_templated_email(
-    self: Any, to: str, subject: str, template: str, context: dict[str, Any]
+    self: Any,
+    to: str,
+    subject: str,
+    template: str,
+    context: dict[str, Any],
+    language: str = "en",
 ) -> None:
     try:
-        get_mail_sender().send(Email(to=to, subject=subject, template=template, context=context))
+        get_mail_sender().send(
+            Email(to=to, subject=subject, template=template, context=context, language=language)
+        )
     except Exception as exc:
         # A transient SMTP failure must not silently lose a verification link.
         logger.warning("email send failed, retrying", extra={"template": template})

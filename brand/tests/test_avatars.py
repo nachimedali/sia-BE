@@ -128,6 +128,20 @@ def test_a_failed_batch_is_not_charged_and_not_counted(
     assert avatars.drafts_used(growth.organization) == 0
 
 
+def test_open_batches_are_listed_so_a_closed_drawer_loses_nothing(
+    auth_client: Any, growth: Any
+) -> None:
+    """A paid batch outlives the drawer that drew it (beta, 2026-11-19)."""
+    draft = ready_draft(auth_client)
+    AvatarDraft.objects.create(workspace=growth, status=DraftStatus.FAILED)
+    AvatarDraft.objects.create(workspace=growth, status=DraftStatus.USED)
+
+    listed = auth_client.get(DRAFTS).json()
+
+    assert [row["id"] for row in listed] == [draft["id"]]
+    assert len(listed[0]["portraits"]) == 4
+
+
 def test_portrait_batches_run_out_for_the_month_across_the_organization(
     auth_client: Any, growth: Any, user: Any
 ) -> None:
@@ -411,6 +425,7 @@ def test_another_organizations_and_another_brands_avatars_are_404(
         for path in ("house/", "archive/", "revoke/"):
             assert auth_client.post(f"{LIBRARY}{theirs.pk}/{path}", **here).status_code == 404
         assert auth_client.get(f"{DRAFTS}{draft.pk}/", **here).status_code == 404
+        assert draft.pk not in [d["id"] for d in auth_client.get(DRAFTS, **here).json()]
         assert (
             auth_client.post(
                 LIBRARY, {"draft": draft.pk, "name": "x"}, format="json", **here
@@ -430,6 +445,7 @@ def test_flag_off_the_avatar_routes_do_not_exist(
     assert auth_client.get(LIBRARY).status_code == 404
     assert auth_client.get(f"{LIBRARY}limits/").status_code == 404
     assert auth_client.post(DRAFTS, {"traits": TRAITS}, format="json").status_code == 404
+    assert auth_client.get(DRAFTS).status_code == 404
 
 
 def test_the_limits_alone_say_used_out_of_max_without_the_library(
@@ -446,4 +462,5 @@ def test_a_viewer_reads_the_library_but_cannot_draw(
 ) -> None:
     viewer = client_as(viewer_user)
     assert viewer.get(LIBRARY).status_code == 200
+    assert viewer.get(DRAFTS).status_code == 200
     assert viewer.post(DRAFTS, {"traits": TRAITS}, format="json").status_code == 403

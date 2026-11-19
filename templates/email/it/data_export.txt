@@ -1,0 +1,9 @@
+I tuoi dati ComposeVision sono pronti
+
+La copia dei tuoi dati che hai richiesto è pronta: il tuo profilo, i post, i commenti e le approvazioni che hai fatto, e il registro delle tue attività.
+
+Scaricala dal tuo account (ti verrà chiesto di accedere):
+
+{{ download_url }}
+
+Il download resta disponibile per {{ days }} giorni.

@@ -1,0 +1,10 @@
+{{ inviter_name }} vous invite à rejoindre {{ workspace_name }}
+
+Bonjour,
+
+{{ inviter_name }} ({{ inviter_email }}) vous invite à travailler ensemble sur {{ workspace_name }} dans ComposeVision, en tant que {{ role }}.
+
+Acceptez l’invitation :
+{{ accept_url }}
+
+Cette invitation est destinée à {{ email }}, ne sert qu’une fois et expire le {{ expires_on }}. Vous ne l’attendiez pas ? Ignorez cet e-mail : rien ne se passe si vous n’acceptez pas.

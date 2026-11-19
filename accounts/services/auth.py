@@ -11,11 +11,13 @@ from typing import Any
 from django.conf import settings
 from django.db import transaction
 
-from accounts.models import EmailToken, EmailTokenPurpose, User
+from accounts.models import EmailToken, EmailTokenPurpose, Language, User
 from accounts.tasks import send_templated_email
 from billing.models import UNLIMITED
 from billing.services.flags import TRANSACTIONAL_EMAIL, flag_enabled
 from common.mail import first_name_of
+from common.mail_i18n import UNLIMITED as UNLIMITED_WORD
+from common.mail_i18n import day
 from workspaces.models import Membership
 from workspaces.services.provisioning import provision_workspace
 
@@ -27,12 +29,16 @@ def app_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def queue_email(to: str, subject: str, template: str, context: dict[str, Any]) -> None:
+def queue_email(
+    to: str, subject: str, template: str, context: dict[str, Any], language: str = "en"
+) -> None:
     """Always queued, never inline (implementation.md §4.3, Phase 2.3).
 
     An SMTP timeout must not become a failed registration.
     """
-    send_templated_email.delay(to=to, subject=subject, template=template, context=context)
+    send_templated_email.delay(
+        to=to, subject=subject, template=template, context=context, language=language
+    )
 
 
 def _first_membership(user: User) -> Membership | None:
@@ -67,6 +73,7 @@ def send_verification_email(user: User) -> None:
             subject="Confirm your email",
             template="verify_email_link",
             context={"verify_url": verify_url, "email": user.email},
+            language=user.language,
         )
         return
 
@@ -85,6 +92,7 @@ def send_verification_email(user: User) -> None:
             ),
             "requested_at": token.created_at.strftime("%d %b %Y, %H:%M UTC"),
         },
+        language=user.language,
     )
 
 
@@ -121,10 +129,13 @@ def send_welcome_email(user: User) -> None:
             "email": user.email,
             "workspace_name": workspace.name,
             "plan_name": entitlements.plan.display_name,
-            "credits": "Unlimited" if credits == UNLIMITED else credits,
-            "trial_ends": trial_ends.strftime("%d %b %Y") if trial_ends else "",
-            "renews_on": renews_on.strftime("%d %b %Y") if renews_on else "",
+            "credits": UNLIMITED_WORD.get(user.language, UNLIMITED_WORD["en"])
+            if credits == UNLIMITED
+            else credits,
+            "trial_ends": day(trial_ends, user.language) if trial_ends else "",
+            "renews_on": day(renews_on, user.language) if renews_on else "",
         },
+        language=user.language,
     )
 
 
@@ -140,10 +151,14 @@ def _mark_verified(user: User) -> None:
 
 
 @transaction.atomic
-def register(email: str, password: str, workspace_name: str | None = None) -> tuple[User, Any]:
+def register(
+    email: str, password: str, workspace_name: str | None = None, language: str = "en"
+) -> tuple[User, Any]:
     """Creates the user, its workspace and OWNER membership, assigns Free, and
-    queues verification. All or nothing."""
-    user = User.objects.create_user(email=email, password=password)
+    queues verification. All or nothing. `language` is the one the sign-up page
+    was read in, so the first email is already in it."""
+    language = language if language in Language.values else Language.EN
+    user = User.objects.create_user(email=email, password=password, language=language)
     workspace = provision_workspace(user, name=workspace_name)
 
     # after_commit: the task must not run against a transaction that may still
@@ -199,6 +214,7 @@ def request_password_reset(email: str) -> None:
         subject="Reset your password",
         template="reset_password",
         context={"reset_url": app_url(f"/reset-password?token={raw}"), "email": user.email},
+        language=user.language,
     )
 
 

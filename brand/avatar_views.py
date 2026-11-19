@@ -20,7 +20,7 @@ from ai.models import CreativeKind, CreativeOption
 from billing.permissions import HasFlag
 from billing.services.entitlements import entitlements_for
 from billing.services.flags import AD_TEMPLATES_S17
-from brand.models import Avatar, AvatarDraft, AvatarKind
+from brand.models import Avatar, AvatarDraft, AvatarKind, DraftStatus
 from brand.services import avatars
 from common.workspaces import authenticated_user, request_workspace
 from content.models import MediaAsset
@@ -297,7 +297,24 @@ class AvatarLimitsView(APIView):
 
 
 class AvatarDraftListView(APIView):
-    permission_classes: list[Any] = _WRITE
+    def get_permissions(self) -> list[Any]:
+        return [p() for p in (_WRITE if self.request.method == "POST" else _READ)]
+
+    @extend_schema(
+        responses={200: AvatarDraftSerializer(many=True)},
+        summary="Batches still drawing or ready to pick from, newest first",
+        description=(
+            "So a paid batch outlives the drawer that drew it: the creator reopens on the "
+            "newest one. Failed and used batches are not listed."
+        ),
+    )
+    def get(self, request: Request) -> Response:
+        workspace = request_workspace(request)
+        drafts = AvatarDraft.objects.filter(
+            workspace=workspace,
+            status__in=[DraftStatus.QUEUED, DraftStatus.RUNNING, DraftStatus.READY],
+        )[:10]
+        return Response([_draft(workspace, draft) for draft in drafts])
 
     @extend_schema(
         request=AvatarDraftRequestSerializer,

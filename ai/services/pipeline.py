@@ -495,6 +495,8 @@ def _attempt_image(
                 text_provider=text_provider,
                 identity_similarity_threshold=config.identity_similarity_threshold,
                 inspiration_images=[image.content for image in inspiration] or None,
+                # PR-24: a template's first frame places the product in a scene.
+                identity_by_vision=bool((generation.creative or {}).get("ad_template")),
             ),
         )
         for variant in result.variants
