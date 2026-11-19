@@ -242,6 +242,9 @@ class CatalogueItem(models.Model):
     code = models.SlugField(unique=True, help_text="Immutable after creation (D13).")
     display_name = models.CharField(max_length=64)
     tagline = models.CharField(max_length=200, blank=True)
+    #: `{"fr": {"tagline", …}, "it": {…}}` (X-01) — English is the row's own
+    #: words; a missing language or field reads English (`localized`).
+    translations = models.JSONField(default=dict, blank=True)
     currency = models.CharField(max_length=3, default="USD")
 
     is_public = models.BooleanField(default=True)
@@ -260,6 +263,14 @@ class CatalogueItem(models.Model):
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.full_clean(exclude=None, validate_unique=False)
         super().save(*args, **kwargs)
+
+    def localized(self, field: str) -> str:
+        """`field` in the active interface language, English when that
+        language or field has no translation (X-01)."""
+        from django.utils import translation
+
+        local = (self.translations or {}).get(translation.get_language() or "", {})
+        return str(local.get(field) or getattr(self, field))
 
     def clean(self) -> None:
         super().clean()

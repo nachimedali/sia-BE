@@ -191,6 +191,8 @@ class PlanAdmin(ImmutableCodeAdmin):
                     "code",
                     "display_name",
                     "tagline",
+                    # X-01: {"fr": {"tagline", "support_response"}, "it": {…}}.
+                    "translations",
                     "currency",
                     "is_public",
                     "sort_order",

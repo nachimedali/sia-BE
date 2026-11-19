@@ -107,6 +107,7 @@ def issue(
                 "workspace": post.workspace,
                 "needs_approval": purpose == ReviewLinkPurpose.APPROVE,
             },
+            language=created_by.language,
         )
     )
     return link, raw

@@ -55,6 +55,8 @@ def invite(
                 **context,
                 "accept_url": f"{base_url.rstrip('/')}/accept-invite?token={raw}",
             },
+            # The invitee may have no account yet: the inviter's language.
+            language=getattr(invited_by, "language", "en"),
         )
     )
     logger.info(

@@ -241,6 +241,38 @@ class LLMTextProvider:
         reported = {line.strip("- ").strip() for line in content.splitlines() if line.strip()}
         return [restriction for restriction in restrictions if restriction in reported]
 
+    def same_product(
+        self, *, image_bytes: bytes, reference_images: list[bytes], model: str | None = None
+    ) -> bool:
+        """PR-24: the product's photos, then the frame, and a YES/NO verdict.
+        Anything but a leading YES is a no — a gate fails closed."""
+        instruction = (
+            "The first images are photographs of one product. The last image is a "
+            "generated scene. Is that same product clearly visible in the scene, "
+            "with the same shape, colours, label and packaging? A different angle, "
+            "light, size or setting is fine. Reply with exactly YES or NO."
+        )
+        with _client() as client:
+            payload = _post(
+                client,
+                {
+                    "model": model or settings.LLM_DEFAULT_MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": instruction},
+                                *(image_url_part(image) for image in reference_images),
+                                image_url_part(image_bytes),
+                            ],
+                        }
+                    ],
+                    **self.extra,
+                },
+            )
+        content: str = payload["choices"][0]["message"]["content"] or ""
+        return content.strip().upper().startswith("YES")
+
 
 def get_text_provider(task: str | None = None, *, workspace: Any = None) -> Any:
     """Resolves the configured provider. Swapping is a settings change (A8).

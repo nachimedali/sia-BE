@@ -23,6 +23,7 @@ from django.utils import timezone
 from accounts.tasks import send_templated_email
 from billing.services.flags import TRANSACTIONAL_EMAIL, flag_enabled
 from common.mail import base_context, first_name_of
+from common.mail_i18n import day
 from content.models import DeliveryMode, Platform, Post, PostStatus
 from learn.services.segments import resolve_zone
 
@@ -74,6 +75,7 @@ def _send_one(post: Post, moment: dt.datetime) -> None:
         subject=f"Goes live in {context['countdown']}: {context['post_title']}",
         template="post_heads_up",
         context=context,
+        language=post.author.language,
     )
     logger.info("post heads-up queued", extra={"post_id": post.pk})
 
@@ -86,6 +88,7 @@ def context_for(post: Post, moment: dt.datetime) -> dict[str, object]:
     workspace = post.workspace
     zone = resolve_zone(workspace.timezone or "UTC")
     slot = post.scheduled_at.astimezone(zone)
+    language = post.author.language
     site = base_context()["site_url"]
     post_url = f"{site}/app/posts/{post.pk}"
 
@@ -98,15 +101,16 @@ def context_for(post: Post, moment: dt.datetime) -> dict[str, object]:
     context: dict[str, object] = {
         "first_name": first_name_of(post.author),
         "workspace_name": workspace.name,
-        "countdown": duration(post.scheduled_at - moment),
-        "lead_time": duration(lead()),
-        "slot_day": slot.strftime("%a %d %b"),
+        "countdown": duration(post.scheduled_at - moment, language),
+        "lead_time": duration(lead(), language),
+        "slot_day": day(slot, language, "D d M"),
         "slot_time": slot.strftime("%H:%M"),
         "timezone": str(zone),
         "post_id": post.pk,
         "post_title": _title(post),
         "caption_excerpt": _clip(body, _EXCERPT_CHARS),
-        "platforms": [Platform(p).label for p in platforms] or ["your channels"],
+        "platforms": [Platform(p).label for p in platforms]
+        or [_YOUR_CHANNELS.get(language, "your channels")],
         "format": rendered.post_format.title() if rendered else "",
         "auto_publish": post.delivery_mode == DeliveryMode.AUTO_PUBLISH,
         "post_url": post_url,
@@ -132,13 +136,23 @@ def context_for(post: Post, moment: dt.datetime) -> dict[str, object]:
     return context
 
 
-def duration(span: dt.timedelta) -> str:
+#: (under a minute, (day, days), (hour, hours), (minute, minutes)) per language.
+_UNITS = {
+    "en": ("under a minute", ("day", "days"), ("hour", "hours"), ("minute", "minutes")),
+    "fr": ("moins d'une minute", ("jour", "jours"), ("heure", "heures"), ("minute", "minutes")),
+    "it": ("meno di un minuto", ("giorno", "giorni"), ("ora", "ore"), ("minuto", "minuti")),
+}
+_YOUR_CHANNELS = {"fr": "vos réseaux", "it": "i tuoi canali"}
+
+
+def duration(span: dt.timedelta, language: str = "en") -> str:
     """ "1 hour 50 minutes", "2 hours", "1 day" — at most two units."""
+    under, *names = _UNITS.get(language, _UNITS["en"])
     minutes = max(0, round(span.total_seconds() / 60))
     if minutes == 0:
-        return "under a minute"
-    units = [("day", minutes // 1440), ("hour", minutes % 1440 // 60), ("minute", minutes % 60)]
-    parts = [f"{n} {name}{'' if n == 1 else 's'}" for name, n in units if n]
+        return under
+    counts = (minutes // 1440, minutes % 1440 // 60, minutes % 60)
+    parts = [f"{n} {name[n != 1]}" for name, n in zip(names, counts, strict=True) if n]
     return " ".join(parts[:2])
 
 

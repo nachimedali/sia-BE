@@ -222,8 +222,23 @@ def build_envelope(
     detail: dict[str, Any] | None = None,
     upgrade: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    error: dict[str, Any] = {"code": code, "message": message}
+    from common.error_i18n import in_language
+
+    # X-01: the request's language (`LocaleMiddleware`) for every fixed message,
+    # the form's per-field ones included.
+    error: dict[str, Any] = {"code": code, "message": in_language(message)}
     if detail:
+        fields = detail.get("fields")
+        if isinstance(fields, dict):
+            detail = {
+                **detail,
+                "fields": {
+                    name: [in_language(m) if isinstance(m, str) else m for m in messages]
+                    if isinstance(messages, list)
+                    else messages
+                    for name, messages in fields.items()
+                },
+            }
         error["detail"] = detail
     if upgrade:
         error["upgrade"] = upgrade

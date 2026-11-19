@@ -271,6 +271,7 @@ def _alert(target: PostTarget) -> None:
             subject="A scheduled post could not be published",
             template="publish_failed",
             context={"post": post, "target": target, "error": target.error_detail},
+            language=post.author.language,
         )
     )
     logger.error(
@@ -298,6 +299,7 @@ def _fail_unpublishable(post: Post, error: OCCSError) -> None:
             subject="A scheduled post could not be published",
             template="publish_blocked",
             context={"post": post, "reason": error.message},
+            language=post.author.language,
         )
     )
     logger.error(

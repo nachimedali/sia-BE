@@ -1,0 +1,9 @@
+Un post programmato non è stato pubblicato
+
+Abbiamo provato a pubblicare il tuo post su {{ target.platform }}, senza riuscirci. Lì non è stato pubblicato nulla e abbiamo smesso di riprovare:
+
+{{ error.message }}
+
+Apri il post per correggerlo e riprogrammarlo:
+
+{{ site_url }}/app/posts/{{ post.id }}

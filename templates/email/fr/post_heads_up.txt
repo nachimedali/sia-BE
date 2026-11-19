@@ -1,0 +1,19 @@
+Votre publication est en ligne dans {{ countdown }}
+
+Bonjour {{ first_name }},
+
+Petit rappel : la publication ci-dessous {% if auto_publish %}sera publiée sur {{ platforms|join:", " }}{% else %}est prévue sur {{ platforms|join:", " }}, et votre kit de publication arrivera à l’heure prévue{% endif %} dans {{ countdown }}.
+
+{{ slot_day }}, {{ slot_time }} ({{ timezone }}) · {{ workspace_name }}
+
+  {{ post_title }}
+  {{ caption_excerpt }}
+{% if fix_count %}
+{{ fix_count }} correction{{ fix_count|pluralize }} avant la mise en ligne : {{ fix_summary }}
+{% endif %}
+Revoir la publication : {{ post_url }}
+Reprogrammer : {{ reschedule_url }}
+
+Tout est correct ? Vous n’avez rien à faire. Pour l’arrêter, ouvrez la publication et choisissez Déplanifier.
+
+Vous recevez ce message {{ lead_time }} avant chaque publication programmée dans {{ workspace_name }}.

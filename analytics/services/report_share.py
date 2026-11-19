@@ -82,10 +82,13 @@ def issue(run: ReportRun, *, created_by: User, email: str = "") -> tuple[ReportS
                 template="report_share",
                 context={
                     "report": run.report,
+                    "report_name": run.report.name,
                     "run": run,
                     "report_url": url,
                     "workspace": run.report.workspace,
                 },
+                # Written in the sharer's language, like every page sent outside the team.
+                language=created_by.language,
             )
         )
     return link, raw

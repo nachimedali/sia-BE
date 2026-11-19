@@ -1,0 +1,9 @@
+Conferma il tuo nuovo indirizzo email
+
+Hai chiesto di cambiare l’indirizzo email del tuo account ComposeVision da {{ old_email }} a {{ new_email }}.
+
+Confermalo qui:
+
+{{ confirm_url }}
+
+Questo link vale 24 ore. Finché non lo apri, continui ad accedere con {{ old_email }}. Se non l’hai chiesto tu, ignora questa email: non cambia nulla.

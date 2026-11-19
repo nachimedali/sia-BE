@@ -1,0 +1,8 @@
+{% if needs_approval %}Un post è in attesa della tua approvazione{% else %}Un post è stato condiviso con te{% endif %}
+
+{{ workspace.name }} {% if needs_approval %}ti chiede di approvare{% else %}ha condiviso con te{% endif %} un post.
+Aprilo per vedere esattamente cosa verrebbe pubblicato, lasciare un commento{% if needs_approval %} e approvarlo quando ti convince{% endif %}:
+
+{{ review_url }}
+
+Non serve un account. Questo link è solo tuo: non inoltrarlo{% if needs_approval %}. Smette di funzionare dopo la tua approvazione{% endif %}.

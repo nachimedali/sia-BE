@@ -1,0 +1,7 @@
+È ora di pubblicare
+
+Il tuo post è programmato per adesso. Apri il tuo kit di pubblicazione per copiare la didascalia e gli hashtag, prendere i tuoi contenuti e segnarlo come pubblicato quando è online:
+
+{{ packet_url }}
+
+Questo link è solo tuo: non inoltrarlo.

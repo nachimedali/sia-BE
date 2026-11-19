@@ -10,7 +10,7 @@ No mail is ever sent inline in a request/response cycle (implementation.md §4.3
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from email.mime.image import MIMEImage
 from email.utils import parseaddr
 from pathlib import Path
@@ -20,6 +20,9 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template import TemplateDoesNotExist
 from django.template.loader import get_template, render_to_string
+from django.utils import translation
+
+from common.mail_i18n import FRAME, SUBJECTS, TRANSLATED
 
 #: The logo travels inside every HTML email as an inline part, referenced by
 #: `cid:` — a URL would need a public `SITE_URL` (a dev or misconfigured one
@@ -31,9 +34,13 @@ LOGO_PATH = Path(__file__).resolve().parent / "assets" / "email-logo.png"
 @dataclass(frozen=True)
 class Email:
     to: str
+    #: The English subject. French and Italian come from `mail_i18n.SUBJECTS`.
     subject: str
     template: str
     context: dict[str, Any] = field(default_factory=dict)
+    #: The reader's language (`User.language`); English is the default and the
+    #: fallback for anything else.
+    language: str = "en"
 
 
 class MailSender(Protocol):
@@ -73,21 +80,58 @@ def base_context() -> dict[str, str]:
     }
 
 
-def render(email: Email) -> tuple[str, str]:
-    """`<template>.txt`, and `<template>.html` when a design exists — otherwise
-    the text inside the shared branded frame (`email/_layout.html`), so every
-    email carries the logo.
+def render(email: Email) -> tuple[str, str, str]:
+    """`(subject, text, html)`: `<template>.txt`, and `<template>.html` when a
+    design exists — otherwise the text inside the shared branded frame
+    (`email/_layout.html`), so every email carries the logo.
+
+    French and Italian (X-01) read `email/<language>/<template>.txt` and their
+    subject from `mail_i18n.SUBJECTS`, in the branded frame.
+    shortcut: the five designed layouts are English only; translate them once a
+    native speaker has reviewed the French and Italian words.
 
     Both senders call this, so a template name that does not resolve fails the
     fake exactly as it fails a real send — not only in production.
     """
-    context = {**base_context(), "subject": email.subject, **email.context}
-    text = render_to_string(f"email/{email.template}.txt", context)
+    language = email.language if email.language in TRANSLATED else "en"
+    subject = email.subject
+    folder = ""
+    if language != "en":
+        entry = SUBJECTS[email.template][language]
+        subject = (
+            entry(email.context) if callable(entry) else entry.format_map(_Blank(email.context))
+        )
+        folder = f"{language}/"
+    context = {
+        **base_context(),
+        **FRAME[language],
+        "lang": language,
+        "subject": subject,
+        **email.context,
+    }
+    # The `date` filter names months in the reader's language.
+    with translation.override(language):
+        text = render_to_string(f"email/{folder}{email.template}.txt", context)
+        design = _design(email.template) if language == "en" else None
+        if design is None:
+            html = render_to_string("email/_layout.html", {**context, "body": text})
+        else:
+            html = design.render(context)
+    return subject, text, html
+
+
+def _design(template: str) -> Any:
     try:
-        html = get_template(f"email/{email.template}.html")
+        return get_template(f"email/{template}.html")
     except TemplateDoesNotExist:
-        return text, render_to_string("email/_layout.html", {**context, "body": text})
-    return text, html.render(context)
+        return None
+
+
+class _Blank(dict[str, Any]):
+    """A subject field the context lacks reads blank rather than losing the mail."""
+
+    def __missing__(self, key: str) -> str:
+        return ""
 
 
 def _logo_part() -> MIMEImage:
@@ -112,9 +156,9 @@ class DjangoMailSender:
     """
 
     def send(self, email: Email) -> None:
-        text, html = render(email)
+        subject, text, html = render(email)
         message = _RelatedEmail(
-            subject=email.subject,
+            subject=subject,
             body=text,
             from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@localhost"),
             to=[email.to],
@@ -135,8 +179,9 @@ class FakeMailSender:
         self.outbox: list[Email] = []
 
     def send(self, email: Email) -> None:
-        render(email)
-        self.outbox.append(email)
+        subject, _text, _html = render(email)
+        # As the reader receives it: the subject in their language.
+        self.outbox.append(replace(email, subject=subject))
 
     def clear(self) -> None:
         self.outbox.clear()

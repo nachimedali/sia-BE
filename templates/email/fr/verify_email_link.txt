@@ -1,0 +1,7 @@
+Confirmez votre adresse e-mail
+
+Bienvenue sur ComposeVision. Confirmez {{ email }} pour terminer la création de votre espace de travail :
+
+{{ verify_url }}
+
+Ce lien expire dans 3 jours et ne sert qu’une fois. Si vous n’avez pas créé de compte, ignorez cet e-mail.

@@ -1,0 +1,9 @@
+Vos données ComposeVision sont prêtes
+
+La copie de vos données que vous avez demandée est prête : votre profil, les publications, commentaires et validations que vous avez faits, et votre journal d’activité.
+
+Téléchargez-la depuis votre compte (il vous sera demandé de vous connecter) :
+
+{{ download_url }}
+
+Le téléchargement reste disponible {{ days }} jours.

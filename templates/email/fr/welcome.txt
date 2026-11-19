@@ -1,0 +1,18 @@
+Bienvenue sur ComposeVision, {{ first_name }}
+
+Votre espace de travail {{ workspace_name }} est prêt. ComposeVision transforme vos produits en publications fidèles à votre marque, planifie leur diffusion et ne publie jamais rien sans votre validation.
+
+Trois étapes jusqu’à votre première publication :
+
+1. Importez votre site web : nous lisons votre logo, votre palette, votre ton et vos produits pour votre kit de marque, puis vous relisez chaque section.
+2. Ajoutez un produit : photos, ton et règles, ou importez-le depuis sa page produit.
+3. Composez et validez : générez des variantes dans le Studio, gardez la meilleure et programmez-la. Rien ne part tant que quelqu’un ne l’a pas validée.
+
+Ouvrez votre espace de travail : {{ app_url }}
+
+Votre offre : {{ plan_name }}{% if trial_ends %} (essai jusqu’au {{ trial_ends }}){% elif renews_on %} (renouvellement le {{ renews_on }}){% endif %}
+Crédits : {{ credits }}
+
+Des questions ? Répondez à cet e-mail. Une vraie personne de notre équipe lit chaque réponse.
+
+L’équipe ComposeVision

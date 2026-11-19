@@ -90,6 +90,17 @@ class TextProvider(Protocol):
         """
         ...
 
+    def same_product(
+        self, *, image_bytes: bytes, reference_images: list[bytes], model: str | None = None
+    ) -> bool:
+        """Whether `image_bytes` shows the product in `reference_images` (PR-24).
+
+        The identity check for a template's first frame, where the product sits
+        in a scene and a whole-frame perceptual hash cannot see it. The same
+        labelling half of the port as `classify_constraints`.
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class ImageVariant:

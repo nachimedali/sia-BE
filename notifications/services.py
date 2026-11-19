@@ -17,6 +17,7 @@ from typing import Any
 
 from django.utils import timezone
 
+from common.mail_i18n import notification_subject
 from notifications.models import (
     DEFAULT_TRANSPORTS,
     EventKey,
@@ -70,10 +71,17 @@ def notify(
             user_id=user.pk,
             workspace_id=workspace.pk,
             event_key=event_key,
-            payload=payload,
+            payload=_in_language(payload, event_key, user.language),
             transports=chosen,
         )
     return len(recipients)
+
+
+def _in_language(payload: dict[str, Any], event_key: str, language: str) -> dict[str, Any]:
+    """Event sites write English; each reader gets the one line — in the bell
+    and in the email — in their own language (X-01)."""
+    subject = notification_subject(language, event_key, payload)
+    return payload if subject is None else {**payload, "subject": subject}
 
 
 def _queue(**kwargs: Any) -> None:

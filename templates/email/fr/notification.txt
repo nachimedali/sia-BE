@@ -1,0 +1,9 @@
+{{ subject }}
+
+{% if actor %}{{ actor }} — {% endif %}dans {{ workspace.name }}.
+
+Ouvrez ComposeVision pour le voir :
+
+{{ site_url }}/app/approvals
+
+Vous pouvez choisir lesquelles de ces notifications vous arrivent par e-mail dans vos réglages de notifications.
