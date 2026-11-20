@@ -227,6 +227,11 @@ def validate_metadata(meta: Any) -> None:
         problems = video_prompt.validate_direction(meta["direction"])
         if problems:
             errors["direction"] = " ".join(problems)
+    from ai.services import template_fit
+
+    control_errors = template_fit.validate(meta.get("controls"))
+    if control_errors:
+        errors["controls"] = " ".join(control_errors)
     if errors:
         raise DjangoValidationError(
             {"metadata": [f"{field}: {message}" for field, message in errors.items()]}
@@ -466,9 +471,17 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         else set()
     )
     results = template_results.results_for(workspace)
+    from ai.services import template_fit
+
+    own = [
+        (place, place.media.file.url)
+        for place in places.list_places(workspace)
+        if place.source == PlaceSource.UPLOAD and place.media is not None
+    ]
     out = []
     pro = video_prompt.is_on(workspace)
-    can = video_prompt.capabilities(workspace) if pro else set()
+    # Every template is checked against the routes since S17-43/S17-38, Pro or not.
+    can = video_prompt.capabilities(workspace)
     for row in _rows():
         meta = row.metadata
         if meta.get("hidden") or (meta.get("pro") and not pro):
@@ -483,10 +496,19 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 "suggested_plan": upgrade[PREMIUM_FEATURE],
                 "pack": pack,
             }
+        controls = template_fit.controls(row)
         out.append(
             {
                 "key": row.key,
                 "label": row.localized("label"),
+                # S17-43: what this template lets the Studio change, and the
+                # brand's own places that are the same kind of place.
+                "controls": template_fit.served(row, controls),
+                "own_places": [
+                    f"{places.OWN}{place.pk}"
+                    for place, _ in own
+                    if template_fit.own_place_fits(row, place, controls)
+                ],
                 "description": row.localized("description"),
                 "category": meta["category"],
                 "goal": meta.get("goal") or "show",
@@ -519,12 +541,15 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 # video model cannot do (the estimate's 422 `route_cannot`).
                 "pro": bool(meta.get("pro")),
                 "cannot": video_prompt.missing(
-                    workspace,
-                    list((video_prompt.direction_of(row) or {}).get("requires") or []),
-                    can,
-                )
-                if pro
-                else [],
+                    workspace, video_prompt.needs_of(row, workspace), can
+                ),
+                # S17-38: the lines it says aloud, each with its beat's share of the clip.
+                "speech": [
+                    {"part": part, "start": round(start, 4), "end": round(end, 4)}
+                    for part, start, end in video_prompt.spoken_windows(
+                        video_prompt.direction_of(row) or {}
+                    )
+                ],
                 "fit": fit_of(row, product, photo_ids=photo_ids),
                 "lock": lock,
                 # A person on an optional template is a `people` render.
@@ -546,12 +571,18 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         "goals": [{"key": goal, "label": goal} for goal in GOALS],
         "categories": [{"key": key, "label": label} for key, label in _category_labels()],
         "locations": _places(_location_keys(out)),
-        # S17-28: the brand's own places (any template can be set there), the
-        # catalogue places it keeps a plate for, and what keeping one costs.
+        # S17-28: the brand's own places (S17-43: each fits the templates whose
+        # places share its setting, listed per template), the catalogue places
+        # it keeps a plate for, and what keeping one costs.
         "own_places": [
-            {"key": f"{places.OWN}{place.pk}", "label": place.label, "image": place.media.file.url}
-            for place in places.list_places(workspace)
-            if place.source == PlaceSource.UPLOAD and place.media is not None
+            {
+                "key": f"{places.OWN}{place.pk}",
+                "label": place.label,
+                "image": image,
+                # The catalogue place it stands for; blank until the brand says.
+                "stands_for": place.stands_for,
+            }
+            for place, image in own
         ],
         "kept": places.kept_keys(workspace),
         # S17-34: what the script writer can be asked to argue, and how.
@@ -1101,9 +1132,12 @@ def create_keyframe(
             "This template has no first frame: it is made from the product's own photos.",
             code="no_frame",
         )
-    from ai.services import pipeline
+    from ai.services import pipeline, template_fit
 
-    video_prompt.check_light(workspace, row, location, look)
+    # What the template does not take is a 400, before anything is drawn (S17-43).
+    look = template_fit.check(
+        row, look, location=location, person_on=avatar is not None, workspace=workspace
+    )
 
     root: Generation | None = None
     if reroll_of is not None:

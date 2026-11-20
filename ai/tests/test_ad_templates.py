@@ -41,8 +41,19 @@ RENDERS = "/api/v1/ai/video/renders/"
 # Fixtures
 # -----------------------------------------------------------------------------
 @pytest.fixture
-def catalog(db: None, generation_costs: None) -> None:
+def catalog(db: None, generation_costs: None, settings: Any) -> None:
     call_command("seed_creative_options", verbosity=0)
+    # The video model profiles every route is compiled for (S17-43: every
+    # template render is), as `ai/0050` seeds them in production.
+    import importlib
+
+    from django.apps import apps
+
+    settings.SEED_CATALOG_ON_MIGRATE = True
+    importlib.import_module("ai.migrations.0050_seed_video_profiles_and_pro_routes").forwards(
+        apps, None
+    )
+    settings.SEED_CATALOG_ON_MIGRATE = False
 
 
 @pytest.fixture
@@ -182,7 +193,7 @@ def test_the_gallery_lists_every_template_with_its_fit_and_lock(
         "suggested_plan": "growth",
         "pack": None,
     }
-    assert rows["founder-story"]["available"] is False
+    assert rows["founder-story"]["available"] is True  # out since S17-38, above this plan
     assert body["rerolls"] == 3
     assert body["references_cap"] == 2
     assert [c["key"] for c in body["categories"]][:2] == ["unbox", "hand"]
@@ -260,7 +271,7 @@ def test_a_keyframe_is_an_image_generation_with_the_person_attached(
         ({"template": "market-stroll"}, 400, "person_required"),
         ({"template": "nope"}, 400, "validation_error"),
         ({"template": "pour-shot", "location": "moon"}, 400, "template_location"),
-        ({"template": "founder-story", "avatar": "LINA"}, 409, "template_unavailable"),
+        ({"template": "slow-unbox", "avatar": "LINA", "_off": True}, 409, "template_unavailable"),
         ({"template": "liquid-splash", "avatar": "LINA"}, 400, "no_person"),
     ],
 )
@@ -270,6 +281,10 @@ def test_every_keyframe_refusal_has_its_code(
     payload = {**body, "product": oil.pk}
     if payload.get("avatar") == "LINA":
         payload["avatar"] = lina.pk
+    if payload.pop("_off", False):  # every seeded template is out since S17-38: switch one off
+        row = CreativeOption.objects.get(kind=CreativeKind.AD_TEMPLATE, key=payload["template"])
+        row.metadata = {**row.metadata, "available": False}
+        row.save(update_fields=["metadata"])
     response = auth_client.post(KEYFRAME, payload, format="json")
     assert response.status_code == status, response.json()
     assert response.json()["error"]["code"] == code
@@ -390,7 +405,7 @@ def test_a_template_render_is_priced_in_units_and_makes_its_own_first_frame(
     assert response.status_code == 202, response.json()
     render = VideoRender.objects.get(pk=response.json()["id"])
 
-    assert render.status == VideoRenderStatus.SUCCEEDED
+    assert render.status == VideoRenderStatus.SUCCEEDED, (render.error_code, render.error)
     assert render.keyframe is not None and render.source_id is not None
     assert render.unit_charge is not None and render.unit_charge.delta == -2
     assert render.charge is None
@@ -658,21 +673,20 @@ def test_a_keyframe_the_vision_check_rejects_fails(
 
 
 def test_look_controls_and_a_prompt_reach_the_keyframe(auth_client: Any, oil: Any) -> None:
-    scene = CreativeOption.objects.filter(kind=CreativeKind.SCENE, is_active=True).first()
-    assert scene is not None
+    # S17-43: what the template leaves open (its palette), not its scene.
     response = auth_client.post(
         KEYFRAME,
         {
             "template": "pour-shot",
             "product": oil.pk,
-            "creative": {"scene": scene.key},
+            "creative": {"palette": "terracotta"},
             "prompt": "  warm   morning light, no   text ",
         },
         format="json",
     )
     assert response.status_code == 201, response.json()
     generation = Generation.objects.get(pk=response.json()["id"])
-    assert generation.creative["scene"] == scene.key
+    assert generation.creative["palette"] == "terracotta"
     assert generation.prompt.endswith("warm morning light, no text")
 
 

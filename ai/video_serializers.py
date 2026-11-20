@@ -145,7 +145,8 @@ class VideoStillSerializer(serializers.Serializer[Any]):
 
 
 class RenderCheckSerializer(serializers.Serializer[Any]):
-    #: `black`, `frozen`, `still_opening`, `silent_opening` or `likeness`.
+    #: `black`, `frozen`, `still_opening`, `silent_opening`, `likeness` or
+    #: `likeness_unmeasured`.
     code = serializers.CharField()
     ok = serializers.BooleanField()
     detail = serializers.CharField()

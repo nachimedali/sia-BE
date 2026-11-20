@@ -130,17 +130,20 @@ def _voice_lines(workspace: Workspace, voice_profile: VoiceProfile | None) -> li
     return lines
 
 
-def _restriction_lines(product: Product | None) -> list[str]:
+def _restriction_lines(product: Product | None, *, picture: bool = False) -> list[str]:
     """The product's hard rules, then its brief (`products.brief`): features,
     audience, voice leaning, words, claims. Both are the product's own layer on
-    top of the workspace's taste, never a replacement for it."""
+    top of the workspace's taste, never a replacement for it. A picture model
+    gets only what can be seen (`picture_lines`, S17-43)."""
     if product is None:
         return []
     lines: list[str] = []
     if product.restrictions:
         constraints = "\n".join(f"- {r}" for r in product.restrictions)
         lines.append(f"Hard constraints — must not be violated:\n{constraints}")
-    brief_lines = product_brief.prompt_lines(product)
+    brief_lines = (
+        product_brief.picture_lines(product) if picture else product_brief.prompt_lines(product)
+    )
     if brief_lines:
         lines.append("About this product:\n" + "\n".join(f"- {line}" for line in brief_lines))
     return lines
@@ -272,7 +275,7 @@ def assemble_image_prompt(
     if rules:
         user_lines.append("\n".join(rules))
         grounding["references"] = True
-    user_lines += _restriction_lines(product)
+    user_lines += _restriction_lines(product, picture=True)
 
     # The product identity card (S17-29): appended like the restrictions, so a
     # rewrite of the brief never drops the label's words. Confirmed cards only.

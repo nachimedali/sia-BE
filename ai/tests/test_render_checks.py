@@ -173,6 +173,20 @@ def test_the_last_frame_is_compared_with_the_products_photos(tmp_path: Path) -> 
     assert next(check for check in moved if check["code"] == "likeness")["ok"] is False
 
 
+@needs_ffmpeg
+def test_a_likeness_that_cannot_be_measured_is_shown_not_passed(tmp_path: Path) -> None:
+    """S17-43: a product photo nothing can read is not a pass — the reviewer is
+    told the likeness was not measured."""
+    still = tmp_path / "product.png"
+    still.write_bytes(_png((200, 40, 40)))
+    clip = _video(tmp_path, ["-loop", "1", "-i", str(still)], 3)
+
+    checks = render_checks.inspect(clip, end_card_seconds=0, product_photos=[b"not an image"])
+    unmeasured = next(check for check in checks if check["code"] == "likeness_unmeasured")
+    assert unmeasured["ok"] is False and unmeasured["score"] is None
+    assert not any(check["code"] == "likeness" for check in checks)
+
+
 def test_an_unreadable_file_gives_no_checks() -> None:
     assert render_checks.inspect(b"not a video", end_card_seconds=0, product_photos=[]) == []
 

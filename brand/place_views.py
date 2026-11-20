@@ -37,6 +37,8 @@ class BrandPlaceSerializer(serializers.Serializer[Any]):
     #: `ready`, `making` while its plate is drawn, or `failed`.
     status = serializers.CharField()
     image = serializers.CharField(allow_null=True)
+    #: S17-43: the catalogue place an upload stands for; blank until said.
+    stands_for = serializers.CharField(allow_blank=True)
     #: Credits this plate cost when it was made; 0 for an upload.
     credits = serializers.IntegerField()
     created_at = serializers.DateTimeField()
@@ -54,6 +56,12 @@ class BrandPlaceCreateSerializer(serializers.Serializer[Any]):
     label = serializers.CharField(  # type: ignore[assignment]
         max_length=80, required=False, allow_blank=True, default=""
     )
+    #: The catalogue place it is (a `place` key), so templates of that kind take it.
+    stands_for = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
+
+
+class BrandPlaceTagSerializer(serializers.Serializer[Any]):
+    stands_for = serializers.CharField(max_length=40, allow_blank=True)
 
 
 class BrandPlaceKeepSerializer(serializers.Serializer[Any]):
@@ -70,6 +78,7 @@ def _out(place: BrandPlace) -> dict[str, Any]:
         "origin": place.source,
         "status": places.status_of(place),
         "image": place.media.file.url if place.media is not None and place.media.file else None,
+        "stands_for": place.stands_for if not made else place.place_key,
         "credits": int(generation.credits_charged or 0) if made and generation else 0,
         "created_at": place.created_at,
     }
@@ -106,6 +115,7 @@ class BrandPlaceListView(APIView):
             user=authenticated_user(request),
             media_id=data.validated_data["media"],
             label=data.validated_data["label"],
+            stands_for=data.validated_data["stands_for"],
         )
         return Response(BrandPlaceSerializer(_out(place)).data, status=status.HTTP_201_CREATED)
 
@@ -133,6 +143,24 @@ class BrandPlaceKeepView(APIView):
 
 class BrandPlaceDetailView(APIView):
     permission_classes = _WRITE
+
+    @extend_schema(
+        request=BrandPlaceTagSerializer,
+        responses={200: BrandPlaceSerializer},
+        summary="Say what kind of place a photo is",
+        description=(
+            "`stands_for` is a catalogue `place` key; the place then fits the templates whose "
+            "places share its setting (S17-43). 400 for an unknown key; another brand's place "
+            "is a 404."
+        ),
+    )
+    def patch(self, request: Request, pk: int) -> Response:
+        data = BrandPlaceTagSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        place = places.tag(
+            request_workspace(request), pk, stands_for=data.validated_data["stands_for"]
+        )
+        return Response(BrandPlaceSerializer(_out(place)).data)
 
     @extend_schema(responses={204: None}, summary="Remove a place (its photo stays)")
     def delete(self, request: Request, pk: int) -> Response:

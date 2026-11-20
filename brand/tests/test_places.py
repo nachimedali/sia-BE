@@ -111,7 +111,11 @@ def test_a_template_can_be_set_in_your_place_and_the_photo_goes_as_the_place(
 ) -> None:
     product = product_in(growth, make_png_upload)
     media = photo(growth, make_png_upload)
-    own = auth_client.post(PLACES, {"media": media, "label": "Our shop"}, format="json").json()
+    # S17-43: an own place says what it is; a kitchen fits a kitchen template.
+    own = auth_client.post(
+        PLACES, {"media": media, "label": "Our shop", "stands_for": "kitchen"}, format="json"
+    ).json()
+    assert own["stands_for"] == "kitchen"
 
     response = auth_client.post(
         KEYFRAME,

@@ -23,6 +23,7 @@ a scene's model-facing text.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -100,7 +101,33 @@ NEED_WORDS = {
     "L": "land on the approved still",
     "FL": "open and close on two real photos",
     "AU": "make its own sound",
+    "SP": "speak the lines aloud with its own sound",
 }
+#: A spoken line in a beat (`upgrade_rendering.md` P7): `says: "{hook}"`.
+_SAYS = re.compile(r'says: "\{(\w+)\}"')
+#: The interface languages a line is spoken in (L-6).
+LANGUAGE_NAMES = {"en": "English", "fr": "French", "it": "Italian"}
+
+
+def speaks(direction: dict[str, Any] | None) -> list[str]:
+    """The script parts a scene says aloud, in beat order (S17-38): `hook`,
+    `body`, `cta`, or a reason `claim1`…`claim3`. Empty for a silent scene."""
+    if not direction:
+        return []
+    beats = [
+        beat for shot in (direction.get("shots") or [direction]) for beat in shot.get("beats") or []
+    ]
+    return [match for beat in beats for match in _SAYS.findall(str(beat[2]))]
+
+
+def spoken_windows(direction: dict[str, Any]) -> list[tuple[str, float, float]]:
+    """Each spoken part with its beat's share of the clip (start, end in 0..1)."""
+    base = float(direction.get("base") or 1)
+    out = []
+    for beat in direction.get("beats") or []:
+        for part in _SAYS.findall(str(beat[2])):
+            out.append((part, float(beat[0]) / base, float(beat[1]) / base))
+    return out
 
 
 def capabilities(workspace: Any) -> set[str]:
@@ -111,6 +138,9 @@ def capabilities(workspace: Any) -> set[str]:
     out = {"MP"}
     if routes["end"][1].last_frame:
         out |= {"L", "FL"}
+    # Speech asks the model for sound whatever the route's own setting (S17-38).
+    if routes["start"][1].audio:
+        out.add("SP")
     for role, (route, profile) in routes.items():
         if wants_audio(route, profile):
             out.add(f"AU:{role}")
@@ -126,36 +156,78 @@ def missing(workspace: Any, needs: list[str], can: set[str] | None = None) -> li
     return [need for need in needs if need not in have]
 
 
+#: Slack over a language's speaking rate before a line is too long for its beat.
+SPEECH_SLACK = 1.25
+
+
+class DialogueError(OCCSError):
+    """400: a spoken line is missing (`dialogue_required`) or too long for its
+    beat (`dialogue_too_long`) — refused before anything is priced or charged."""
+
+    default_code = "dialogue_required"
+
+
+def words_per_second(language: str) -> float:
+    row = CreativeOption.objects.filter(kind=CreativeKind.LANGUAGE, key=language).first()
+    return float(((row.metadata or {}) if row else {}).get("wps") or 2.5)
+
+
+def line_of(part: str, script: dict[str, str]) -> str:
+    """A spoken part's words: a script part, or one of the body's reasons."""
+    if part.startswith("claim"):
+        # By position: an empty middle reason is that reason missing, not the next one.
+        reasons = [r.strip() for r in str(script.get("body", "")).split("·")]
+        index = int(part.removeprefix("claim") or 1) - 1
+        return reasons[index] if 0 <= index < len(reasons) else ""
+    return str(script.get(part, "")).strip()
+
+
+def check_dialogue(
+    row: CreativeOption, script: dict[str, str], *, seconds: float, language: str
+) -> None:
+    """Every line the scene speaks is there and fits its beat (S17-38)."""
+    direction = direction_of(row) or {}
+    wps = words_per_second(language or "en")
+    for part, start, end in spoken_windows(direction):
+        line = line_of(part, script)
+        if not line:
+            raise DialogueError(
+                "Write what the person says here before making the video.",
+                code="dialogue_required",
+                detail={"line": part},
+            )
+        limit = max(1, math.ceil((end - start) * seconds * wps * SPEECH_SLACK))
+        words = len(line.split())
+        if words > limit:
+            raise DialogueError(
+                f"This line is {words} words; its {round((end - start) * seconds)} s fit "
+                f"about {limit}.",
+                code="dialogue_too_long",
+                detail={"line": part, "words": words, "max": limit},
+            )
+
+
+def needs_of(row: CreativeOption, workspace: Any) -> list[str]:
+    """What a scene needs from the model: with Pro rendering its own
+    requirements (S19-09, unchanged without it), and speech on every package
+    (S17-38) — a talking scene sent to a silent model is a broken ad."""
+    direction = direction_of(row) or {}
+    own = list(direction.get("requires") or []) if is_on(workspace) else []
+    return [*own, *(["SP"] if speaks(direction) else [])]
+
+
 def check_capabilities(workspace: Any, row: CreativeOption) -> None:
-    direction = active_direction(row, workspace)
-    if direction is None:
+    """Refused before any charge when the package's model cannot do what the
+    scene needs (`needs_of`)."""
+    if direction_of(row) is None:
         return
-    lacking = missing(workspace, list(direction.get("requires") or []))
+    lacking = missing(workspace, needs_of(row, workspace))
     if lacking:
         raise RouteCannotError(
             "This scene needs the video model to "
             + " and ".join(NEED_WORDS[need] for need in lacking)
             + ", which your package's model cannot do.",
             detail={"template": row.key, "needs": lacking},
-        )
-
-
-def check_light(workspace: Any, row: CreativeOption, location: str, creative: Any) -> None:
-    """S19-07: a light chip that fights the place's own light is a 400 (its
-    `conflicts`), rather than a clip lit two ways. Only with Pro rendering on."""
-    from ai.services.ad_templates import TemplateRefusedError
-    from ai.services.creative import _chosen
-
-    light = _chosen(creative or {}, CreativeKind.LIGHT)
-    if light is None or not is_on(workspace):
-        return
-    place = location or (row.metadata.get("locations") or [""])[0]
-    if place in ((light.metadata or {}).get("conflicts") or []):
-        raise TemplateRefusedError(
-            f"The {light.label.lower()} light fights the light of this place: "
-            "pick another light or another place.",
-            code="light_conflict",
-            detail={"light": light.key, "location": place},
         )
 
 
@@ -299,12 +371,15 @@ def timeline(beats: list[Beat], syntax: str) -> str:
 # -----------------------------------------------------------------------------
 # Compile
 # -----------------------------------------------------------------------------
-TRIM_ORDER = ("style", "scene", "sound", "light")
+#: What an over-budget prompt loses first. The scene and its light are in the
+#: frame the model is given and told to keep; the sound is not (S17-43).
+TRIM_ORDER = ("style", "scene", "light", "sound")
 ORDER = (
     "format",
     "camera",
     "subject",
     "action",
+    "keep",
     "note",
     "scene",
     "light",
@@ -424,6 +499,8 @@ class Context:
     ambient: str
     avoid: str
     camera_hint: str
+    #: The language the lines are spoken in (S17-38).
+    language: str = "en"
 
 
 def context_for(render: Any, template: CreativeOption) -> Context:
@@ -455,7 +532,8 @@ def context_for(render: Any, template: CreativeOption) -> Context:
         "person_a": "the first person",
         "person_b": "the second person",
         "problem": (product.top_objection or product.buyer_situation) if product else "",
-        **{key: str(value) for key, value in script.items()},
+        # A spoken line sits inside quotes: its own double quotes become single.
+        **{key: str(value).replace('"', "'") for key, value in script.items()},
         **_scene_values(product, script, spec),
     }
     people = []
@@ -476,10 +554,8 @@ def context_for(render: Any, template: CreativeOption) -> Context:
         if part
     )
     mood_rows = _moods(creative)
-    mood_motion = next(
-        (str(row.metadata["motion"]) for row in mood_rows if (row.metadata or {}).get("motion")),
-        "",
-    )
+    # A mood's own camera move never applies: the template's shot is the camera
+    # (S17-43). Its palette is in the first frame, which the motion keeps.
     light = (
         fill(str(direction["light"]), values)
         if direction.get("light")
@@ -498,6 +574,7 @@ def context_for(render: Any, template: CreativeOption) -> Context:
         if part
     )
     return Context(
+        language=str(spec.get("language") or "en"),
         direction=direction,
         capture=capture,
         values=values,
@@ -518,7 +595,7 @@ def context_for(render: Any, template: CreativeOption) -> Context:
         ),
         ambient=place.ambient,
         avoid=avoid,
-        camera_hint=mood_motion or words.get("video_camera", ""),
+        camera_hint=words.get("video_camera", ""),
     )
 
 
@@ -531,7 +608,11 @@ def _scene_values(product: Any, script: dict[str, Any], spec: dict[str, Any]) ->
     if product is None:
         return {}
     parts = card_parts(product)
-    benefits = [part.strip() for part in str(script.get("body", "")).split("·") if part.strip()]
+    benefits = [
+        part.strip().replace('"', "'")
+        for part in str(script.get("body", "")).split("·")
+        if part.strip()
+    ]
     claims = proven_claims(product)
     offer = dict(spec.get("offer") or {})
     others = list(spec.get("extra_products") or [])
@@ -554,14 +635,24 @@ def _scene_values(product: Any, script: dict[str, Any], spec: dict[str, Any]) ->
     }
 
 
+#: What the model is told about the image it is given (goose-skills `video-h3max`'s
+#: light lock; the Omni guide's "do not change facial structure or clothing").
+KEEP_FRAME = {
+    "first": "Image 1 is the first frame: keep its place, people, clothes, product and light",
+    "last": "Image 1 is the last frame: end on it, same place, people, product and light",
+}
+
+
 def prompt_for(
     context: Context,
     shot: Shot,
     profile: VideoModelProfile,
     *,
     audio: bool,
+    frame: str = "first",
 ) -> str:
-    """One model call's prompt: the scene's parts around this shot's beats."""
+    """One model call's prompt: the scene's parts around this shot's beats, and
+    what to keep of the image it starts (or ends) on."""
     direction = context.direction
     values = context.values
     framing = fill(str(direction.get("shot") or ""), values).rstrip(".")
@@ -575,7 +666,21 @@ def prompt_for(
         if part
     )
     sound = ""
-    if audio:
+    keep = KEEP_FRAME.get(frame, "")
+    if speaks(direction):
+        # The person's own voice and nothing else — music is the composer's bed —
+        # kept with the frame, which no word budget trims (S17-38).
+        language = LANGUAGE_NAMES.get(context.language, "English")
+        keep = "; ".join(
+            part
+            for part in [
+                keep,
+                f"sound: only the person's own voice speaking the quoted lines in {language}, "
+                "lips moving with the words, no music",
+            ]
+            if part
+        )
+    elif audio:
         sound = "; ".join(
             part
             for part in [
@@ -593,6 +698,7 @@ def prompt_for(
         "action": timeline(
             [Beat(b.start, b.end, fill(b.action, values)) for b in shot.beats], profile.timecodes
         ),
+        "keep": keep,
         "note": context.note,
         "scene": context.scene,
         "light": context.light,

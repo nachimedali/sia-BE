@@ -366,8 +366,9 @@ class PlaceSource(models.TextChoices):
 class BrandPlace(models.Model):
     """A place this brand's template ads are set in (S17-28).
 
-    `upload`: the brand's own shop, kitchen or salon, from its photo — any
-    template can be set there (`own:<id>`). `made`: a catalogue place
+    `upload`: the brand's own shop, kitchen or salon, from its photo
+    (`own:<id>`), set in the templates whose places are the same kind as the
+    one it `stands_for` (S17-43). `made`: a catalogue place
     (`place_key`) drawn once as an empty set, no product and no people, and
     attached to every first frame set in that place, so the same kitchen
     appears in every ad. Its `media` is filled from the generation when that
@@ -384,6 +385,9 @@ class BrandPlace(models.Model):
     source = models.CharField(max_length=10, choices=PlaceSource.choices)
     #: The catalogue place a `made` plate pictures; blank for an upload.
     place_key = models.SlugField(max_length=40, blank=True)
+    #: S17-43: the catalogue place an upload is (kitchen, beach, …). It fits the
+    #: templates whose places share that place's setting; blank fits none.
+    stands_for = models.SlugField(max_length=40, blank=True)
     media = models.ForeignKey(
         "content.MediaAsset", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )

@@ -227,3 +227,44 @@ def test_without_keep_audio_a_reel_stays_silent(tmp_path: Path) -> None:
     _, info = _probe(result.content, tmp_path)
 
     assert not any(s["codec_type"] == "audio" for s in info["streams"])
+
+
+# --- S17-38: an optional bed under a single template clip ---------------------
+def _bed(tmp_path: Path) -> Path:
+    folder = tmp_path / "music"
+    folder.mkdir()
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=3",
+            str(folder / "oud.m4a"),
+        ],
+        check=True,
+    )
+    return folder
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("sound", [True, False])
+def test_a_music_bed_goes_under_a_clips_own_sound_or_alone(
+    tmp_path: Path, settings: Any, sound: bool
+) -> None:
+    """A talking clip keeps its voice on top of the bed; a silent clip gets the
+    bed alone. Either way one sound track, the clip's length."""
+    from ai.providers.ffmpeg_composer import FfmpegVideoComposer
+
+    settings.VIDEO_MUSIC_DIR = str(_bed(tmp_path))
+    clip = _clip(tmp_path, "talk", 5, colour="blue", sound=sound)
+    result = FfmpegVideoComposer().caption(
+        clip=clip, captions=[CaptionCue("Hello", 0.0, 2.0)], aspect="9:16", music="oud"
+    )
+    _, info = _probe(result.content, tmp_path)
+
+    assert float(info["format"]["duration"]) == pytest.approx(5.0, abs=0.3)
+    assert [s["codec_type"] for s in info["streams"]].count("audio") == 1

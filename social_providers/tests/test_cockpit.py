@@ -78,8 +78,9 @@ def test_staff_see_every_panel_quiet_on_a_quiet_system(auth_client: Any, staff: 
         "capture",
         "audience",
         "rate_budget",
+        "ai_vendors",
     }
-    for name in ("accounts", "publishing", "capture", "audience", "rate_budget"):
+    for name in ("accounts", "publishing", "capture", "audience", "rate_budget", "ai_vendors"):
         assert body[name]["alerts"] == [], name
     # Not a provider outage: the test settings carry no key, and the panel says so.
     assert "no key" in body["provider"]["usage_error"]
@@ -289,3 +290,49 @@ def test_a_publish_waiting_on_the_budget_is_red(auth_client: Any, staff: Any) ->
 
     assert budget["refused_last_hour"] == {"publish": 1}
     assert budget["alerts"] == ["A publish waited on the rate budget in the last hour."]
+
+
+# --- S17-43: the AI vendors' fallbacks ---------------------------------------
+def _image(workspace: Any, provider: str, model: str, ago: dt.timedelta) -> None:
+    from ai.models import Generation, GenerationKind, GenerationMode, GenerationStatus
+
+    made = Generation.objects.create(
+        workspace=workspace,
+        user=workspace.organization.owner,
+        kind=GenerationKind.IMAGE,
+        mode=GenerationMode.PRODUCT,
+        status=GenerationStatus.SUCCEEDED,
+        provider=provider,
+        model=model,
+    )
+    Generation.objects.filter(pk=made.pk).update(created_at=timezone.now() - ago)
+
+
+def test_images_drawn_by_the_fallback_turn_the_ai_panel_red(
+    auth_client: Any, staff: Any, paid_workspace: Any
+) -> None:
+    """Beta, 2026-11-19: Google refused every image for 12 days and FLUX drew
+    them all; nothing said so."""
+    for _ in range(4):
+        flux = "black-forest-labs/flux-3-image-klein"
+        _image(paid_workspace, "openrouter", flux, dt.timedelta(hours=1))
+    _image(paid_workspace, "nanobanana", "gemini-nano-banana-2.1", dt.timedelta(hours=2))
+    _image(paid_workspace, "openrouter", "old", dt.timedelta(days=3))  # outside the window
+
+    ai = panel(auth_client, "ai_vendors")
+
+    assert ai["images_24h"] == {"total": 5, "fallback": 4}
+    assert ai["alerts"] and "4 of 5 images" in ai["alerts"][0]
+    assert "flux-3-image-klein" in ai["alerts"][0]
+
+
+def test_a_primary_vendor_doing_its_job_keeps_the_ai_panel_quiet(
+    auth_client: Any, staff: Any, paid_workspace: Any
+) -> None:
+    for _ in range(5):
+        _image(paid_workspace, "nanobanana", "gemini-nano-banana-2.1", dt.timedelta(hours=1))
+
+    ai = panel(auth_client, "ai_vendors")
+
+    assert ai["images_24h"] == {"total": 5, "fallback": 0}
+    assert ai["alerts"] == []

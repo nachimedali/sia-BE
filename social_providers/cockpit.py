@@ -64,6 +64,7 @@ def cockpit(*, now: dt.datetime | None = None) -> dict[str, Any]:
         "capture": capture_panel(moment),
         "audience": audience_panel(moment, usage),
         "rate_budget": rate_budget_panel(moment),
+        "ai_vendors": ai_vendors_panel(moment),
     }
 
 
@@ -380,5 +381,50 @@ def rate_budget_panel(now: dt.datetime) -> dict[str, Any]:
         "publish_reserve_ratio": float(settings.SOCIALAPI_PUBLISH_RESERVE_RATIO),
         "refused_last_hour": refused,
         "capture_deferrals": CaptureDeferral.objects.count(),
+        "alerts": alerts,
+    }
+
+
+# --- S17-43: the AI vendors -----------------------------------------------------------------
+def ai_vendors_panel(now: dt.datetime) -> dict[str, Any]:
+    """How much of the last day's pictures and clips the fallbacks made. On
+    beta (2026-11-19) Google refused every image for twelve days and the
+    second vendor drew them all; nothing said so. Red past the set share."""
+    from django.conf import settings
+
+    from ai.models import AIModelRoute, Generation, GenerationKind, VideoRender
+
+    since = now - dt.timedelta(hours=24)
+    threshold = float(settings.AI_FALLBACK_ALERT_SHARE)
+    images = Generation.objects.filter(kind=GenerationKind.IMAGE, created_at__gte=since).exclude(
+        provider=""
+    )
+    image_total = images.count()
+    fallback_images = images.exclude(provider=settings.IMAGE_PROVIDER)
+    image_fallback = fallback_images.count()
+    fallback_models = set(
+        AIModelRoute.objects.exclude(fallback_model="")
+        .filter(task__startswith="video")
+        .values_list("fallback_model", flat=True)
+    )
+    clips = VideoRender.objects.filter(created_at__gte=since).exclude(model="")
+    clip_total = clips.count()
+    clip_fallback = clips.filter(model__in=fallback_models).count()
+    alerts = []
+    if image_total and image_fallback / image_total > threshold:
+        models = sorted(set(fallback_images.values_list("model", flat=True)))
+        alerts.append(
+            f"{image_fallback} of {image_total} images in the last 24 h were drawn by the "
+            f"fallback ({', '.join(models)}): the primary image vendor is refusing."
+        )
+    if clip_total and clip_fallback / clip_total > threshold:
+        alerts.append(
+            f"{clip_fallback} of {clip_total} videos in the last 24 h were rendered by a "
+            "fallback model: the primary video route is failing."
+        )
+    return {
+        "images_24h": {"total": image_total, "fallback": image_fallback},
+        "videos_24h": {"total": clip_total, "fallback": clip_fallback},
+        "fallback_alert_share": threshold,
         "alerts": alerts,
     }

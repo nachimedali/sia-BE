@@ -150,6 +150,19 @@ class RateBudgetPanelSerializer(_Serializer):
     capture_deferrals = serializers.IntegerField()
 
 
+class FallbackCountSerializer(serializers.Serializer[Any]):
+    total = serializers.IntegerField()
+    fallback = serializers.IntegerField()
+
+
+class AiVendorsPanelSerializer(_Serializer):
+    """S17-43: what the image and video fallbacks made in the last day."""
+
+    images_24h = FallbackCountSerializer()
+    videos_24h = FallbackCountSerializer()
+    fallback_alert_share = serializers.FloatField()
+
+
 class CockpitSerializer(serializers.Serializer[Any]):
     generated_at = serializers.DateTimeField()
     provider = ProviderPanelSerializer()
@@ -159,3 +172,4 @@ class CockpitSerializer(serializers.Serializer[Any]):
     capture = CapturePanelSerializer()
     audience = AudiencePanelSerializer()
     rate_budget = RateBudgetPanelSerializer()
+    ai_vendors = AiVendorsPanelSerializer()
