@@ -16,6 +16,7 @@ from rest_framework_simplejwt.views import TokenBlacklistView, TokenRefreshView
 
 from accounts.views import (
     AccountView,
+    BetaAccessRequestView,
     EmailConfirmView,
     MeEmailView,
     MeExportDownloadView,
@@ -236,6 +237,7 @@ urlpatterns = [
     ),
     # --- auth ---
     path("auth/register/", RegisterView.as_view(), name="auth-register"),
+    path("beta-access/", BetaAccessRequestView.as_view(), name="beta-access"),
     path("auth/login/", ThrottledTokenObtainPairView.as_view(), name="auth-login"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
     path("auth/logout/", TokenBlacklistView.as_view(), name="auth-logout"),

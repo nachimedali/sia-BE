@@ -585,6 +585,9 @@ EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+# Staff address told about each beta-access request from the public site.
+# Blank sends nothing; the requests are still recorded.
+BETA_ACCESS_NOTIFY_EMAIL = env("BETA_ACCESS_NOTIFY_EMAIL", default="compose@semaphore-labs.com")
 DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER or "no-reply@attractvision.com"
 )
