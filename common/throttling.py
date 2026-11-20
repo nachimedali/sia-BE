@@ -82,6 +82,13 @@ class RegisterThrottle(IPTokenBucketThrottle):
     refill_per_second = 1 / 120
 
 
+class BetaAccessThrottle(IPTokenBucketThrottle):
+    # Each request emails staff, so this caps outbound mail as well as rows.
+    scope = "beta:request"
+    capacity = 5
+    refill_per_second = 1 / 120
+
+
 class PasswordResetThrottle(IPTokenBucketThrottle):
     # Reset requests send mail to an address the requester may not own, so this
     # is an outbound-spam control as much as an auth control.

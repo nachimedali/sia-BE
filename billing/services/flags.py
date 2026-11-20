@@ -165,6 +165,11 @@ PRODUCT_SCAN_ASSIST = "product_scan_assist"
 #: neither the welcome nor the heads-up is sent.
 TRANSACTIONAL_EMAIL = "transactional_email"
 
+#: The public site's "request beta access" form (`POST /beta-access/`), used
+#: instead of open registration during the launch month. Off restores
+#: pre-change behaviour: the endpoint answers 404.
+BETA_ACCESS = "beta_access"
+
 #: The Playbook (`/app/playbook`): trending public posts from YouTube and Google
 #: Trends, picked as references and composed from (`GenerationMode.RECIPE`). Off
 #: restores pre-change behaviour: the Playbook endpoints answer 404, as the
@@ -240,6 +245,8 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     # Off until trendgen serves them; see the declarations above.
     TRENDGEN_FEED: False,
     TRENDGEN_GENERATION: False,
+    # On from deploy (owner, 2026-11-20): the launch month collects requests.
+    BETA_ACCESS: True,
 }
 
 

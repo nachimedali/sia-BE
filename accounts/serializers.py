@@ -159,3 +159,24 @@ class EmailConfirmSerializer(serializers.Serializer[Any]):
 
 class AccountDeleteSerializer(serializers.Serializer[Any]):
     confirm = serializers.CharField(allow_blank=True)
+
+
+class BetaAccessRequestSerializer(serializers.Serializer):  # type: ignore[type-arg]
+    """The public beta-access form. `package` is a public plan's code, checked
+    against the live plan rows, never a list in code."""
+
+    email = serializers.EmailField(max_length=254)
+    package = serializers.CharField(max_length=50)
+    business_name = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    phone = serializers.CharField(max_length=40, required=False, allow_blank=True)
+    social_url = serializers.URLField(max_length=300, required=False, allow_blank=True)
+    currency = serializers.ChoiceField(choices=["USD", "TND"], required=False, allow_blank=True)
+    captcha = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    def validate_package(self, value: str) -> Any:
+        from billing.models import Plan
+
+        plan = Plan.objects.filter(code=value, is_public=True).first()
+        if plan is None:
+            raise serializers.ValidationError("Choose one of the packages on the list.")
+        return plan

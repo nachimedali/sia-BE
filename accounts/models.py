@@ -244,3 +244,30 @@ class DataExport(models.Model):
 
     def __str__(self) -> str:
         return f"export {self.pk} for {self.user_id} ({self.state})"
+
+
+class BetaAccessRequest(models.Model):
+    """A request for beta access from the public site's launch-month form.
+
+    One row per address: a repeat updates it and counts the submission, so the
+    list stays a list of people. `plan` is the package they say they want —
+    the demand signal the launch analysis reads — and is protected, so a plan
+    row cannot be deleted from under the requests that name it.
+    """
+
+    email = models.EmailField(unique=True)
+    plan = models.ForeignKey("billing.Plan", on_delete=models.PROTECT, related_name="+")
+    business_name = models.CharField(max_length=160, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    social_url = models.URLField(max_length=300, blank=True)
+    #: The currency the visitor was looking at prices in (USD or TND), blank if unknown.
+    currency = models.CharField(max_length=3, blank=True)
+    submissions = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.email} ({self.plan_id})"

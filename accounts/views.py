@@ -22,6 +22,7 @@ from accounts.models import User
 from accounts.serializers import (
     AccountDeleteSerializer,
     AccountSerializer,
+    BetaAccessRequestSerializer,
     EmailChangeSerializer,
     EmailConfirmSerializer,
     MeSerializer,
@@ -35,10 +36,12 @@ from accounts.serializers import (
     VerifyEmailSerializer,
 )
 from accounts.services import auth as auth_service
-from accounts.services import self_service
+from accounts.services import beta_access, self_service
+from billing.services.flags import BETA_ACCESS, flag_enabled
 from common import captcha
 from common.exceptions import NotFoundError, OCCSError
 from common.throttling import (
+    BetaAccessThrottle,
     LoginThrottle,
     PasswordResetThrottle,
     RegisterThrottle,
@@ -372,3 +375,33 @@ class ThrottledTokenObtainPairView(TokenObtainPairView):
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         captcha.require(request)
         return super().post(request, *args, **kwargs)
+
+
+class BetaAccessRequestView(APIView):
+    """`POST /beta-access/`: the public site's launch-month form."""
+
+    authentication_classes: list[Any] = []
+    permission_classes: list[Any] = [AllowAny]
+    throttle_classes: list[Any] = [BetaAccessThrottle]
+
+    @extend_schema(
+        request=BetaAccessRequestSerializer,
+        responses={202: None, 400: None, 404: None, 429: None},
+        summary="Request beta access",
+        description=(
+            "Records a request for beta access (one row per email; a repeat updates it) "
+            "and emails staff. Answers the same way whether or not the address was seen "
+            "before. 404 while the `beta_access` flag is off."
+        ),
+        auth=[],
+    )
+    def post(self, request: Request) -> Response:
+        if not flag_enabled(None, BETA_ACCESS):
+            raise NotFoundError("This endpoint does not exist.")
+        captcha.require(request)
+        serializer = BetaAccessRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+        data.pop("captcha", None)
+        beta_access.record(email=data.pop("email"), plan=data.pop("package"), **data)
+        return Response({"received": True}, status=status.HTTP_202_ACCEPTED)

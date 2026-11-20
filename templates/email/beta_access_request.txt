@@ -1,0 +1,9 @@
+New beta access request{% if submissions > 1 %} (submission {{ submissions }} from this address){% endif %}
+
+Email: {{ email }}
+Package: {{ package }}{% if currency %} ({{ currency }}){% endif %}
+Business: {{ business_name|default:"—" }}
+Phone: {{ phone|default:"—" }}
+Social: {{ social_url|default:"—" }}
+
+All requests are in the admin under Accounts → Beta access requests.
