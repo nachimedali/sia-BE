@@ -140,25 +140,6 @@ def check_capabilities(workspace: Any, row: CreativeOption) -> None:
         )
 
 
-def check_light(workspace: Any, row: CreativeOption, location: str, creative: Any) -> None:
-    """S19-07: a light chip that fights the place's own light is a 400 (its
-    `conflicts`), rather than a clip lit two ways. Only with Pro rendering on."""
-    from ai.services.ad_templates import TemplateRefusedError
-    from ai.services.creative import _chosen
-
-    light = _chosen(creative or {}, CreativeKind.LIGHT)
-    if light is None or not is_on(workspace):
-        return
-    place = location or (row.metadata.get("locations") or [""])[0]
-    if place in ((light.metadata or {}).get("conflicts") or []):
-        raise TemplateRefusedError(
-            f"The {light.label.lower()} light fights the light of this place: "
-            "pick another light or another place.",
-            code="light_conflict",
-            detail={"light": light.key, "location": place},
-        )
-
-
 # -----------------------------------------------------------------------------
 # Validation (on save, through `ad_templates.validate_metadata`)
 # -----------------------------------------------------------------------------
@@ -299,12 +280,15 @@ def timeline(beats: list[Beat], syntax: str) -> str:
 # -----------------------------------------------------------------------------
 # Compile
 # -----------------------------------------------------------------------------
-TRIM_ORDER = ("style", "scene", "sound", "light")
+#: What an over-budget prompt loses first. The scene and its light are in the
+#: frame the model is given and told to keep; the sound is not (S17-43).
+TRIM_ORDER = ("style", "scene", "light", "sound")
 ORDER = (
     "format",
     "camera",
     "subject",
     "action",
+    "keep",
     "note",
     "scene",
     "light",
@@ -476,10 +460,8 @@ def context_for(render: Any, template: CreativeOption) -> Context:
         if part
     )
     mood_rows = _moods(creative)
-    mood_motion = next(
-        (str(row.metadata["motion"]) for row in mood_rows if (row.metadata or {}).get("motion")),
-        "",
-    )
+    # A mood's own camera move never applies: the template's shot is the camera
+    # (S17-43). Its palette is in the first frame, which the motion keeps.
     light = (
         fill(str(direction["light"]), values)
         if direction.get("light")
@@ -518,7 +500,7 @@ def context_for(render: Any, template: CreativeOption) -> Context:
         ),
         ambient=place.ambient,
         avoid=avoid,
-        camera_hint=mood_motion or words.get("video_camera", ""),
+        camera_hint=words.get("video_camera", ""),
     )
 
 
@@ -554,14 +536,24 @@ def _scene_values(product: Any, script: dict[str, Any], spec: dict[str, Any]) ->
     }
 
 
+#: What the model is told about the image it is given (goose-skills `video-h3max`'s
+#: light lock; the Omni guide's "do not change facial structure or clothing").
+KEEP_FRAME = {
+    "first": "Image 1 is the first frame: keep its place, people, clothes, product and light",
+    "last": "Image 1 is the last frame: end on it, same place, people, product and light",
+}
+
+
 def prompt_for(
     context: Context,
     shot: Shot,
     profile: VideoModelProfile,
     *,
     audio: bool,
+    frame: str = "first",
 ) -> str:
-    """One model call's prompt: the scene's parts around this shot's beats."""
+    """One model call's prompt: the scene's parts around this shot's beats, and
+    what to keep of the image it starts (or ends) on."""
     direction = context.direction
     values = context.values
     framing = fill(str(direction.get("shot") or ""), values).rstrip(".")
@@ -593,6 +585,7 @@ def prompt_for(
         "action": timeline(
             [Beat(b.start, b.end, fill(b.action, values)) for b in shot.beats], profile.timecodes
         ),
+        "keep": KEEP_FRAME.get(frame, ""),
         "note": context.note,
         "scene": context.scene,
         "light": context.light,

@@ -133,7 +133,9 @@ def test_the_prompt_runs_in_order_with_timed_beats(
 ) -> None:
     sent = _render(auth_client, pro, make_png_upload, "pour-shot").prompt_sent
 
-    labels = ["Camera:", "0-2 s:", "Light:", "Sound:", "Avoid:"]
+    # S17-43: the frame it keeps comes after the beats; on Omni's budget the
+    # place and light lines go first, as the frame holds them.
+    labels = ["Camera:", "0-2 s:", "Image 1 is the first frame", "Sound:", "Avoid:"]
     positions = [sent.index(label) for label in labels]
     assert positions == sorted(positions), sent
     assert sent.startswith("Vertical 9:16")
@@ -197,28 +199,24 @@ def test_a_rewrite_that_flattens_the_beats_is_refused() -> None:
     assert rephrase.acceptable(flat, "Motion: a slow push-in on the product.") is True
 
 
-def test_todays_flattening_no_longer_reaches_the_model(
+def test_with_the_flag_off_a_template_motion_is_never_rewritten_either(
     auth_client: Any,
     growth: Any,  # noqa: F811
     make_png_upload: Any,
-    monkeypatch: Any,
 ) -> None:
-    """Flag off, rewrite on: a model that flattens the timed motion (what
-    `MOTION_SYSTEM` asks for) was sent as is; now its words are refused and the
-    row's own timed motion goes out."""
-    real = _fake_text_provider.generate
+    """S17-43: flag off, rewrite on — the template is compiled, not rewritten,
+    so a flattening rewrite cannot reach the model at all."""
+    from billing.models import FeatureFlag
+    from billing.services.flags import STUDIO_REPHRASE
 
-    def flattening(*, system: str, prompt: str, n: int, model: Any = None) -> Any:
-        result = real(system=system, prompt=prompt, n=n, model=model)
-        if system.startswith("You write the motion"):
-            result.variants[0].body = "The hand pours the oil in one smooth movement."
-        return result
-
-    monkeypatch.setattr(_fake_text_provider, "generate", flattening)
+    FeatureFlag.objects.create(organization=None, key=STUDIO_REPHRASE, enabled=True)
+    _fake_text_provider.calls.clear()
     render = _render(auth_client, growth, make_png_upload, "pour-shot")
 
-    assert "0-3 s: Hand enters" in render.prompt_sent
-    assert render.rephrased_by == rephrase.TEMPLATE
+    assert "0-2 s: the hand lifts the product" in render.prompt_sent
+    assert not any(
+        call["system"].startswith("You write the motion") for call in _fake_text_provider.calls
+    )
 
 
 def test_a_directed_template_is_never_rewritten(
@@ -341,14 +339,15 @@ def test_a_scene_that_became_two_shots_renders_as_two(
     assert sum(shot["seconds"] for shot in reel["shots"]) == pytest.approx(10 - 2.0)
 
 
-def test_with_the_flag_off_the_shots_share_one_prompt(
+def test_with_the_flag_off_the_shots_are_compiled_too(
     auth_client: Any,
     growth: Any,  # noqa: F811
     make_png_upload: Any,
 ) -> None:
-    _render(auth_client, growth, make_png_upload, "reaction-reveal", photos=2)
+    """S17-43: flag off, each moving shot is compiled from its own beats."""
+    render = _render(auth_client, growth, make_png_upload, "reaction-reveal", photos=2)
 
-    assert len(set(_fake_video_provider.calls)) == 1
+    assert "Image 1 is the first frame" in render.prompt_sent
 
 
 # -----------------------------------------------------------------------------
@@ -390,7 +389,8 @@ def test_before_and_after_play_side_by_side(
 # S19-07: places, lights, moods and cast vibes
 # -----------------------------------------------------------------------------
 def test_the_look_lands_in_its_own_part(auth_client: Any, pro: Any, make_png_upload: Any) -> None:
-    look = {"light": "golden-hour", "moods": ["warm"], "vibe": "everyday"}
+    # S17-43: a phone template keeps its place's light; moods are grade only.
+    look = {"moods": ["natural"], "vibe": "everyday"}
     render = _render(
         auth_client, pro, make_png_upload, "desk-break", creative=look, location="office"
     )
@@ -401,8 +401,10 @@ def test_the_look_lands_in_its_own_part(auth_client: Any, pro: Any, make_png_upl
         video_prompt.context_for(render, template), shot, roomy, audio=True
     )
 
-    assert "Light: Golden hour cinematography, low golden-hour sunlight" in prompt
-    assert "Style: Shot on a phone's main camera" in prompt and "3200K practical light" in prompt
+    office = CreativeOption.objects.get(kind=CreativeKind.PLACE, key="office")
+    assert f"Light: {office.metadata['light'][:1].upper()}" in prompt
+    assert "Style: Shot on a phone's main camera" in prompt
+    assert "raw wood, stone and linen" in prompt
     assert "Sound: Quiet room tone and keyboard taps" in prompt
     assert "papers in front, the product on the desk, the window behind" in prompt
     assert "performance: relaxed and unhurried" in prompt
@@ -414,29 +416,47 @@ def test_the_look_lands_in_its_own_part(auth_client: Any, pro: Any, make_png_upl
 def test_a_light_that_fights_the_place_is_refused(
     auth_client: Any, pro: Any, make_png_upload: Any
 ) -> None:
+    """S17-43: on a studio template whose light is open, a light that fights the
+    place picked is a 400 `not_in_template`; at a place it suits, it goes."""
+    from ai.services import ad_templates, template_fit
+
+    template, bad, good, light = next(
+        (t, bad, good, key)
+        for t in ad_templates._rows()
+        if not t.metadata.get("hidden")
+        and t.metadata["person"] == "none"
+        and set(t.metadata["fits"]) & {"physical"}
+        for key in (template_fit.controls(t)["light"].get("open") or [])
+        for bad in t.metadata["locations"]
+        for good in t.metadata["locations"]
+        if bad in template_fit.light_conflicts(key)
+        and good not in template_fit.light_conflicts(key)
+    )
     product = make_product(pro, make_png_upload)
     body = {
         "mode": "clip",
-        "length": "clip-10",
-        "template": "slow-unbox",
+        "length": template.metadata["lengths"][0],
+        "template": template.key,
         "product": product.pk,
         "language": "en",
-        "location": "studio",
-        "creative": {"light": "golden-hour"},
+        "location": bad,
+        "creative": {"light": light},
     }
     response = auth_client.post("/api/v1/ai/video/estimate/", body, format="json")
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "light_conflict"
-    body["location"] = "kitchen"
+    assert response.json()["error"]["code"] == "not_in_template"
+    assert response.json()["error"]["detail"]["reason"] == "place_light"
+    body["location"] = good
     assert auth_client.post("/api/v1/ai/video/estimate/", body, format="json").status_code == 200
 
 
-def test_with_the_flag_off_any_light_goes(
+def test_with_the_flag_off_the_template_still_decides_the_light(
     auth_client: Any,
     growth: Any,  # noqa: F811
     make_png_upload: Any,
 ) -> None:
+    """S17-43: a phone template keeps its own light, flag on or off."""
     product = make_product(growth, make_png_upload)
     body = {
         "mode": "clip",
@@ -447,7 +467,9 @@ def test_with_the_flag_off_any_light_goes(
         "location": "studio",
         "creative": {"light": "golden-hour"},
     }
-    assert auth_client.post("/api/v1/ai/video/estimate/", body, format="json").status_code == 200
+    response = auth_client.post("/api/v1/ai/video/estimate/", body, format="json")
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"]["control"] == "light"
 
 
 def test_the_look_migration_adds_keys_and_keeps_an_operators_own(
@@ -845,13 +867,15 @@ def test_a_reels_frames_sit_on_each_shot_before_the_end_card(
     assert _fake_video_composer.frame_requests == [marks]
 
 
-def test_no_frames_without_pro_rendering(
+def test_every_template_render_has_its_beat_stills(
     auth_client: Any,
     growth: Any,  # noqa: F811
     make_png_upload: Any,
 ) -> None:
+    """S17-43: the reviewer checks every template clip against its beats, Pro or
+    not — no machine check can tell a lost scene from a camera move."""
     render = _render(auth_client, growth, make_png_upload, "pour-shot")
-    assert render.beat_frames == []
+    assert render.beat_frames != []
 
 
 def test_a_composer_that_cannot_make_frames_costs_the_frames_only(

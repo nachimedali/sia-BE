@@ -75,9 +75,11 @@ from ai.services import (
     ad_templates,
     disclosure,
     graphics,
+    prompt_lint,
     quality,
     render_checks,
     rephrase,
+    template_fit,
     video_prompt,
 )
 from ai.services import creative as creative_service
@@ -401,6 +403,12 @@ def parse(workspace: Workspace, data: dict[str, Any]) -> Spec:
     )
 
 
+def _template_words(lead: str, render: VideoRender) -> str:
+    """A template's motion plus the person's own words, and nothing else: its
+    look is already in its first frame (S17-43)."""
+    return " ".join(filter(None, [lead, render.spec.get("prompt", "")]))
+
+
 def _directed(lead: str, render: VideoRender) -> str:
     """`lead` plus the look the person chose and their own words."""
     return " ".join(
@@ -462,7 +470,15 @@ def _parse_template(
     length = common["length"]
     ad_templates.length_units(row, length.key)
     location = str(data.get("location") or "")
-    video_prompt.check_light(workspace, row, location, common["creative"])
+    # S17-43: the look this template takes, or a 400 — the same check the first
+    # frame makes, so the frame and the motion are told the same things.
+    common["creative"] = template_fit.check(
+        row,
+        common["creative"],
+        location=location,
+        person_on=avatar is not None,
+        workspace=workspace,
+    )
     video_prompt.check_capabilities(workspace, row)
     # 400 on a bad location, 404 on another brand's own place.
     ad_templates.keyframe_prompt(row, product=product, location=location, workspace=workspace)
@@ -876,6 +892,9 @@ def start_render(
                 location=spec.location,
                 extra_avatars=spec.extra_avatars,
                 extra_products=spec.extra_products,
+                # The frame is told what the motion will be told (S17-43).
+                look=spec.creative,
+                prompt=spec.prompt,
             )
         render = VideoRender.objects.create(
             workspace=workspace,
@@ -1043,7 +1062,10 @@ def _template_of(render: VideoRender) -> CreativeOption | None:
 
 def _render_clip(render: VideoRender) -> VideoResult:
     template = _template_of(render)
-    direction = video_prompt.active_direction(template, render.workspace)
+    # Every template render is compiled from its timed direction, on every
+    # route (S17-43): the label beats ("Call to action") never reach a model.
+    # Pro rendering still gates its own scenes, drafts and routes.
+    direction = video_prompt.direction_of(template) if template is not None else None
     if template is not None and (
         ad_templates.shots_of(template) or (direction and direction.get("shots"))
     ):
@@ -1070,11 +1092,13 @@ def _render_clip(render: VideoRender) -> VideoResult:
         if template
         else (motion.prompt_fragment if motion else "")
     )
-    if prompt:
+    if prompt and template is not None:
+        prompt = _template_words(prompt, render)
+    elif prompt:
         # The scene, light, camera, cast and mood the person chose, in the same
         # words the still was made with (`creative.look_lines`).
         prompt = _directed(prompt, render)
-    if prompt and flag_enabled(render.workspace.organization, STUDIO_REPHRASE):
+    if prompt and template is None and flag_enabled(render.workspace.organization, STUDIO_REPHRASE):
         # The motion row, rewritten into one brief (`ai.services.rephrase`);
         # the row's own words when the rewrite fails its checks.
         rewritten = rephrase.motion_brief(
@@ -1150,7 +1174,9 @@ def _render_directed_clip(
     asked = float(profile.fit_seconds(seconds * speed))
     context = video_prompt.context_for(render, template)
     shot = video_prompt.shots_for(direction, asked)[0]
-    prompt = video_prompt.prompt_for(context, shot, profile, audio=audio)
+    prompt = video_prompt.prompt_for(
+        context, shot, profile, audio=audio, frame="last" if role == "end" else "first"
+    )
     _record_prompt(render, prompt)
     _advance(render, *PHASES[1])
     result: VideoResult = provider.animate(
@@ -1212,9 +1238,14 @@ def _burn_in_beats(
 
 
 def _record_prompt(render: VideoRender, prompt: str) -> None:
-    """Saved before the vendor call, so a failed render keeps it too."""
+    """Saved before the vendor call, so a failed render keeps it too. A
+    template's words are checked here, before anything is ordered (S17-43)."""
     render.prompt_sent = prompt
     render.save(update_fields=["prompt_sent"])
+    if render.template:
+        prompt_lint.require_clean(
+            prompt, person=render.avatar_id is not None or bool(render.spec.get("extra_avatars"))
+        )
 
 
 #: Shots the video model animates; the others are stills, drawn or crisp.
@@ -1291,7 +1322,7 @@ def _render_template_reel(
             filter(
                 None,
                 [
-                    _directed(ad_templates.motion_prompt(template), render),
+                    _template_words(ad_templates.motion_prompt(template), render),
                     ad_templates.avoid_line(
                         template,
                         ad_templates.place_forbid(
@@ -1510,6 +1541,9 @@ def run_render(render_id: int) -> VideoRender:
             "video_unavailable",
             "Video rendering is not available right now. No credits were taken.",
         )
+    except prompt_lint.PromptConflictError as conflict:
+        logger.error("video render %s: %s", render.pk, conflict.message)
+        return _fail(render, "prompt_conflict", f"{conflict.message} No credits were taken.")
     except ProviderError:
         logger.warning("video render %s: provider error", render.pk, exc_info=True)
         return _fail(
@@ -1593,8 +1627,9 @@ def _beat_stills(
 ) -> list[tuple[float, str, bytes]]:
     """S19-13: a still at the middle of each beat of a Pro render, for review.
     Advisory, like the checks: a composer that cannot make them costs the
-    stills, never the render."""
-    direction = video_prompt.active_direction(template, render.workspace)
+    stills, never the render. Every template render has them since S17-43: the
+    reviewer checks the clip against its beats, as no machine check can."""
+    direction = video_prompt.direction_of(template) if template is not None else None
     composer = get_video_composer()
     if direction is None or composer is None:
         return []

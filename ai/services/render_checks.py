@@ -8,7 +8,8 @@ are goose-skills `review-finished-ad`'s:
 * `still_opening` — the first frame held for more than 1.5 s;
 * `silent_opening` — no sound in the first second, when the clip has sound;
 * `likeness` — the last frame before the end card against the product's photos,
-  with the image gate's perceptual hash and threshold.
+  with the image gate's perceptual hash and threshold; `likeness_unmeasured`
+  when it could not be measured (S17-43: shown, never a silent pass).
 
 **Advisory.** They are shown at review and never refuse a render: the
 thresholds have not been tuned on our vendors' clips yet. A file that cannot
@@ -80,6 +81,16 @@ def _intervals(starts: list[str], ends: list[str], until: float) -> list[tuple[f
     return out
 
 
+#: A likeness that could not be measured is shown as such, never as a pass
+#: (S17-43): the reviewer is told to look, as for a low score.
+UNMEASURED: dict[str, Any] = {
+    "code": "likeness_unmeasured",
+    "ok": False,
+    "detail": "the product's likeness could not be measured",
+    "score": None,
+}
+
+
 def _likeness(path: Path, at: float, photos: list[bytes], threshold: float) -> dict[str, Any]:
     from ai.services.quality import _dhash, _similarity_from_hash
 
@@ -100,7 +111,7 @@ def _likeness(path: Path, at: float, photos: list[bytes], threshold: float) -> d
         ]
     )
     if done is None or done.returncode != 0 or not frame.exists():
-        return {"code": "likeness", "ok": True, "detail": "not measured", "score": None}
+        return UNMEASURED
     with Image.open(frame) as image:
         frame_hash = _dhash(image)
     scores = []
@@ -110,7 +121,7 @@ def _likeness(path: Path, at: float, photos: list[bytes], threshold: float) -> d
         except (OSError, ValueError):
             continue
     if not scores:
-        return {"code": "likeness", "ok": True, "detail": "not measured", "score": None}
+        return UNMEASURED
     score = round(max(scores), 3)
     return {
         "code": "likeness",

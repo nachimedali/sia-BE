@@ -629,6 +629,9 @@ LLM_RATE_LIMIT_MAX_WAIT_SECONDS = env.int("LLM_RATE_LIMIT_MAX_WAIT_SECONDS", def
 LLM_RATE_LIMIT_RETRIES = env.int("LLM_RATE_LIMIT_RETRIES", default=2)
 
 IMAGE_PROVIDER = env("IMAGE_PROVIDER", default="nanobanana")
+#: S17-43: the ops cockpit turns red when fallbacks made more than this share
+#: of the last day's images or videos.
+AI_FALLBACK_ALERT_SHARE = env.float("AI_FALLBACK_ALERT_SHARE", default=0.2)
 IMAGE_PROVIDER_BASE_URL = env(
     "IMAGE_PROVIDER_BASE_URL", default="https://generativelanguage.googleapis.com/v1beta"
 )

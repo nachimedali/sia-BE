@@ -69,7 +69,15 @@ from ai.providers.base import ImageVariant, TextVariant
 from ai.providers.llm_text import get_text_provider
 from ai.providers.nanobanana_image import get_image_provider
 from ai.providers.video import get_video_provider
-from ai.services import ad_templates, brand_assets, prompting, quality, references, rephrase
+from ai.services import (
+    ad_templates,
+    brand_assets,
+    prompt_lint,
+    prompting,
+    quality,
+    references,
+    rephrase,
+)
 from ai.services import creative as creative_service
 from ai.services import hashtags as hashtag_service
 from ai.services.costing import resolve_pricing
@@ -472,6 +480,13 @@ def _attempt_image(
     restrictions = generation.product.restrictions if generation.product else []
 
     _record_prompt(generation, grounded.user)
+    if (generation.creative or {}).get("ad_template"):
+        # A template's first frame is checked before it is ordered (S17-43).
+        creative = generation.creative or {}
+        prompt_lint.require_clean(
+            grounded.user,
+            person=any(asset.get("role") == "person" for asset in creative.get("assets") or []),
+        )
     result = provider.generate(
         prompt=grounded.user,
         reference_images=[
@@ -636,6 +651,10 @@ def _rephrase(generation: Generation) -> None:
         generation.creative
     ):
         return
+    if (generation.creative or {}).get("ad_template"):
+        # A template's first frame is sent in its own words: a rewrite only
+        # drifts them ("a man wearing joggers" became "joggers lie flat").
+        return
     if not flag_enabled(generation.workspace.organization, STUDIO_REPHRASE):
         return
     snapshot = generation.creative.get("references") or []
@@ -725,14 +744,25 @@ def run_generation(generation: Generation, *, n: int = 3) -> Generation:
         if generation.kind == GenerationKind.TEXT:
             attempt_results, meta = _attempt_text(generation, n=n)
         else:
-            attempt_results, meta = _attempt_image(
-                generation,
-                n=n,
-                config=config,
-                reference_images=reference_images,
-                inspiration=inspiration,
-                assets=assets,
-            )
+            try:
+                attempt_results, meta = _attempt_image(
+                    generation,
+                    n=n,
+                    config=config,
+                    reference_images=reference_images,
+                    inspiration=inspiration,
+                    assets=assets,
+                )
+            except prompt_lint.PromptConflictError as conflict:
+                # Our words, not the vendor's: nothing was ordered, nothing is owed.
+                logger.error("generation %s: %s", generation.pk, conflict.message)
+                generation.status = GenerationStatus.FAILED
+                generation.error_detail = {
+                    "reason": "prompt_conflict",
+                    "problems": conflict.payload["problems"],
+                }
+                generation.save()
+                return generation
 
         for index, (candidate, check) in enumerate(attempt_results):
             # One save each, not bulk_create: the picture is written to storage.

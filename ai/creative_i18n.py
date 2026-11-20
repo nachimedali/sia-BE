@@ -593,6 +593,7 @@ TRANSLATIONS: dict[str, tuple[str, str, str, str]] = {
     "shot_tag|lifestyle": ("Lifestyle", "", "Lifestyle", ""),
     "shot_tag|range": ("Gamme / ensemble", "", "Gamma / set", ""),
     "shot_tag|screen": ("Écran d'appli", "", "Schermata dell'app", ""),
+    "shot_tag|with-text": ("Texte imprimé dessus", "", "Con testo stampato", ""),
     "aspect|1-1": ("Carré 1:1", "", "Quadrato 1:1", ""),
     "aspect|4-5": ("Portrait 4:5", "", "Verticale 4:5", ""),
     "aspect|9-16": ("Vertical 9:16", "", "Verticale 9:16", ""),

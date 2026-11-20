@@ -76,7 +76,34 @@ def list_places(workspace: Workspace) -> list[BrandPlace]:
     ]
 
 
-def add(workspace: Workspace, *, user: Any, media_id: Any, label: str) -> BrandPlace:
+def clean_stands_for(value: Any) -> str:
+    """A catalogue place key, or blank; anything else is a 400 (rule 18)."""
+    key = str(value or "").strip()
+    if (
+        key
+        and not CreativeOption.objects.filter(
+            kind=CreativeKind.PLACE, key=key, is_active=True
+        ).exists()
+    ):
+        raise ValidationError({"stands_for": f"'{key}' is not a place in the catalogue."})
+    return key
+
+
+def tag(workspace: Workspace, place_id: int, *, stands_for: Any) -> BrandPlace:
+    """Say what kind of place an upload is. Another brand's place is a 404."""
+    place = BrandPlace.objects.filter(
+        workspace=workspace, pk=place_id, source=PlaceSource.UPLOAD
+    ).first()
+    if place is None:
+        raise NotFound
+    place.stands_for = clean_stands_for(stands_for)
+    place.save(update_fields=["stands_for"])
+    return place
+
+
+def add(
+    workspace: Workspace, *, user: Any, media_id: Any, label: str, stands_for: Any = ""
+) -> BrandPlace:
     """A photo of the brand's own place. Another brand's picture is a 404."""
     if not isinstance(media_id, int) or isinstance(media_id, bool):
         raise ValidationError({"media": "Pick the photo of your place."})
@@ -94,6 +121,7 @@ def add(workspace: Workspace, *, user: Any, media_id: Any, label: str) -> BrandP
         label=(label or "").strip()[:80] or "Our place",
         source=PlaceSource.UPLOAD,
         media=media,
+        stands_for=clean_stands_for(stands_for),
         created_by=user,
     )
 

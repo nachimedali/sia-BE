@@ -1294,6 +1294,9 @@ SHOT_TAGS = [
         # S17: a screenshot of an app, which the app-demo templates put on the
         # phone in the frame.
         ("screen", "App screen"),
+        # S17-43: a photo with printed words on it (a post, a catalogue page):
+        # never an identity reference — the image model copies the words.
+        ("with-text", "Has printed text"),
     )
 ]
 

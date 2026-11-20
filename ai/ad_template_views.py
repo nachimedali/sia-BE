@@ -60,6 +60,36 @@ class AdTemplateResultsSerializer(serializers.Serializer[Any]):
     enough = serializers.BooleanField()
 
 
+class AdTemplateControlSerializer(serializers.Serializer[Any]):
+    """One Studio control on this template (S17-43): locked, or the keys it takes."""
+
+    locked = serializers.BooleanField()
+    #: Every key of the control fits (the palette, mostly).
+    any = serializers.BooleanField()
+    open = serializers.ListField(child=serializers.CharField())
+    #: For `vibe`: what fits with no person in frame.
+    product_only = serializers.ListField(child=serializers.CharField())
+    #: Why what is off is off, a code the page words (`template_fit.REASONS`).
+    reason = serializers.CharField(allow_blank=True)
+
+
+class AdTemplatePlacesRuleSerializer(serializers.Serializer[Any]):
+    keys = serializers.ListField(child=serializers.CharField())
+    #: The settings an own place must stand for to be set here.
+    settings = serializers.ListField(child=serializers.CharField())
+
+
+class AdTemplateControlsSerializer(serializers.Serializer[Any]):
+    scene = AdTemplateControlSerializer()
+    camera = AdTemplateControlSerializer()
+    cast = AdTemplateControlSerializer()
+    light = AdTemplateControlSerializer()
+    palette = AdTemplateControlSerializer()
+    moods = AdTemplateControlSerializer()
+    vibe = AdTemplateControlSerializer()
+    places = AdTemplatePlacesRuleSerializer()
+
+
 class AdTemplateSerializer(serializers.Serializer[Any]):
     key = serializers.CharField()
     label = serializers.CharField()  # type: ignore[assignment]
@@ -100,6 +130,11 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     lock = AdTemplateLockSerializer(allow_null=True)
     #: On an optional-person template, what adding a person needs, or null.
     person_lock = AdTemplateLockSerializer(allow_null=True)
+    #: S17-43: what the Studio may change on this template; the rest is off.
+    controls = AdTemplateControlsSerializer()
+    #: The brand's own places (`own:<id>`) that are the same kind as this
+    #: template's places.
+    own_places = serializers.ListField(child=serializers.CharField())
 
 
 class AdTemplateOptionSerializer(serializers.Serializer[Any]):
@@ -111,6 +146,11 @@ class AdTemplatePlaceSerializer(AdTemplateOptionSerializer):
     #: The Studio still that pictures the place (S17-27); blank for a place
     #: with no row.
     image = serializers.CharField(allow_blank=True)
+
+
+class AdTemplateOwnPlaceSerializer(AdTemplatePlaceSerializer):
+    #: The catalogue place it stands for (S17-43); blank until the brand says.
+    stands_for = serializers.CharField(allow_blank=True)
 
 
 class AdBriefOptionSerializer(AdTemplateOptionSerializer):
@@ -134,8 +174,8 @@ class AdTemplateGallerySerializer(serializers.Serializer[Any]):
     goals = AdTemplateOptionSerializer(many=True)
     categories = AdTemplateOptionSerializer(many=True)
     locations = AdTemplatePlaceSerializer(many=True)
-    #: The brand's own places (`own:<id>`), which every template can be set in.
-    own_places = AdTemplatePlaceSerializer(many=True)
+    #: The brand's own places (`own:<id>`); each template lists the ones that fit it.
+    own_places = AdTemplateOwnPlaceSerializer(many=True)
     #: Catalogue places this brand keeps a ready plate for.
     kept = serializers.ListField(child=serializers.CharField())
     #: Credits keeping one more place costs.

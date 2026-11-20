@@ -77,6 +77,39 @@ LOCATIONS: dict[str, str] = {
 BRAND_COLOUR = "{brand_colour}"
 
 
+#: What kind of place each catalogue place is (S17-43): a brand's own place
+#: stands for one of them, and fits a template whose places share its setting.
+PLACE_SETTINGS: dict[str, str] = {
+    "studio": "studio",
+    "brand-colour": "studio",
+    "kitchen": "kitchen",
+    "cafe-table": "cafe",
+    "terrace": "cafe",
+    "living-room": "living",
+    "loft": "living",
+    "entryway": "living",
+    "bedside": "bedroom",
+    "bathroom-shelf": "bathroom",
+    "salon": "salon",
+    "office": "office",
+    "workshop": "workshop",
+    "gym": "gym",
+    "market": "shop",
+    "shop-counter": "shop",
+    "street": "street",
+    "rooftop": "street",
+    "picnic": "nature",
+    "trail": "nature",
+    "beach": "beach",
+    "seaside": "beach",
+    "car-interior": "car",
+}
+#: Places under the open sky: no window or lamp, no studio light.
+OUTDOOR_PLACES = frozenset(
+    {"terrace", "rooftop", "seaside", "beach", "picnic", "market", "street", "trail"}
+)
+
+
 def _place(
     key: str,
     label: str,
@@ -107,6 +140,8 @@ def _place(
             "forbid": forbid,
             "image": f"/studio/places/{key}.webp",
             "seed": SEED_VERSION,
+            "setting": PLACE_SETTINGS.get(key, key),
+            "outdoor": key in OUTDOOR_PLACES,
         },
     }
 
@@ -368,13 +403,15 @@ _NEGATIVE = (
 #: to the negative. A phone video and a studio hero shot fail in different ways;
 #: one finish for all asked a levitating product to look like a phone video.
 #: The `video_*` words are the clip's (S19, §8): its format, its camera when the
-#: scene names none, and what it gets wrong in motion.
+#: scene names none, and what it gets wrong in motion. A finish names no light
+#: source (S17-43): the light is the place's or the template's — "a window or
+#: lamp" on a beach was a contradiction the model had to resolve.
 CAPTURES: dict[str, dict[str, str]] = {
     "phone_ugc": {
         "finish": (
-            "Shot on a phone's main camera: deep focus with no background blur, one soft "
-            "light from a window or lamp to one side, normal exposure, natural matte skin; "
-            "authentic and unpolished, like a real social video."
+            "Shot on a phone's main camera: deep focus with no background blur, the light "
+            "the place already has, normal exposure, natural matte skin; authentic and "
+            "unpolished, like a real social video."
         ),
         "avoid": (
             "no waxy or airbrushed skin, no beauty-filter smoothing, no HDR look, no "
@@ -387,7 +424,7 @@ CAPTURES: dict[str, dict[str, str]] = {
     },
     "studio_hero": {
         "finish": (
-            "A clean commercial product photograph: controlled studio light, the product "
+            "A clean commercial product photograph: controlled, even light, the product "
             "tack-sharp, a simple softly graded background, crisp natural reflections."
         ),
         "avoid": (

@@ -367,13 +367,24 @@ def test_only_a_claim_with_proof_attached_may_be_made(workspace: Any, make_png_u
 def test_the_product_prompt_reaches_the_text_and_image_assemblers(workspace: Any) -> None:
     from ai.services.prompting import assemble_image_prompt, assemble_text_prompt
 
-    product = create_product(workspace=workspace, name="Oil", features=["Small batch"])
-    assert (
-        "Small batch" in assemble_text_prompt(idea="x", workspace=workspace, product=product).user
+    product = create_product(
+        workspace=workspace,
+        name="Oil",
+        features=["Small batch"],
+        moods=["sunny"],
+        must_include=["the bottle cap"],
+        brand_hashtags=["#hello_moto"],
+        ctas=["book-now"],
+        hashtags_style=HashtagStyle.MINIMAL,
     )
-    assert (
-        "Small batch" in assemble_image_prompt(idea="x", workspace=workspace, product=product).user
-    )
+    text = assemble_text_prompt(idea="x", workspace=workspace, product=product).user
+    image = assemble_image_prompt(idea="x", workspace=workspace, product=product).user
+    assert "Small batch" in text and "#hello_moto" in text and "book-now" in text
+    # S17-43: the picture model gets what can be seen, never the copywriter's
+    # words — told hashtags and a call to action, it prints them.
+    assert "Mood: sunny" in image and "the bottle cap" in image
+    for copy in ("Small batch", "#hello_moto", "book-now", "hashtag", "calls to action"):
+        assert copy not in image, copy
 
 
 # --- what screening enforces -------------------------------------------------
@@ -418,3 +429,31 @@ def test_the_checks_are_served_as_data(auth_client: Any) -> None:
 
 def test_the_checks_endpoint_requires_a_login(client: Any) -> None:
     assert client.get(f"{URL}completeness-checks/").status_code in (401, 403)
+
+
+# --- S17-43: a photo with printed words is never an identity reference -------
+def test_a_photo_with_printed_text_is_left_out_of_the_identity_references(
+    workspace: Any, make_png_upload: Any
+) -> None:
+    product = create_product(workspace=workspace, name="Tiago")
+    attach_reference_images(
+        product=product,
+        uploads=[make_png_upload("post.png", (600, 600)), make_png_upload("side.png", (600, 601))],
+    )
+    post, side = product.reference_images.order_by("id")
+    product.reference_tags = {str(post.pk): "with-text"}
+    product.save(update_fields=["reference_tags"])
+
+    assert brief.identity_photos(product) == [side]
+
+
+def test_a_product_with_only_text_photos_still_has_references(
+    workspace: Any, make_png_upload: Any
+) -> None:
+    product = create_product(workspace=workspace, name="Tiago")
+    attach_reference_images(product=product, uploads=[make_png_upload("post.png", (600, 600))])
+    [post] = product.reference_images.all()
+    product.reference_tags = {str(post.pk): "with-text"}
+    product.save(update_fields=["reference_tags"])
+
+    assert brief.identity_photos(product) == [post]

@@ -66,6 +66,7 @@ def prompt_lines(kit: BrandKit | None) -> list[str]:
         return []
     named = ", ".join(f"{role.lower()} {hex_}" for role, hex_ in kit.colors)
     return [
-        f"Brand colours: {named}. Let these colours lead in the styling, props and graphics where "
-        "the scene allows, unless the brief names a palette. Never recolour the product itself."
+        f"Brand colours: {named}. Let these colours lead in the set, props and clothing where "
+        "the scene allows, unless the brief names a palette. Never recolour the product itself, "
+        "and never show them as text or graphics."
     ]

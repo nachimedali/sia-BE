@@ -202,12 +202,14 @@ def test_the_keyframe_carries_the_capture_and_a_keep_out_rule(
     assert f"Avoid: {generation.creative['negative']}." in sent
 
 
-def test_the_motion_prompt_ends_on_the_negative_even_after_a_rewrite(
+def test_a_template_motion_is_never_rewritten_and_ends_on_what_to_avoid(
     auth_client: Any,
     growth: Any,  # noqa: F811
     make_png_upload: Any,
     monkeypatch: Any,
 ) -> None:
+    """S17-43: a template is compiled, never rewritten — the rewrite is not
+    even asked — and its prompt still closes on what the clip must avoid."""
     from billing.models import FeatureFlag
     from billing.services.flags import STUDIO_REPHRASE
 
@@ -224,9 +226,8 @@ def test_the_motion_prompt_ends_on_the_negative_even_after_a_rewrite(
 
     assert render["status"] == "SUCCEEDED", render
     sent = _fake_video_provider.calls[-1]
-    row = ad_templates.resolve(growth, "levitate", product=product, with_person=False)
-    assert sent.startswith("a rewritten motion")
-    assert sent.endswith(ad_templates.avoid_line(row, ad_templates.place_forbid(row, "")))
+    assert "a rewritten motion" not in sent
+    assert sent.split(". Avoid: ")[-1].startswith("No text, captions or subtitles")
     assert VideoRender.objects.get(pk=render["id"]).prompt_sent == sent
 
 
@@ -243,7 +244,10 @@ def test_a_render_keeps_one_seed_and_sends_it_with_every_shot(
     assert render["status"] == "SUCCEEDED", render
     seed = VideoRender.objects.get(pk=render["id"]).seed
     assert isinstance(seed, int) and 0 <= seed < 2**31
-    assert [r["seed"] for r in _fake_video_provider.requests] == [seed, seed, seed]
+    # Each shot its own seed, reproducible from the render's (S19-05; every
+    # template is compiled per shot since S17-43).
+    seeds = [r["seed"] for r in _fake_video_provider.requests]
+    assert seeds == [(seed + index) % 2**31 for index in range(len(seeds))]
 
 
 def test_two_renders_get_their_own_seeds(

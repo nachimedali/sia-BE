@@ -209,13 +209,20 @@ IDENTITY_SHOTS = ("front", "packaging", "side-back")
 CONTEXT_SHOTS = ("in-use", "lifestyle", "screen")
 
 
+#: A photo with printed words on it (S17-43): never an identity reference
+#: while the product has another photo — the image model copies the words
+#: (beta render #7 printed a post's caption and "book-now" into the frame).
+TEXT_TAG = "with-text"
+
+
 def identity_photos(product: Product) -> list[MediaAsset]:
     """The product's reference photos, the ones that show it best first.
 
     Tagged identity shots lead, untagged photos keep their upload order behind
     them (most products are never tagged, and then nothing moves), detail
     shots follow, and context shots close. An app's identity is its screen, so
-    for an `app` product the screenshot leads instead."""
+    for an `app` product the screenshot leads instead. Photos tagged as having
+    printed text are left out, unless they are all the product has."""
     tags = product.reference_tags or {}
     lead = ("screen", *IDENTITY_SHOTS) if product.offer_kind == "app" else IDENTITY_SHOTS
 
@@ -229,7 +236,9 @@ def identity_photos(product: Product) -> list[MediaAsset]:
             return (len(lead) + 2 + CONTEXT_SHOTS.index(tag), photo.pk)
         return (len(lead) + 1, photo.pk)
 
-    return sorted(product.reference_images.all(), key=rank)
+    ranked = sorted(product.reference_images.all(), key=rank)
+    clean = [photo for photo in ranked if tags.get(str(photo.pk)) != TEXT_TAG]
+    return clean or ranked
 
 
 def _reference_tags(value: Any, instance: Product | None, errors: dict[str, str]) -> dict[str, str]:
@@ -374,6 +383,21 @@ def prompt_lines(product: Product) -> list[str]:
         )
     if product.legal_mention:
         lines.append(f"End with this legal mention, verbatim: {product.legal_mention}")
+    return lines
+
+
+def picture_lines(product: Product) -> list[str]:
+    """What an image or video model may be told of the brief: only what can be
+    seen. The rest — words, hashtags, calls to action, caption length, price,
+    legal mention — is the copywriter's; told to a picture model, it prints it
+    (beta render #7 showed "#hello_moto" and "book-now" in the frame)."""
+    lines: list[str] = []
+    if product.moods:
+        lines.append("Mood: " + ", ".join(product.moods) + ".")
+    if product.must_include:
+        lines.append("The picture must show: " + ", ".join(product.must_include) + ".")
+    if product.no_children:
+        lines.append("Show no children; adults only.")
     return lines
 
 
