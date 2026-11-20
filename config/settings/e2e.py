@@ -22,7 +22,9 @@ from .dev import BASE_DIR, DATABASES, SIMPLE_JWT
 # the end-to-end run passes. A dedicated database makes the run reproducible
 # from migrations alone, and lets it be dropped and rebuilt without touching
 # anyone's development data.
-DATABASES["default"] = {**DATABASES["default"], "NAME": "occs_e2e"}
+# runserver opens a thread per request, so a persistent connection is abandoned with its
+# thread; under 10 Playwright workers that exhausts Postgres ("too many clients").
+DATABASES["default"] = {**DATABASES["default"], "NAME": "occs_e2e", "CONN_MAX_AGE": 0}
 
 EMAIL_BACKEND = "django.core.mail.backends.filebased.EmailBackend"
 EMAIL_FILE_PATH = BASE_DIR / ".e2e-mail"
