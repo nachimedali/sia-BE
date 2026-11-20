@@ -277,6 +277,7 @@ class Spec:
                 **({"family": self.family} if self.family else {}),
                 **({"draft": True} if self.draft else {}),
                 **({"final_of": self.final_of.pk} if self.final_of else {}),
+                **({"music": self.music.key} if self.music else {}),
             }
         elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
@@ -490,6 +491,10 @@ def _parse_template(
     )
     assert product is not None
     script = ad_templates.script_parts(row, data.get("script"), product)
+    # S17-38: every line a talking template says is there and fits its beat.
+    video_prompt.check_dialogue(
+        row, script, seconds=float(length.metadata.get("seconds", 0)), language=language
+    )
     # A real offer and its end date, never a made-up one (S17-33).
     offer = (
         ad_templates.clean_offer(data.get("offer")) if row.metadata.get("needs") == "offer" else {}
@@ -505,6 +510,8 @@ def _parse_template(
         angle=_key(CreativeKind.ANGLE, data.get("angle"), "angle"),
         family=_key(CreativeKind.HOOK_FAMILY, data.get("family"), "family"),
         prompt=ad_templates.clean_prompt(workspace, data.get("prompt")),
+        # An optional bed the composer mixes under the clip's own sound (S17-38).
+        music=_pick(CreativeKind.MUSIC, data.get("music"), "music", required=False),
         aspect=_vertical(),
         language=language,
         source=source,
@@ -1186,6 +1193,8 @@ def _render_directed_clip(
         aspect=REEL_ASPECT,
         duration_seconds=asked,
         seed=render.seed,
+        # A talking scene asks for sound whatever the route's own setting (S17-38).
+        **({"audio": True} if video_prompt.speaks(direction) else {}),
         **_draft_resolution(render),
         **({"last_image": last_image} if last_image is not None else {}),
     )
@@ -1213,7 +1222,8 @@ def _burn_in_beats(
     composer = get_video_composer()
     cues = beat_cues(dict(render.spec.get("script") or {}), float(render.spec["seconds"]))
     edits = speed != 1.0 or fps or seconds is not None
-    if composer is None or not (cues or edits):
+    music = str(render.spec.get("music") or "")
+    if composer is None or not (cues or edits or music):
         return clip
     try:
         burned = composer.caption(
@@ -1223,6 +1233,8 @@ def _burn_in_beats(
             speed=speed,
             fps=fps,
             seconds=seconds,
+            # The person's bed, under the clip's own sound; never asked of the model.
+            **({"music": music} if music else {}),
         )
     except ProviderError:
         logger.warning("render %s: beats not burned in", render.pk, exc_info=True)

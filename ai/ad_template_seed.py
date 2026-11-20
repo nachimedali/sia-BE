@@ -491,8 +491,8 @@ _GOAL_OVERRIDE = {
     "bag-check": "trust",
     "proof-card": "trust",
 }
-#: Talking formats that cannot be made yet and are not shown (S17-32): three
-#: stay as "soon" (founder story, three reasons, comment reply).
+#: Talking formats that cannot be made yet and are not shown (S17-32). Happy
+#: customer, three reasons and comment reply render since S17-38 (`TALKING_ON`).
 _HIDDEN = frozenset(
     {
         "problem-to-app",
@@ -535,6 +535,10 @@ PREVIEWS = frozenset(
         "beach-day",
         "swatch-test",
         "floor-read",
+        # S17-17, 2026-11-20: the talking templates, made with speech on Grok.
+        "founder-story",
+        "three-reasons",
+        "comment-reply",
     }
 )
 
@@ -760,6 +764,29 @@ def _template(
 
 
 _TALK = "Talking formats need a voice and lip sync, which arrive with the next Studio update."
+#: S17-38: the talking templates that render — the avatar says the person's
+#: own lines with its lips moving, in the clip's own sound, 10 s on Grok.
+TALKING_ON = frozenset({"founder-story", "three-reasons", "comment-reply"})
+TALKING_DESCRIPTIONS = {
+    "founder-story": "A happy customer tells the camera why they like the product.",
+    "three-reasons": "The person gives three quick reasons to choose the product.",
+    "comment-reply": "The person answers a question from the comments, product in hand.",
+}
+#: What the script writer is told for each (`ad_templates` AD_SCRIPT).
+TALKING_HINTS = {
+    "founder-story": (
+        "Spoken aloud by a happy customer, in the first person. HOOK, BODY and CTA are each "
+        "at most six words, true of the product from the brief."
+    ),
+    "three-reasons": (
+        "BODY is exactly three reasons of at most five words each, separated by ' · ', each "
+        "true of the product from the brief; HOOK and the three reasons are spoken aloud."
+    ),
+    "comment-reply": (
+        "HOOK is the audience's question as they would type it (shown, not spoken); BODY is the "
+        "honest spoken answer in at most eight words; CTA is at most four words."
+    ),
+}
 
 TEMPLATES: list[dict[str, Any]] = [
     # --- unboxing -------------------------------------------------------------
@@ -1056,7 +1083,7 @@ TEMPLATES: list[dict[str, Any]] = [
             ("physical", "beauty", "app"),
             "required",
             "talking",
-            lengths=("clip-15",),
+            lengths=("clip-10",) if key in TALKING_ON else ("clip-15",),
             beats=beats,
             frame=(
                 "A person speaking to the camera at eye level, the product in hand or beside them."
@@ -1065,17 +1092,20 @@ TEMPLATES: list[dict[str, Any]] = [
             script=script,
             hooks=(script[0],),
             locations=("studio", "terrace", "market"),
-            available=False,
-            description=_TALK,
+            available=key in TALKING_ON,
+            description=TALKING_DESCRIPTIONS.get(key, _TALK),
+            script_hint=TALKING_HINTS.get(key, ""),
             scene=scene,
             sort=sort,
         )
         for key, label, beats, script, scene, sort in (
             (
+                # Key kept for its stills and clips; shown as a happy customer
+                # (owner, 2026-11-20), never as the brand's founder.
                 "founder-story",
-                "Founder story",
-                ("Who I am", "Why we make it", "The product", "Call to action"),
-                ("I started this for a reason.", "Why we make {product} the way we do.", "Try it."),
+                "Happy customer",
+                ("Before", "What changed", "The product", "Call to action"),
+                ("I almost skipped this.", "Now I use it every day.", "Try it."),
                 "vs1",
                 50,
             ),
@@ -1083,7 +1113,8 @@ TEMPLATES: list[dict[str, Any]] = [
                 "three-reasons",
                 "3 reasons",
                 ("Hook", "Reason 1", "Reason 2", "Reason 3"),
-                ("Three reasons.", "Why people switch to {product}.", "See for yourself."),
+                # No reasons by default: three true ones are the person's to give.
+                ("Three reasons.", "", "See for yourself."),
                 "re2-4",
                 51,
             ),
@@ -1854,15 +1885,16 @@ TEMPLATES: list[dict[str, Any]] = [
         ("physical", "beauty", "app", "service", "space"),
         "required",
         "talking",
-        lengths=("clip-15",),
+        lengths=("clip-10",),
         beats=("The question", "The answer", "Show it", "Call to action"),
         frame="A person speaking to the phone camera at home, the product in hand.",
         motion="Static front camera, natural gestures, the product lifted to the lens.",
-        script=("You asked, so here it is.", "The honest answer about {product}.", "Ask me more."),
-        hooks=("You asked, so here it is.", "Replying to your question.", "Let's settle this."),
+        script=("Is it worth it?", "Honestly, yes. I use it every day.", "Ask me more."),
+        hooks=("Is it worth it?", "Does it really work?", "What's it like?"),
         locations=("living-room", "kitchen"),
-        available=False,
-        description=_TALK,
+        available=True,
+        description=TALKING_DESCRIPTIONS["comment-reply"],
+        script_hint=TALKING_HINTS["comment-reply"],
         sort=59,
     ),
     _template(

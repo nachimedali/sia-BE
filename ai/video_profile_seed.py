@@ -56,7 +56,8 @@ PROFILES: list[dict[str, Any]] = [
         durations=_span(1, 15),
         last_frame=False,
         seed=False,
-        audio=False,
+        # OpenRouter lists `generate_audio: true` (2026-11-19); lip sync passed (S17-12).
+        audio=True,
         note="No published budget; its guide lists 'multiple scene changes' as a mistake.",
     ),
     _profile(

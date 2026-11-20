@@ -58,12 +58,13 @@ def test_the_seed_lands_every_profile_once_and_never_overwrites_an_edit(seeded) 
         profile.full_clean()
 
 
-def test_omni_lands_seeds_and_speaks_and_grok_does_none_of_it(seeded) -> None:
+def test_omni_lands_seeds_and_speaks_and_grok_lite_only_speaks(seeded) -> None:
     omni = VideoModelProfile.for_slug(OMNI_FLASH)
     grok = VideoModelProfile.for_slug("x-ai/grok-imagine-video-1.5-lite")
 
     assert (omni.last_frame, omni.seed, omni.audio) == (True, True, True)
-    assert (grok.last_frame, grok.seed, grok.audio) == (False, False, False)
+    # Sound: OpenRouter's `generate_audio: true` (2026-11-19) and the S17-12 lip-sync pass.
+    assert (grok.last_frame, grok.seed, grok.audio) == (False, False, True)
     assert VideoModelProfile.for_slug(KLING_3_PRO).seed is False
 
 

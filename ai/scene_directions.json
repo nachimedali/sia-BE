@@ -2169,12 +2169,12 @@
   "origin": "revised"
  },
  "founder-story": {
-  "label": "Founder story",
+  "label": "Happy customer",
   "premium": false,
   "route": "F",
   "capture": "phone_ugc",
   "base": 15,
-  "attitude": "proud and plain, like telling a friend why they started.",
+  "attitude": "happy and plain, like telling a friend about something that works.",
   "beats": [
    [
     0,
@@ -2215,17 +2215,17 @@
    [
     3,
     7,
-    "says reason 1."
+    "says: \"{claim1}\""
    ],
    [
     7,
     11,
-    "says reason 2, with {product} in hand."
+    "says: \"{claim2}\", with {product} in hand."
    ],
    [
     11,
     15,
-    "says reason 3, then smiles."
+    "says: \"{claim3}\", then smiles."
    ]
   ],
   "origin": "revised"

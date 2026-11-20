@@ -480,7 +480,8 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     ]
     out = []
     pro = video_prompt.is_on(workspace)
-    can = video_prompt.capabilities(workspace) if pro else set()
+    # Every template is checked against the routes since S17-43/S17-38, Pro or not.
+    can = video_prompt.capabilities(workspace)
     for row in _rows():
         meta = row.metadata
         if meta.get("hidden") or (meta.get("pro") and not pro):
@@ -540,12 +541,15 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                 # video model cannot do (the estimate's 422 `route_cannot`).
                 "pro": bool(meta.get("pro")),
                 "cannot": video_prompt.missing(
-                    workspace,
-                    list((video_prompt.direction_of(row) or {}).get("requires") or []),
-                    can,
-                )
-                if pro
-                else [],
+                    workspace, video_prompt.needs_of(row, workspace), can
+                ),
+                # S17-38: the lines it says aloud, each with its beat's share of the clip.
+                "speech": [
+                    {"part": part, "start": round(start, 4), "end": round(end, 4)}
+                    for part, start, end in video_prompt.spoken_windows(
+                        video_prompt.direction_of(row) or {}
+                    )
+                ],
                 "fit": fit_of(row, product, photo_ids=photo_ids),
                 "lock": lock,
                 # A person on an optional template is a `people` render.

@@ -117,3 +117,28 @@ def test_nothing_changes_with_seeding_off(settings: Any) -> None:
     MIGRATION.forwards(apps, None)
     row.refresh_from_db()
     assert "preview" not in row.metadata
+
+
+# -----------------------------------------------------------------------------
+# `0056_talking_previews`: the talking templates' clips (S17-17, 2026-11-20)
+# -----------------------------------------------------------------------------
+TALKING = importlib.import_module("ai.migrations.0056_talking_previews")
+
+
+def test_the_talking_templates_take_their_clips_and_keep_an_operators_own(
+    seeding_on: None,
+) -> None:
+    rows = {key: _old_row(key) for key in TALKING.KEYS}
+    ours = rows["comment-reply"]
+    ours.metadata = {**ours.metadata, "preview": "/ours.mp4", "poster": "/ours.webp"}
+    ours.save(update_fields=["metadata"])
+
+    TALKING.forwards(apps, None)
+
+    for key in ("founder-story", "three-reasons"):
+        rows[key].refresh_from_db()
+        assert rows[key].metadata["preview"] == f"/studio/templates/{key}.mp4"
+        assert rows[key].metadata["poster"] == f"/studio/templates/{key}.webp"
+    ours.refresh_from_db()
+    assert (ours.metadata["preview"], ours.metadata["poster"]) == ("/ours.mp4", "/ours.webp")
+    assert set(TALKING.KEYS) <= PREVIEWS  # fresh databases get them from the seed

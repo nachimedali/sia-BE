@@ -32,6 +32,12 @@ _LABEL_BEAT = re.compile(
 )
 
 
+#: A spoken line with nothing in it, or speech the same prompt silences (S17-38).
+_EMPTY_LINE = re.compile(r'says: "\s*"')
+_SAYS = re.compile(r'says: "')
+_NO_SPEECH = re.compile(r"\bno speech\b", re.I)
+
+
 class PromptConflictError(OCCSError):
     """The words about to be sent contradict the template or carry copy."""
 
@@ -50,6 +56,10 @@ def problems(prompt: str, *, person: bool) -> list[str]:
     label = _LABEL_BEAT.search(prompt)
     if label:
         found.append(f"a beat is a label, not an action ({label.group(0)!r})")
+    if _EMPTY_LINE.search(prompt):
+        found.append("a spoken line is empty")
+    if _SAYS.search(prompt) and _NO_SPEECH.search(prompt):
+        found.append("it asks for speech and for no speech")
     return found
 
 

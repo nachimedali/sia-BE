@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from ai.services.routing import SOURCE_SETTINGS, Route, call_with_fallback
+from common.exceptions import ProviderError
 
 
 def _call(route: Route, explicit: str | None, call: Any) -> Any:
@@ -148,6 +149,12 @@ class RoutedVideoProvider:
 
         def send(chosen: str | None) -> Any:
             sent = fallback if chosen and chosen == route.fallback_model else kwargs
+            if audio is True and sent["audio"] is False:
+                # A talking clip on a silent fallback is a broken ad (S17-38): fail unpaid.
+                raise ProviderError(
+                    "The fallback model renders silent; a talking clip is not sent there.",
+                    detail={"model": chosen},
+                )
             return getattr(self.inner, method)(model=chosen, **sent)
 
         return _call(route, model, send)

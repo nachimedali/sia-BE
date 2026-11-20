@@ -90,6 +90,12 @@ class AdTemplateControlsSerializer(serializers.Serializer[Any]):
     places = AdTemplatePlacesRuleSerializer()
 
 
+class AdTemplateSpeechSerializer(serializers.Serializer[Any]):
+    part = serializers.CharField()
+    start = serializers.FloatField()
+    end = serializers.FloatField()
+
+
 class AdTemplateSerializer(serializers.Serializer[Any]):
     key = serializers.CharField()
     label = serializers.CharField()  # type: ignore[assignment]
@@ -132,6 +138,10 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     person_lock = AdTemplateLockSerializer(allow_null=True)
     #: S17-43: what the Studio may change on this template; the rest is off.
     controls = AdTemplateControlsSerializer()
+    #: S17-38: each line the avatar says, in beat order — a script part
+    #: (`hook`, `body`, `cta`) or one of the body's reasons (`claim1`…`claim3`) —
+    #: with its beat's share of the clip (0..1); empty for a silent template.
+    speech = AdTemplateSpeechSerializer(many=True)
     #: The brand's own places (`own:<id>`) that are the same kind as this
     #: template's places.
     own_places = serializers.ListField(child=serializers.CharField())

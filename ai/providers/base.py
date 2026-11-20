@@ -296,10 +296,12 @@ class VideoComposer(Protocol):
         speed: float = 1.0,
         fps: int = 0,
         seconds: float | None = None,
+        music: str | None = None,
     ) -> VideoResult:
         """Burn `captions` into one rendered clip (S17-26): the clip keeps its
         length and its sound, only the words are added on their cues. S19-06:
-        played at `speed`, at `fps` frames a second, cut to `seconds`."""
+        played at `speed`, at `fps` frames a second, cut to `seconds`; with
+        `music` (a `music` row key), that bed mixed under its own sound (S17-38)."""
         ...
 
     def frames(self, *, clip: bytes, at: list[float]) -> list[bytes]:

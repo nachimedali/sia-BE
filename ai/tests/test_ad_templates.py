@@ -193,7 +193,7 @@ def test_the_gallery_lists_every_template_with_its_fit_and_lock(
         "suggested_plan": "growth",
         "pack": None,
     }
-    assert rows["founder-story"]["available"] is False
+    assert rows["founder-story"]["available"] is True  # out since S17-38, above this plan
     assert body["rerolls"] == 3
     assert body["references_cap"] == 2
     assert [c["key"] for c in body["categories"]][:2] == ["unbox", "hand"]
@@ -271,7 +271,7 @@ def test_a_keyframe_is_an_image_generation_with_the_person_attached(
         ({"template": "market-stroll"}, 400, "person_required"),
         ({"template": "nope"}, 400, "validation_error"),
         ({"template": "pour-shot", "location": "moon"}, 400, "template_location"),
-        ({"template": "founder-story", "avatar": "LINA"}, 409, "template_unavailable"),
+        ({"template": "slow-unbox", "avatar": "LINA", "_off": True}, 409, "template_unavailable"),
         ({"template": "liquid-splash", "avatar": "LINA"}, 400, "no_person"),
     ],
 )
@@ -281,6 +281,10 @@ def test_every_keyframe_refusal_has_its_code(
     payload = {**body, "product": oil.pk}
     if payload.get("avatar") == "LINA":
         payload["avatar"] = lina.pk
+    if payload.pop("_off", False):  # every seeded template is out since S17-38: switch one off
+        row = CreativeOption.objects.get(kind=CreativeKind.AD_TEMPLATE, key=payload["template"])
+        row.metadata = {**row.metadata, "available": False}
+        row.save(update_fields=["metadata"])
     response = auth_client.post(KEYFRAME, payload, format="json")
     assert response.status_code == status, response.json()
     assert response.json()["error"]["code"] == code

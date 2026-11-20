@@ -32,6 +32,8 @@ CROSSFADE = 0.4
 TEXT_IN = 0.35
 SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 MUSIC_SUFFIXES = (".m4a", ".mp3", ".aac", ".wav")
+#: A bed under a clip's own sound (S17-38): low enough that a voice stays on top.
+MUSIC_UNDER_VOICE = 0.18
 TIMEOUT_SECONDS = 300
 #: The platforms' own buttons and names cover the top ~11 %, the bottom ~21 %
 #: and the right ~13 % of a 9:16 frame (goose-skills `review-finished-ad`:
@@ -560,11 +562,15 @@ class FfmpegVideoComposer:
         speed: float = 1.0,
         fps: int = 0,
         seconds: float | None = None,
+        music: str | None = None,
     ) -> VideoResult:
         """The clip at the frame's size with each cue drawn on its window; its
         length and its sound are the clip's own (the sound re-encoded, never
-        dropped: a vendor's ambient track is part of what was paid for)."""
+        dropped: a vendor's ambient track is part of what was paid for). A
+        `music` bed is mixed low under that sound — a voice stays on top — or
+        plays alone when the clip is silent (S17-38)."""
         started = time.monotonic()
+        music_path = self._music(music) if music else None  # before any encoding
         width, height = SIZES.get(aspect, SIZES["9:16"])
         with tempfile.TemporaryDirectory(prefix="caption-") as tmp:
             work = Path(tmp)
@@ -587,6 +593,20 @@ class FfmpegVideoComposer:
                 )
                 filters.append(f"{text}:enable='between(t,{cue.start},{cue.end})'")
             out = work / "captioned.mp4"
+            tempo = [f"atempo={speed:g}"] if speed != 1.0 else []
+            if music_path is None:
+                sound = ["-map", "0:a?", *(["-af", tempo[0]] if tempo else [])]
+                bed: list[str] = []
+            else:
+                bed = ["-stream_loop", "-1", "-i", str(music_path)]
+                own = ",".join(["anull", *tempo])
+                graph = (
+                    f"[0:a]{own}[own];[1:a]volume={MUSIC_UNDER_VOICE}[bed];"
+                    "[own][bed]amix=inputs=2:duration=first:normalize=0[a]"
+                    if _has_audio(source)
+                    else f"[1:a]volume={MUSIC_UNDER_VOICE}[a]"
+                )
+                sound = ["-filter_complex", graph, "-map", "[a]", "-shortest"]
             _run(
                 [
                     "ffmpeg",
@@ -595,19 +615,18 @@ class FfmpegVideoComposer:
                     "error",
                     "-i",
                     str(source),
+                    *bed,
                     "-vf",
                     ",".join([*filters, "format=yuv420p"]),
                     "-map",
                     "0:v",
-                    "-map",
-                    "0:a?",
+                    *sound,
                     "-c:v",
                     "libx264",
                     "-preset",
                     "veryfast",
                     "-crf",
                     "20",
-                    *(["-af", f"atempo={speed:g}"] if speed != 1.0 else []),
                     *(["-t", f"{seconds}"] if seconds else []),
                     "-c:a",
                     "aac",

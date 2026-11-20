@@ -904,7 +904,8 @@ def test_the_gallery_marks_pro_scenes_and_what_the_model_cannot_do(
     assert rows["light-sweep"]["pro"] is True and rows["pour-shot"]["pro"] is False
     assert rows["light-sweep"]["cannot"] == [] and rows["texture-sound"]["cannot"] == []
 
-    _route_growth_to("x-ai/grok-imagine-video-1.5-lite")
+    # Grok Imagine 1.5 (not Lite, which makes sound since S17-38): no last frame, no sound.
+    _route_growth_to("x-ai/grok-imagine-video-1.5")
     rows = {row["key"]: row for row in auth_client.get(gallery).json()["templates"]}
     assert rows["light-sweep"]["cannot"] == ["L"]
     assert rows["texture-sound"]["cannot"] == ["AU"]

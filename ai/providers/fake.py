@@ -564,9 +564,11 @@ class FakeVideoComposer:
         speed: float = 1.0,
         fps: int = 0,
         seconds: float | None = None,
+        music: str | None = None,
     ) -> VideoResult:
         manifest: dict[str, Any] = {
             "kind": "caption",
+            **({"music": music} if music else {}),
             "aspect": aspect,
             "clip": hashlib.sha256(clip).hexdigest()[:16],
             "captions": [[cue.text, cue.start, cue.end] for cue in captions],
