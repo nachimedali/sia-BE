@@ -140,6 +140,27 @@ def test_comments_are_listed_newest_first(auth_client: Any, published_target: An
     assert [c["body"] for c in body] == ["newer", "older"]
 
 
+def test_comments_older_than_the_plan_horizon_are_not_listed(
+    auth_client: Any, published_target: Any
+) -> None:
+    """Pro keeps 90 days: an older comment stays stored but is not served."""
+    now = timezone.now()
+    AudienceComment.objects.create(
+        post_target=published_target, external_id="in", body="inside", posted_at=now
+    )
+    AudienceComment.objects.create(
+        post_target=published_target,
+        external_id="out",
+        body="past the horizon",
+        posted_at=now - dt.timedelta(days=91),
+    )
+
+    body = auth_client.get(COMMENTS).json()
+
+    assert [c["body"] for c in body] == ["inside"]
+    assert AudienceComment.objects.filter(external_id="out").exists()
+
+
 def test_another_workspaces_numbers_are_never_visible(
     auth_client: Any, paid_workspace: Any, user: Any, social_account: Any, plans: dict[str, Any]
 ) -> None:

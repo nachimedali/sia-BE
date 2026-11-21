@@ -103,15 +103,22 @@ def default_window(history: int) -> int:
     return max(fits) if fits else WINDOWS[0]
 
 
+def offered_windows(history: int) -> tuple[int, ...]:
+    """The page's windows plus the plan's own horizon, so a 30-day plan reads
+    all 30 days rather than stopping at 28. The horizon rolls with today."""
+    return tuple(sorted({*WINDOWS, history})) if history > 0 else WINDOWS
+
+
 def resolve_window(workspace: Workspace, requested: int | None) -> tuple[int, int]:
     """`(window, history_days)`. Refuses a window the page does not offer; one
     the plan does not keep is refused by `ensure_within_horizon` (rule 14)."""
     history = entitlements_for(workspace).analytics_horizon_days()
     window = requested or default_window(history)
-    if window not in WINDOWS:
+    offered = offered_windows(history)
+    if window not in offered:
         from rest_framework.exceptions import ValidationError
 
-        raise ValidationError({"window": f"Choose one of {', '.join(map(str, WINDOWS))} days."})
+        raise ValidationError({"window": f"Choose one of {', '.join(map(str, offered))} days."})
     return window, history
 
 
@@ -510,7 +517,9 @@ def summary(
     return {
         "window": days,
         "default_window": default_window(history),
-        "windows": [{"days": w, "locked": history >= 0 and w > history} for w in WINDOWS],
+        "windows": [
+            {"days": w, "locked": history >= 0 and w > history} for w in offered_windows(history)
+        ],
         "history_days": history,
         "start": start_day,
         "end": today,

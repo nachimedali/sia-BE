@@ -198,11 +198,10 @@ class AnalyticsCommentsView(_AnalyticsView):
         summary="The most recent comments, newest first",
     )
     def get(self, request: Request) -> Response:
-        comments = (
-            AudienceComment.objects.measured()
-            .filter(post_target__post__workspace=self.workspace(request))
-            .prefetch_related("actions")[:COMMENT_FEED_LIMIT]
-        )
+        # Bounded by the plan's horizon: older comments stay stored, unserved.
+        comments = audience.comments_for(self.workspace(request)).prefetch_related("actions")[
+            :COMMENT_FEED_LIMIT
+        ]
         return Response(CommentSerializer(comments, many=True).data)
 
 
