@@ -361,6 +361,23 @@ def test_a_short_plan_reads_its_own_short_window(
     assert body["history_days"] == 7
 
 
+def test_a_plan_whose_horizon_is_not_a_page_window_can_open_exactly_its_horizon(
+    auth_client: Any, workspace: Any, user: Any, account: Any, plans: dict[str, Any]
+) -> None:
+    # Discovery keeps 30 days: day 29 is still readable, day 31 has rolled off.
+    workspace.organization.plan = plans["discovery"]
+    workspace.organization.save(update_fields=["plan"])
+    inside = make_target(workspace, user, account, age_days=29)
+    make_target(workspace, user, account, age_days=31)
+
+    body = auth_client.get(URL, {"window": 30}).json()
+
+    assert body["window"] == 30
+    assert {w["days"]: w["locked"] for w in body["windows"]}[30] is False
+    assert [p["target_id"] for p in body["posts"]] == [inside.pk]
+    assert auth_client.get(URL, {"window": 90}).status_code == 402
+
+
 def test_the_account_strip_holds_history_up_to_the_plan(
     auth_client: Any, paid_workspace: Any, account: Any
 ) -> None:
