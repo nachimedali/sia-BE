@@ -13,6 +13,7 @@ from ai.creative_seed import CATALOG, SEED_VERSION
 from ai.models import CreativeKind, CreativeOption
 from ai.plan_seed import PLAN_CATALOG
 from ai.services.creative import MULTI, SINGLE
+from ai.story_scene_seed import SCENES as STORY_SCENES
 from ai.video_seed import VIDEO_CATALOG
 from products.brief import TONE_KEYS
 
@@ -28,7 +29,13 @@ def keys(kind: str) -> set[str]:
 
 
 def test_every_kind_is_seeded_and_every_kind_seeded_exists() -> None:
-    seeded = {**CATALOG, **VIDEO_CATALOG, **PLAN_CATALOG, **AD_TEMPLATE_CATALOG}
+    seeded = {
+        **CATALOG,
+        **VIDEO_CATALOG,
+        **PLAN_CATALOG,
+        **AD_TEMPLATE_CATALOG,
+        "story_scene": STORY_SCENES,
+    }
     assert not set(CATALOG) & set(VIDEO_CATALOG)
     assert not set(PLAN_CATALOG) & (set(CATALOG) | set(VIDEO_CATALOG))
     assert not set(AD_TEMPLATE_CATALOG) & (set(CATALOG) | set(VIDEO_CATALOG) | set(PLAN_CATALOG))

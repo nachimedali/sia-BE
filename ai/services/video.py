@@ -79,6 +79,7 @@ from ai.services import (
     quality,
     render_checks,
     rephrase,
+    storyboard,
     template_fit,
     video_prompt,
 )
@@ -244,6 +245,8 @@ class Spec:
     #: S19-11: a draft (720p, paid by a re-roll), or the final of a draft.
     draft: bool = False
     final_of: VideoRender | None = None
+    #: S20: the edited scenes, `[{scene, seconds, words, person}]`; [] = the template's own.
+    storyboard: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def seconds(self) -> int:
@@ -278,6 +281,7 @@ class Spec:
                 **({"draft": True} if self.draft else {}),
                 **({"final_of": self.final_of.pk} if self.final_of else {}),
                 **({"music": self.music.key} if self.music else {}),
+                **({"storyboard": self.storyboard} if self.storyboard else {}),
             }
         elif self.mode == VideoMode.CLIP:
             assert self.source is not None and self.motion is not None
@@ -500,6 +504,18 @@ def _parse_template(
         ad_templates.clean_offer(data.get("offer")) if row.metadata.get("needs") == "offer" else {}
     )
     draft, final_of = _draft_or_final(workspace, data, row, source=source, length=length)
+    # S20: the scenes as the person edited them; refused here, before any charge.
+    scenes = (
+        storyboard.parse(
+            workspace,
+            row,
+            data["storyboard"],
+            seconds=int(length.metadata.get("seconds", 0)),
+            person_on=avatar is not None,
+        )
+        if data.get("storyboard") is not None
+        else []
+    )
     return Spec(
         **{
             **common,
@@ -523,6 +539,7 @@ def _parse_template(
         location=location,
         draft=draft,
         final_of=final_of,
+        storyboard=scenes,
     )
 
 
@@ -1072,7 +1089,7 @@ def _render_clip(render: VideoRender) -> VideoResult:
     # Every template render is compiled from its timed direction, on every
     # route (S17-43): the label beats ("Call to action") never reach a model.
     # Pro rendering still gates its own scenes, drafts and routes.
-    direction = video_prompt.direction_of(template) if template is not None else None
+    direction = storyboard.direction_for(render, template)
     if template is not None and (
         ad_templates.shots_of(template) or (direction and direction.get("shots"))
     ):
@@ -1641,7 +1658,7 @@ def _beat_stills(
     Advisory, like the checks: a composer that cannot make them costs the
     stills, never the render. Every template render has them since S17-43: the
     reviewer checks the clip against its beats, as no machine check can."""
-    direction = video_prompt.direction_of(template) if template is not None else None
+    direction = storyboard.direction_for(render, template)
     composer = get_video_composer()
     if direction is None or composer is None:
         return []

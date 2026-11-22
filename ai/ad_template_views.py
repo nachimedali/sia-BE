@@ -96,6 +96,16 @@ class AdTemplateSpeechSerializer(serializers.Serializer[Any]):
     end = serializers.FloatField()
 
 
+class AdTemplateSceneSerializer(serializers.Serializer[Any]):
+    label = serializers.CharField()  # type: ignore[assignment]
+    #: What happens, in plain words, with the product's name filled in.
+    action = serializers.CharField()
+    start = serializers.FloatField()
+    end = serializers.FloatField()
+    #: The avatar speaks a script line here; the scene cannot be dropped.
+    speaks = serializers.BooleanField()
+
+
 class AdTemplateSerializer(serializers.Serializer[Any]):
     key = serializers.CharField()
     label = serializers.CharField()  # type: ignore[assignment]
@@ -145,6 +155,10 @@ class AdTemplateSerializer(serializers.Serializer[Any]):
     #: The brand's own places (`own:<id>`) that are the same kind as this
     #: template's places.
     own_places = serializers.ListField(child=serializers.CharField())
+    #: S20: the template's own scenes for the storyboard, in order, each with
+    #: its share of the clip (0..1); empty with the step off, and for a
+    #: multi-shot template, whose scenes are fixed shots.
+    scenes = AdTemplateSceneSerializer(many=True)
 
 
 class AdTemplateOptionSerializer(serializers.Serializer[Any]):
@@ -203,6 +217,8 @@ class AdTemplateGallerySerializer(serializers.Serializer[Any]):
     references_total = serializers.IntegerField()
     #: Whether the plan lets the person write their own direction (`ad_prompt_edit`).
     prompt_edit = serializers.BooleanField()
+    #: S20: whether scenes may be edited (`studio_storyboard_s20`).
+    storyboard = serializers.BooleanField()
 
 
 class AdKeyframeRequestSerializer(serializers.Serializer[Any]):

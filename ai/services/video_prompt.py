@@ -504,12 +504,13 @@ class Context:
 
 
 def context_for(render: Any, template: CreativeOption) -> Context:
-    from ai.services import ad_templates
+    from ai.services import ad_templates, storyboard
     from ai.services.creative import _chosen, _moods
     from brand.services import avatars
     from products.services import identity
 
-    direction = direction_of(template)
+    # S20: the render's own storyboard, when the person edited the scenes.
+    direction = storyboard.direction_for(render, template)
     assert direction is not None
     meta = template.metadata
     spec = render.spec

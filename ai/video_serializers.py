@@ -44,6 +44,13 @@ class VideoShotSerializer(serializers.Serializer[Any]):
     )
 
 
+class StoryboardSceneSerializer(serializers.Serializer[Any]):
+    scene = serializers.CharField(max_length=40)
+    seconds = serializers.FloatField(min_value=0, max_value=60)
+    words = serializers.CharField(max_length=400, required=False, allow_blank=True, default="")
+    person = serializers.BooleanField(required=False, default=False)
+
+
 class VideoRequestSerializer(serializers.Serializer[Any]):
     """One request, priced or rendered. A clip reads `source`, `role`,
     `motion` and `aspect`; a reel reads `shots`, `style`, `music`, `captions`,
@@ -101,6 +108,17 @@ class VideoRequestSerializer(serializers.Serializer[Any]):
     #: of the ad's re-rolls; then the final, the draft's id, at the same seed.
     draft = serializers.BooleanField(required=False, default=False)
     final_of = serializers.IntegerField(required=False, allow_null=True, default=None)
+    #: S20: the template's scenes as the person edited them, in order:
+    #: `[{scene, seconds, words?, person?}]`, `scene` a template beat
+    #: (`beat:<n>`), a `story_scene` key or `custom`. Checked by
+    #: `ai.services.storyboard`; 400 `storyboard_off` with the step off.
+    storyboard = serializers.ListField(
+        child=StoryboardSceneSerializer(),
+        required=False,
+        allow_null=True,
+        default=None,
+        max_length=12,
+    )
 
     def validate_creative(self, value: Any) -> dict[str, Any]:
         return creative_service.video_look(value)

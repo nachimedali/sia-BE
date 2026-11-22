@@ -480,6 +480,11 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     ]
     out = []
     pro = video_prompt.is_on(workspace)
+    # S20: each template's scenes, for the storyboard, only with the step on.
+    from ai.services import storyboard
+
+    board = storyboard.is_on(workspace)
+    product_name = product.name if product is not None else "the product"
     # Every template is checked against the routes since S17-43/S17-38, Pro or not.
     can = video_prompt.capabilities(workspace)
     for row in _rows():
@@ -528,6 +533,7 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
                     if key in lengths
                 ],
                 "beats": meta["beats"],
+                "scenes": storyboard.scenes_of(row, product_name) if board else [],
                 "script": meta["script"],
                 "hooks": meta["hooks"],
                 "locations": meta["locations"],
@@ -608,6 +614,7 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
         "keep_credits": places.keep_credits(workspace),
         "rerolls": entitlements.int_feature("ad_rerolls"),
         "prompt_edit": bool(entitlements.feature("ad_prompt_edit")),
+        "storyboard": board,
         "avatars_per_ad": cast_limits(entitlements)["avatars"],
         "products_per_ad": cast_limits(entitlements)["products"],
         "references_cap": references_cap(workspace, entitlements),

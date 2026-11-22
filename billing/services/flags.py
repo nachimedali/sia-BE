@@ -211,9 +211,18 @@ TN_PAYMENTS_V1 = "tn_payments_v1"
 #: and the new scenes are not shown. **Off by default**: beta is deployed.
 PRO_RENDERING_S19 = "pro_rendering_s19"
 
+#: S20 — the Studio storyboard (`studio_storyboard.md`): a template's beats as
+#: scenes the person reorders, retimes, rewords and adds to (ready-made
+#: `story_scene` rows or their own words), rendered as one directed clip at the
+#: template's price. Off restores pre-step behaviour exactly: no scene is
+#: served, the gallery lists no scenes, and a `storyboard` in a video request
+#: is a 400 `storyboard_off`. **Off by default**: beta is deployed.
+STUDIO_STORYBOARD_S20 = "studio_storyboard_s20"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     TN_PAYMENTS_V1: False,
     PRO_RENDERING_S19: False,
+    STUDIO_STORYBOARD_S20: False,
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
     PLANNING_V3: True,
