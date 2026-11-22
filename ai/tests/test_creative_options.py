@@ -49,6 +49,8 @@ VIDEO_KINDS = {"video_length", "motion", "video_aspect", "reel_style", "music", 
 #: with nothing in it, which the Studio would render as an empty box.
 ALL_KINDS = {
     "revise_reason",
+    # S20-01: served with the storyboard on, an empty list with it off.
+    "story_scene",
     "scene",
     "light",
     "camera",
@@ -154,6 +156,8 @@ def test_every_row_has_text_and_an_icon_to_draw(seeded: None) -> None:
                 # Angles and hook styles are words the script writer reads.
                 CreativeKind.ANGLE,
                 CreativeKind.HOOK_FAMILY,
+                # S20-01: a storyboard scene is pictured by its still (`metadata.image`).
+                CreativeKind.STORY_SCENE,
             ]
         ).exclude(kind__in=PRODUCT_FORM_KINDS | VIDEO_KINDS)
         if not row.label or not row.icon_paths

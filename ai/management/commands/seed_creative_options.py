@@ -18,6 +18,7 @@ from ai.creative_i18n import translations_for
 from ai.creative_seed import CATALOG
 from ai.models import CreativeOption
 from ai.scene_seed_s19 import SCENES
+from ai.story_scene_seed import SCENES as STORY_SCENES
 from ai.video_seed import VIDEO_CATALOG
 
 
@@ -37,11 +38,15 @@ class Command(BaseCommand):
         catalog = {**CATALOG, **VIDEO_CATALOG, **AD_TEMPLATE_CATALOG}
         # S19-12: the Pro scenes, shown only with `pro_rendering_s19` on.
         catalog["ad_template"] = [*catalog["ad_template"], *SCENES]
+        # S20-01: the storyboard's ready-made scenes, served with `studio_storyboard_s20` on.
+        catalog["story_scene"] = STORY_SCENES
         for kind, rows in catalog.items():
             for position, spec in enumerate(rows):
                 defaults = {**spec, "sort_order": position * 10, "is_active": True}
                 key = defaults.pop("key")
-                defaults["translations"] = translations_for(kind, key)
+                defaults["translations"] = defaults.get("translations") or translations_for(
+                    kind, key
+                )
                 if options["refresh"]:
                     _, was_created = CreativeOption.objects.update_or_create(
                         kind=kind, key=key, defaults=defaults

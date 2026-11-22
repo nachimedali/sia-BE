@@ -358,6 +358,15 @@ ERRORS: dict[str, tuple[str, str]] = {
         "Cette image ne peut pas servir d'élément de marque.",
         "Questa immagine non può essere usata come elemento del brand.",
     ),
+    # S20 — the Studio storyboard.
+    "Scene-by-scene editing is not available yet.": (
+        "La modification scène par scène n'est pas encore disponible.",
+        "La modifica scena per scena non è ancora disponibile.",
+    ),
+    "This storyboard cannot be made as it is.": (
+        "Ce storyboard ne peut pas être réalisé tel quel.",
+        "Questo storyboard non può essere realizzato così com'è.",
+    ),
     "This scene needs something your package's video model cannot do.": (
         "Cette scène demande quelque chose que le modèle vidéo de votre offre ne sait pas faire.",
         "Questa scena richiede qualcosa che il modello video del tuo piano non sa fare.",

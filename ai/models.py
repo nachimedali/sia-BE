@@ -764,6 +764,9 @@ class CreativeKind(models.TextChoices):
     # `prompt_fragment` is the instruction the script writer reads.
     ANGLE = "angle", "Ad angle"
     HOOK_FAMILY = "hook_family", "Hook style"
+    # S20-01: a ready-made storyboard scene; `prompt_fragment` is the action
+    # the video model reads (`ai.story_scene_seed`).
+    STORY_SCENE = "story_scene", "Storyboard scene"
 
 
 #: `d` attribute of an SVG `<path>`: commands, numbers, separators. Nothing

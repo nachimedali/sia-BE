@@ -23,7 +23,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ai.models import Generation, VoiceProfile
+from ai.models import CreativeKind, Generation, VoiceProfile
 from ai.permissions import HasSufficientCredits
 from ai.serializers import (
     CreativeCatalogSerializer,
@@ -43,6 +43,7 @@ from ai.services import variants as variant_service
 from ai.services.pipeline import create_generation
 from ai.services.revisions import create_revision
 from ai.tasks import run_generation_task
+from common.exceptions import OCCSError
 from common.mixins import WorkspaceScopedQuerySetMixin
 from common.pagination import DefaultPagination
 from common.workspaces import authenticated_user, request_workspace
@@ -296,15 +297,24 @@ class CreativeOptionsView(APIView):
     )
     def get(self, request: Request) -> Response:
         from ai.models import GenerationKind
+        from ai.services import storyboard
         from ai.services.costing import (
             GenerationCostNotConfiguredError,
             resolve_pricing,
             unlock_price,
         )
 
+        grouped = creative_service.catalog()
+        # S20: the storyboard's scenes only with the step on (flag off = as before).
+        try:
+            board = storyboard.is_on(request_workspace(request))
+        except OCCSError:
+            # The catalogue is served without a workspace too; then no scenes.
+            board = False
+        if not board:
+            grouped[CreativeKind.STORY_SCENE] = []
         options = {
-            kind: CreativeOptionSerializer(rows, many=True).data
-            for kind, rows in creative_service.catalog().items()
+            kind: CreativeOptionSerializer(rows, many=True).data for kind, rows in grouped.items()
         }
         pricing: dict[str, Any] = {}
         for kind in (GenerationKind.IMAGE, GenerationKind.TEXT):

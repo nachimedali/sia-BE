@@ -47,6 +47,7 @@ SEEDS = [
     "ai.migrations.0047_text_routes_2026_11",
     "ai.migrations.0050_seed_video_profiles_and_pro_routes",
     "ai.migrations.0053_pro_scenes",
+    "ai.migrations.0059_story_scenes",
     "categories.migrations.0002_seed_categories",
     "tools.migrations.0002_seed_tools",
     "trends.migrations.0004_seed_trend_sources",
@@ -96,6 +97,10 @@ def test_the_seed_migrations_populate_every_catalogue_a_fresh_install_needs() ->
     assert set(AIModelRoute.objects.exclude(flag="").values_list("flag", flat=True)) == {
         "pro_rendering_s19"
     }
+    # S20-01: the storyboard's ready-made scenes, with French and Italian.
+    scenes = CreativeOption.objects.filter(kind="story_scene")
+    assert scenes.count() >= 12
+    assert all(row.translations.get("fr") and row.translations.get("it") for row in scenes)
 
 
 def test_running_them_again_adds_nothing() -> None:
