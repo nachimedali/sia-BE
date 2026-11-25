@@ -211,13 +211,14 @@ PRO_RENDERING_S19 = "pro_rendering_s19"
 #: `story_scene` rows or their own words), rendered as one directed clip at the
 #: template's price. Off restores pre-step behaviour exactly: no scene is
 #: served, the gallery lists no scenes, and a `storyboard` in a video request
-#: is a 400 `storyboard_off`. **Off by default**: beta is deployed.
+#: is a 400 `storyboard_off`. On by default (owner, 2026-11-22: "integrate it
+#: fully"), as S17 was; an organization row of `enabled=False` restores pre-step
+#: behaviour.
 STUDIO_STORYBOARD_S20 = "studio_storyboard_s20"
 
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     TN_PAYMENTS_V1: False,
     PRO_RENDERING_S19: False,
-    STUDIO_STORYBOARD_S20: False,
     CONTENT_MODEL_V2: True,
     COLLABORATION_V2: True,
     PLANNING_V3: True,
@@ -246,6 +247,8 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     AD_TEMPLATES_S17: True,
     # On from deploy (owner, 2026-10-31), as S17 was.
     TEMPLATE_RULES_S18: True,
+    # On from deploy (owner, 2026-11-22), as S17 was.
+    STUDIO_STORYBOARD_S20: True,
     # Off until trendgen serves them; see the declarations above.
     TRENDGEN_FEED: False,
     TRENDGEN_GENERATION: False,
