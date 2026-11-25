@@ -162,6 +162,27 @@ class RenderNotReviewableError(StateConflict):
     default_detail = "This render cannot be changed that way now."
 
 
+class RenderNotReadyError(StateConflict):
+    """S21-02: layers wait for the finished clip."""
+
+    default_code = "render_not_ready"
+    default_detail = "This render is not finished yet."
+
+
+class RenderSentError(StateConflict):
+    """S21-02: a sent render's picture is the post's; layers no longer change it."""
+
+    default_code = "render_sent"
+    default_detail = "This render is already on a post; its picture no longer changes."
+
+
+class LayersRunningError(StateConflict):
+    """S21-02: sent or redrawn only once the current layers pass is done."""
+
+    default_code = "layers_running"
+    default_detail = "The layers are still being drawn on this render."
+
+
 # -----------------------------------------------------------------------------
 # The catalogue
 # -----------------------------------------------------------------------------
@@ -1782,6 +1803,8 @@ def send(
             raise RenderNotReviewableError(
                 "Only accepted, finished renders can be sent.", detail={"render": render.pk}
             )
+        if render.layers_status == "running":
+            raise LayersRunningError(detail={"render": render.pk})
         if render.post_id is not None:
             raise RenderNotReviewableError(
                 "This render is already on a post.", detail={"render": render.pk}

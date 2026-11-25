@@ -467,6 +467,27 @@ ERRORS: dict[str, tuple[str, str]] = {
         "Une référence n'est plus disponible.",
         "Un riferimento non è più disponibile.",
     ),
+    # S21 — the Studio's projects and layers.
+    "This project is too large to save.": (
+        "Ce projet est trop volumineux pour être enregistré.",
+        "Questo progetto è troppo grande per essere salvato.",
+    ),
+    "One of the layers cannot be drawn as it is.": (
+        "L'une des incrustations ne peut pas être dessinée telle quelle.",
+        "Una delle sovrimpressioni non può essere disegnata così com'è.",
+    ),
+    "This render is not finished yet.": (
+        "Ce rendu n'est pas encore terminé.",
+        "Questo rendering non è ancora finito.",
+    ),
+    "This render is already on a post; its picture no longer changes.": (
+        "Ce rendu est déjà sur une publication ; son image ne change plus.",
+        "Questo rendering è già in un post; la sua immagine non cambia più.",
+    ),
+    "The layers are still being drawn on this render.": (
+        "Les incrustations sont encore en cours de dessin sur ce rendu.",
+        "Le sovrimpressioni sono ancora in corso su questo rendering.",
+    ),
 }
 
 _COLUMN = {"fr": 0, "it": 1}

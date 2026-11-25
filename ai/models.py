@@ -982,6 +982,20 @@ class VideoRender(models.Model):
         on_delete=models.PROTECT,
         related_name="video_render",
     )
+    #: S21-02: the clip as rendered, before the Studio's layers went over it.
+    #: `output` is what is sent; a new pass of layers starts from this one.
+    plain = models.ForeignKey(
+        "content.MediaAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="plain_of",
+    )
+    #: The layers `output` carries, as checked (`ai.services.layers`).
+    layers = models.JSONField(default=list, blank=True)
+    #: `running` while a pass is being drawn, `failed` when the last one failed
+    #: (the output kept as it was), blank otherwise.
+    layers_status = models.CharField(max_length=10, blank=True, default="")
     #: The draft post the clip was sent to. Set once; a sent render is final.
     post = models.ForeignKey(
         "content.Post",
@@ -1041,3 +1055,38 @@ class VideoRender(models.Model):
 
     def __str__(self) -> str:
         return f"{self.mode} render {self.pk} ({self.status})"
+
+
+class StudioProjectKind(models.TextChoices):
+    VIDEO = "video", "Video"
+    IMAGE = "image", "Image"
+
+
+class StudioProject(models.Model):
+    """S21-01: one piece of Studio work, saved as the page left it.
+
+    `state` is the editor's own document (scenes, overlays, kit, history,
+    and a `summary` the start page's card shows). The server bounds and scopes
+    it and never reads it for a decision: whatever it holds is checked again
+    by the keyframe, estimate, render and layers endpoints when it is used.
+    Per workspace — the brand's team shares its projects (L-1)."""
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="studio_projects"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    title = models.CharField(max_length=120)
+    kind = models.CharField(max_length=8, choices=StudioProjectKind.choices)
+    state = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering: ClassVar[list[str]] = ["-updated_at", "-pk"]
+        indexes: ClassVar[list[models.Index]] = [models.Index(fields=["workspace", "-updated_at"])]
+
+    def __str__(self) -> str:
+        return self.title

@@ -35,6 +35,12 @@ from ai.ad_template_views import (
     AdTemplateKeyframeView,
     AdTemplateScriptView,
 )
+from ai.studio_views import (
+    StillLayersView,
+    StillSendView,
+    StudioProjectViewSet,
+    VideoRenderLayersView,
+)
 from ai.video_views import (
     VideoCatalogueView,
     VideoEstimateView,
@@ -218,6 +224,7 @@ router.register("rulesets", RuleSetViewSet, basename="ruleset")
 router.register("products", ProductViewSet, basename="product")
 router.register("ai/generations", GenerationViewSet, basename="generation")
 router.register("ai/voice-profiles", VoiceProfileViewSet, basename="voice-profile")
+router.register("ai/studio-projects", StudioProjectViewSet, basename="studio-project")
 router.register("reminders", ReminderViewSet, basename="reminder")
 router.register("reports", ReportViewSet, basename="report")
 router.register("digests", DigestViewSet, basename="digest")
@@ -539,6 +546,13 @@ urlpatterns = [
     path("ai/video/renders/", VideoRenderListView.as_view(), name="ai-video-renders"),
     path("ai/video/renders/send/", VideoRenderSendView.as_view(), name="ai-video-send"),
     path("ai/video/renders/<int:pk>/", VideoRenderDetailView.as_view(), name="ai-video-render"),
+    path(
+        "ai/video/renders/<int:pk>/layers/",
+        VideoRenderLayersView.as_view(),
+        name="ai-video-render-layers",
+    ),
+    path("ai/layers/image/", StillLayersView.as_view(), name="ai-layers-image"),
+    path("ai/layers/image/send/", StillSendView.as_view(), name="ai-layers-image-send"),
     # --- ad templates (S17) ---
     path("ai/ad-templates/", AdTemplateGalleryView.as_view(), name="ai-ad-templates"),
     path(

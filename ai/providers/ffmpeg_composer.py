@@ -23,7 +23,7 @@ from pathlib import Path
 
 from django.conf import settings
 
-from ai.providers.base import CaptionCue, EndCard, ReelShot, VideoResult
+from ai.providers.base import CaptionCue, EndCard, OverlayLayer, ReelShot, VideoResult
 from common.exceptions import ProviderError
 
 FPS = 30
@@ -524,6 +524,72 @@ class FfmpegVideoComposer:
             )
 
     # --- stills for review (S19-13) ---------------------------------------------
+    def overlay(self, *, clip: bytes, layers: list[OverlayLayer], aspect: str) -> VideoResult:
+        """S21-02: each drawn layer over the clip on its window. The picture is
+        re-encoded at the frame's size; the sound is copied as it is."""
+        started = time.monotonic()
+        width, height = SIZES.get(aspect, SIZES["9:16"])
+        with tempfile.TemporaryDirectory(prefix="layers-") as tmp:
+            work = Path(tmp)
+            source = work / "clip.mp4"
+            source.write_bytes(clip)
+            inputs: list[str] = []
+            graph = [
+                f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height}[v0]"
+            ]
+            for index, layer in enumerate(layers, start=1):
+                picture = work / f"layer{index}.png"
+                picture.write_bytes(layer.image)
+                inputs += ["-i", str(picture)]
+                window = (
+                    f"between(t,{layer.start:g},{layer.end:g})"
+                    if layer.end is not None
+                    else f"gte(t,{layer.start:g})"
+                )
+                graph.append(
+                    f"[v{index - 1}][{index}:v]overlay={layer.x}:{layer.y}:"
+                    f"enable='{window}'[v{index}]"
+                )
+            graph.append(f"[v{len(layers)}]format=yuv420p[out]")
+            out = work / "layered.mp4"
+            _run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(source),
+                    *inputs,
+                    "-filter_complex",
+                    ";".join(graph),
+                    "-map",
+                    "[out]",
+                    "-map",
+                    "0:a?",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "20",
+                    "-c:a",
+                    "copy",
+                    "-movflags",
+                    "+faststart",
+                    str(out),
+                ]
+            )
+            return VideoResult(
+                content=out.read_bytes(),
+                mime="video/mp4",
+                duration_seconds=_duration(out),
+                provider="ffmpeg",
+                model="ffmpeg-composer-1",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+
     def frames(self, *, clip: bytes, at: list[float]) -> list[bytes]:
         with tempfile.TemporaryDirectory(prefix="frames-") as tmp:
             work = Path(tmp)

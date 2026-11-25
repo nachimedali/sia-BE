@@ -212,6 +212,8 @@ class VideoRenderSerializer(serializers.ModelSerializer[VideoRender]):
             "labels",
             "checks",
             "beat_frames",
+            "layers",
+            "layers_status",
             "lines",
             "render_s",
             "spec",

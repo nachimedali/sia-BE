@@ -29,6 +29,7 @@ from ai.providers.base import (
     EndCard,
     ImageGenerationResult,
     ImageVariant,
+    OverlayLayer,
     ReelShot,
     TextGenerationResult,
     TextVariant,
@@ -583,6 +584,26 @@ class FakeVideoComposer:
             # The clip's own length, read back from the fake clip: a burn-in
             # adds words, never seconds.
             duration_seconds=min(own, seconds) if seconds else own,
+            provider="fake",
+            model="fake-composer-1",
+            latency_ms=1,
+        )
+
+    def overlay(self, *, clip: bytes, layers: list[OverlayLayer], aspect: str) -> VideoResult:
+        manifest: dict[str, Any] = {
+            "kind": "layers",
+            "aspect": aspect,
+            "clip": hashlib.sha256(clip).hexdigest()[:16],
+            "layers": [
+                {"x": layer.x, "y": layer.y, "start": layer.start, "end": layer.end}
+                for layer in layers
+            ],
+        }
+        self.calls.append(manifest)
+        return VideoResult(
+            content=_fake_mp4(manifest),
+            mime="video/mp4",
+            duration_seconds=float(read_fake_manifest(clip).get("seconds", 0.0)),
             provider="fake",
             model="fake-composer-1",
             latency_ms=1,

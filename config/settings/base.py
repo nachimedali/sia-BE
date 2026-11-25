@@ -273,6 +273,8 @@ SPECTACULAR_SETTINGS = {
         "DeliveryModeEnum": "content.models.DeliveryMode",
         # `Visibility` on `Post`, `Thread` and `Comment` (P2-03).
         "VisibilityEnum": "common.visibility.Visibility",
+        # S21: a Studio project makes a video or an image.
+        "StudioProjectKindEnum": "ai.models.StudioProjectKind",
         # `ThreadStatus` collides with `Post.status` on the bare name
         # `status`; unnamed, spectacular mints "StatusB3fEnum", which is
         # what a client would then have to import (P2-01).
