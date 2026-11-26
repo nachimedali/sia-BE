@@ -268,3 +268,30 @@ def test_a_music_bed_goes_under_a_clips_own_sound_or_alone(
 
     assert float(info["format"]["duration"]) == pytest.approx(5.0, abs=0.3)
     assert [s["codec_type"] for s in info["streams"]].count("audio") == 1
+
+
+@needs_ffmpeg
+def test_s21_layers_appear_on_their_window_and_keep_length_and_sound(
+    tmp_path: Path, settings: Any
+) -> None:
+    import io
+
+    from ai.providers.base import OverlayLayer
+    from ai.providers.ffmpeg_composer import FfmpegVideoComposer
+
+    settings.VIDEO_FONT_FILE = ""
+    clip = _clip(tmp_path, "base", 3, colour="blue", sound=True)
+    square = io.BytesIO()
+    Image.new("RGBA", (200, 200), (255, 0, 0, 255)).save(square, format="PNG")
+    result = FfmpegVideoComposer().overlay(
+        clip=clip,
+        layers=[OverlayLayer(image=square.getvalue(), x=100, y=100, start=1.5, end=None)],
+        aspect="9:16",
+    )
+    path, probe = _probe(result.content, tmp_path)
+    assert abs(result.duration_seconds - 3) < 0.2
+    assert {stream["codec_type"] for stream in probe["streams"]} == {"video", "audio"}
+    before = _pixel(path, 0.5, (200, 200), tmp_path)
+    after = _pixel(path, 2.5, (200, 200), tmp_path)
+    assert before[2] > 150 and before[0] < 80  # still the blue clip
+    assert after[0] > 200 and after[2] < 80  # the red layer on top

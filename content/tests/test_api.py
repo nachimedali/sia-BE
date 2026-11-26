@@ -9,7 +9,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from ai.models import Generation, GenerationKind, GenerationMode, VoiceProfile
+from ai.models import Generation, GenerationKind, GenerationMode, StudioProject, VoiceProfile
 from analytics.models import Report
 from channels.models import SocialAccount
 from collaboration.services import open_thread
@@ -403,7 +403,7 @@ def test_preview_payload_identical_to_publish_payload(
 def test_router_has_exactly_the_viewsets_this_sweep_covers() -> None:
     """Fails loudly if a ViewSet is registered without updating the count
     below, rather than letting it silently escape the sweep."""
-    assert len(router.registry) == 23
+    assert len(router.registry) == 24
 
 
 def test_cross_workspace_access_returns_404_on_every_viewset(
@@ -507,6 +507,10 @@ def test_cross_workspace_access_returns_404_on_every_viewset(
                 ),
             ),
             kind=RuleKind.FORMAT,
+        ),
+        # --- S21 Studio ---
+        "studio-project": StudioProject.objects.create(
+            workspace=other_workspace, created_by=other_owner, title="Not yours", kind="video"
         ),
     }
 

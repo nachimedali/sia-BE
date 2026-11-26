@@ -48,6 +48,12 @@ def board_on(db: None) -> None:
     FeatureFlag.objects.create(organization=None, key=STUDIO_STORYBOARD_S20, enabled=True)
 
 
+@pytest.fixture
+def board_off(db: None) -> None:
+    """On by default since 2026-11-22: a row switches it off."""
+    FeatureFlag.objects.create(organization=None, key=STUDIO_STORYBOARD_S20, enabled=False)
+
+
 def unbox(product: Any, storyboard: list[dict[str, Any]] | None, **over: Any) -> dict[str, Any]:
     body = template_clip(product, template="slow-unbox", length="clip-10", **over)
     if storyboard is not None:
@@ -98,7 +104,9 @@ def test_the_scenes_speak_french_and_italian(
     assert row.translations["it"]["label"] == "Il versamento"
 
 
-def test_with_the_flag_off_no_scene_is_served(auth_client: Any, growth: Any) -> None:
+def test_with_the_flag_off_no_scene_is_served(
+    auth_client: Any, growth: Any, board_off: None
+) -> None:
     assert auth_client.get(OPTIONS).json()["options"]["story_scene"] == []
 
 
@@ -125,7 +133,9 @@ def test_the_gallery_lists_a_templates_scenes_with_the_flag_on(
     assert rows["value-stack"]["scenes"] == []
 
 
-def test_with_the_flag_off_the_gallery_has_no_storyboard(auth_client: Any, oil: Any) -> None:
+def test_with_the_flag_off_the_gallery_has_no_storyboard(
+    auth_client: Any, oil: Any, board_off: None
+) -> None:
     body = auth_client.get(GALLERY, {"product": oil.pk}).json()
     assert body["storyboard"] is False
     assert all(row["scenes"] == [] for row in body["templates"])
@@ -186,7 +196,9 @@ def test_without_a_storyboard_nothing_changes(auth_client: Any, oil: Any, board_
 # -----------------------------------------------------------------------------
 # Every error code
 # -----------------------------------------------------------------------------
-def test_with_the_flag_off_a_storyboard_is_refused(auth_client: Any, oil: Any) -> None:
+def test_with_the_flag_off_a_storyboard_is_refused(
+    auth_client: Any, oil: Any, board_off: None
+) -> None:
     response = auth_client.post(ESTIMATE, unbox(oil, EDITED), format="json")
     assert response.status_code == 400
     assert code_of(response) == "storyboard_off"

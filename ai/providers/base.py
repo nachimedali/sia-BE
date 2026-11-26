@@ -245,6 +245,19 @@ class CaptionCue:
 
 
 @dataclass(frozen=True)
+class OverlayLayer:
+    """S21-02: one drawn layer (a transparent PNG) set over a clip at `x`, `y`
+    in pixels of the frame, shown from `start` to `end` seconds (`None`: to the
+    end of the clip)."""
+
+    image: bytes
+    x: int
+    y: int
+    start: float
+    end: float | None
+
+
+@dataclass(frozen=True)
 class EndCard:
     """The reel's last card. `background` and `accent` are `#RRGGBB` (the
     brand kit's, S17-26); `logo` is the brand's real logo file, composited and
@@ -307,6 +320,11 @@ class VideoComposer(Protocol):
     def frames(self, *, clip: bytes, at: list[float]) -> list[bytes]:
         """One still (PNG) per time in `at`, in seconds (S19-13): what the
         reviewer sees at the middle of each beat. Advisory, never a gate."""
+        ...
+
+    def overlay(self, *, clip: bytes, layers: list[OverlayLayer], aspect: str) -> VideoResult:
+        """S21-02: the clip at the frame's size with each layer set over it on
+        its window. Length and sound are the clip's own."""
         ...
 
 

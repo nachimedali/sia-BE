@@ -48,3 +48,12 @@ def run_video_render(render_id: int) -> None:
     from ai.services.video import run_render
 
     run_render(render_id)
+
+
+@shared_task(name="ai.tasks.video_layers")
+def run_video_layers(render_id: int) -> None:
+    """S21-02, routed to `media_q` by the `"ai.tasks.video*"` rule: the
+    Studio's layers drawn over a finished clip."""
+    from ai.services.layers import run_video_layers as run
+
+    run(render_id)
