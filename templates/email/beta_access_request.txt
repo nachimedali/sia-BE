@@ -5,5 +5,6 @@ Package: {{ package }}{% if currency %} ({{ currency }}){% endif %}
 Business: {{ business_name|default:"—" }}
 Phone: {{ phone|default:"—" }}
 Social: {{ social_url|default:"—" }}
+Source: {{ source|default:"—" }}
 
 All requests are in the admin under Accounts → Beta access requests.

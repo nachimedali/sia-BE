@@ -262,6 +262,8 @@ class BetaAccessRequest(models.Model):
     social_url = models.URLField(max_length=300, blank=True)
     #: The currency the visitor was looking at prices in (USD or TND), blank if unknown.
     currency = models.CharField(max_length=3, blank=True)
+    #: Where the visitor came from: the link's utm_source/utm_medium/utm_campaign, blank if none.
+    source = models.CharField(max_length=120, blank=True)
     submissions = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

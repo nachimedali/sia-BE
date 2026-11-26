@@ -37,6 +37,7 @@ def test_a_request_is_recorded_with_its_package(plans) -> None:
         phone="+216 20 123 456",
         social_url="https://instagram.com/darlina",
         currency="TND",
+        source="instagram/paid/beta_reel1",
     )
 
     assert response.status_code == 202, response.json()
@@ -48,19 +49,26 @@ def test_a_request_is_recorded_with_its_package(plans) -> None:
     assert row.phone == "+216 20 123 456"
     assert row.social_url == "https://instagram.com/darlina"
     assert row.currency == "TND"
+    assert row.source == "instagram/paid/beta_reel1"
     assert row.submissions == 1
 
 
 def test_the_optional_fields_may_be_left_out(plans) -> None:
     assert submit().status_code == 202
     row = BetaAccessRequest.objects.get()
-    assert (row.business_name, row.phone, row.social_url, row.currency) == ("", "", "", "")
+    assert (row.business_name, row.phone, row.social_url, row.currency, row.source) == (
+        "",
+        "",
+        "",
+        "",
+        "",
+    )
 
 
 @override_settings(BETA_ACCESS_NOTIFY_EMAIL=STAFF)
 def test_staff_are_emailed_each_request(plans, outbox, django_capture_on_commit_callbacks) -> None:
     with django_capture_on_commit_callbacks(execute=True):
-        submit(business_name="Dar Lina")
+        submit(business_name="Dar Lina", source="instagram/paid/beta_reel1")
 
     assert len(outbox) == 1
     email = outbox[0]
@@ -69,6 +77,7 @@ def test_staff_are_emailed_each_request(plans, outbox, django_capture_on_commit_
     assert email.context["email"] == "lina@brand.tn"
     assert email.context["package"] == "Growth"
     assert email.context["business_name"] == "Dar Lina"
+    assert email.context["source"] == "instagram/paid/beta_reel1"
 
 
 @override_settings(BETA_ACCESS_NOTIFY_EMAIL="")
@@ -99,6 +108,12 @@ def test_a_repeat_keeps_fields_it_leaves_blank(plans) -> None:
     assert BetaAccessRequest.objects.get().business_name == "Dar Lina"
 
 
+def test_a_repeat_without_a_source_keeps_the_first_one(plans) -> None:
+    submit(source="instagram/paid/beta_reel1")
+    submit(source="")
+    assert BetaAccessRequest.objects.get().source == "instagram/paid/beta_reel1"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -110,6 +125,7 @@ def test_a_repeat_keeps_fields_it_leaves_blank(plans) -> None:
         {"social_url": "javascript:alert(1)"},
         {"phone": "1" * 41},
         {"currency": "EUR"},
+        {"source": "x" * 121},
     ],
 )
 def test_invalid_input_is_a_validation_error(plans, overrides: dict[str, Any]) -> None:
@@ -163,7 +179,7 @@ def test_flag_off_answers_not_found(plans) -> None:
 def test_the_admin_exports_requests_as_csv_without_formulas(plans, client) -> None:
     from accounts.models import User
 
-    submit(business_name="=HYPERLINK(1)", phone="+216 20 123 456")
+    submit(business_name="=HYPERLINK(1)", phone="+216 20 123 456", source="=cmd")
     client.force_login(User.objects.create_superuser(email="staff@example.com", password="x"))
 
     response = client.post(
@@ -178,3 +194,4 @@ def test_the_admin_exports_requests_as_csv_without_formulas(plans, client) -> No
     assert "lina@brand.tn,growth" in body
     assert "'=HYPERLINK(1)" in body
     assert "'+216 20 123 456" in body
+    assert "'=cmd" in body

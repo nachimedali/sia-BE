@@ -45,10 +45,11 @@ class BetaAccessRequestAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         "currency",
         "business_name",
         "phone",
+        "source",
         "submissions",
         "created_at",
     )
-    list_filter = ("plan", "currency", "created_at")
+    list_filter = ("plan", "currency", "source", "created_at")
     search_fields = ("email", "business_name", "phone", "social_url")
     readonly_fields = ("submissions", "created_at", "updated_at")
     date_hierarchy = "created_at"
@@ -66,6 +67,7 @@ class BetaAccessRequestAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
             "business_name",
             "phone",
             "social_url",
+            "source",
             "submissions",
             "created_at",
         ]
@@ -81,6 +83,7 @@ class BetaAccessRequestAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
                         row.business_name,
                         row.phone,
                         row.social_url,
+                        row.source,
                         row.submissions,
                         row.created_at.isoformat(),
                     )

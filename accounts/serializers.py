@@ -171,6 +171,8 @@ class BetaAccessRequestSerializer(serializers.Serializer):  # type: ignore[type-
     phone = serializers.CharField(max_length=40, required=False, allow_blank=True)
     social_url = serializers.URLField(max_length=300, required=False, allow_blank=True)
     currency = serializers.ChoiceField(choices=["USD", "TND"], required=False, allow_blank=True)
+    # DRF pops declared fields off the class, so this never shadows Field.source at runtime.
+    source = serializers.CharField(max_length=120, required=False, allow_blank=True)  # type: ignore[assignment]
     captcha = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
     def validate_package(self, value: str) -> Any:

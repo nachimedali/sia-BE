@@ -16,7 +16,7 @@ from django.db.models import F
 from accounts.models import BetaAccessRequest
 from accounts.services.auth import queue_email
 
-OPTIONAL = ("business_name", "phone", "social_url", "currency")
+OPTIONAL = ("business_name", "phone", "social_url", "currency", "source")
 
 
 def record(*, email: str, plan: Any, **optional: str) -> BetaAccessRequest:
@@ -52,6 +52,7 @@ def _notify(row: BetaAccessRequest) -> None:
             "phone": row.phone,
             "social_url": row.social_url,
             "currency": row.currency,
+            "source": row.source,
             "submissions": row.submissions,
         },
     )
