@@ -56,6 +56,7 @@ def test_a_preview_must_be_text() -> None:
         validate_metadata(meta)
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_the_gallery_serves_the_clip_or_the_still(
     auth_client: Any,
     growth: Any,  # noqa: F811
@@ -142,3 +143,61 @@ def test_the_talking_templates_take_their_clips_and_keep_an_operators_own(
     ours.refresh_from_db()
     assert (ours.metadata["preview"], ours.metadata["poster"]) == ("/ours.mp4", "/ours.webp")
     assert set(TALKING.KEYS) <= PREVIEWS  # fresh databases get them from the seed
+
+
+# -----------------------------------------------------------------------------
+# `0062_more_previews`: five more clips (S17-17, 2026-11-28)
+# -----------------------------------------------------------------------------
+MORE = importlib.import_module("ai.migrations.0062_more_previews")
+
+
+def test_the_new_batch_takes_its_clips_and_keeps_an_operators_own(seeding_on: None) -> None:
+    rows = {key: _old_row(key) for key in MORE.KEYS}
+    ours = rows["desk-break"]
+    ours.metadata = {**ours.metadata, "preview": "/ours.mp4", "poster": "/ours.webp"}
+    ours.save(update_fields=["metadata"])
+
+    MORE.forwards(apps, None)
+
+    for key in set(MORE.KEYS) - {"desk-break"}:
+        rows[key].refresh_from_db()
+        assert rows[key].metadata["preview"] == f"/studio/templates/{key}.mp4"
+        assert rows[key].metadata["poster"] == f"/studio/templates/{key}.webp"
+    ours.refresh_from_db()
+    assert (ours.metadata["preview"], ours.metadata["poster"]) == ("/ours.mp4", "/ours.webp")
+    assert set(MORE.KEYS) <= PREVIEWS  # fresh databases get them from the seed
+
+
+# -----------------------------------------------------------------------------
+# The gallery lists only templates whose clip and still are in (owner, 2026-11-28)
+# -----------------------------------------------------------------------------
+def test_the_gallery_lists_only_templates_with_a_clip_and_a_still(
+    auth_client: Any,
+    growth: Any,  # noqa: F811
+    make_png_upload: Any,
+) -> None:
+    product = make_product(growth, make_png_upload)
+    # An operator who clears a still in admin takes the template out too.
+    row = CreativeOption.objects.get(kind="ad_template", key="get-ready")
+    row.metadata = {**row.metadata, "poster": ""}
+    row.save(update_fields=["metadata"])
+
+    body = auth_client.get(f"{GALLERY}?product={product.pk}").json()
+    keys = {row["key"] for row in body["templates"]}
+
+    assert "pour-shot" in keys
+    assert "levitate" not in keys and "get-ready" not in keys
+    assert all(row["preview"] and row["poster"] for row in body["templates"])
+    assert set(body["recommended"]) <= keys
+
+
+def test_with_the_flag_off_every_template_is_listed(
+    auth_client: Any,
+    growth: Any,  # noqa: F811
+    make_png_upload: Any,
+    all_templates: None,
+) -> None:
+    product = make_product(growth, make_png_upload)
+    rows = auth_client.get(f"{GALLERY}?product={product.pk}").json()["templates"]
+    keys = {row["key"] for row in rows}
+    assert {"pour-shot", "levitate"} <= keys

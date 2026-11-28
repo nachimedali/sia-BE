@@ -510,8 +510,8 @@ _HIDDEN = frozenset(
 )
 #: Templates with a preview clip and its first frame in the frontend's
 #: `public/studio/templates/` (S17-39): placeholders from `ad-templates/previews.md`
-#: until our own renders replace them (S17-17). `close-detail` waits for a redo:
-#: its first clip copied a real sneaker brand's look.
+#: until our own renders replace them (S17-17). `close-detail`'s first clip
+#: copied a real sneaker brand's look; its redo came in the 2026-11-28 batch.
 PREVIEWS = frozenset(
     {
         "slow-unbox",
@@ -539,6 +539,12 @@ PREVIEWS = frozenset(
         "founder-story",
         "three-reasons",
         "comment-reply",
+        # S17-17, 2026-11-28: `videos.zip`, group A of `remaining_previews_2011.md`.
+        "close-detail",
+        "desk-break",
+        "macro-sizzle",
+        "space-tour",
+        "room-reveal",
     }
 )
 

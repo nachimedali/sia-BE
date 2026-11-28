@@ -185,6 +185,7 @@ def test_shot_extras_are_held_to_their_types(catalog: None) -> None:  # noqa: F8
 # -----------------------------------------------------------------------------
 # Fit
 # -----------------------------------------------------------------------------
+@pytest.mark.usefixtures("all_templates")
 def test_what_each_format_needs_is_said_in_the_gallery(
     auth_client: Any,
     growth: Any,  # noqa: F811

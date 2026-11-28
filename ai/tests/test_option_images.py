@@ -50,6 +50,7 @@ def test_a_template_with_no_clip_names_its_still() -> None:
         assert ("preview" in meta) == (spec["key"] in PREVIEWS)
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_the_gallery_serves_each_angles_still(
     auth_client: Any,
     growth: Any,  # noqa: F811

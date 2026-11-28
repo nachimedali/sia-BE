@@ -48,3 +48,13 @@ def voice_profile(workspace: Any) -> Any:
         banned_phrases=["synergy"],
         system_prompt="Write like a small, proud, independent brand.",
     )
+
+
+@pytest.fixture
+def all_templates(db: None) -> None:
+    """The gallery lists every template, clip or not (S17-17's clip-only gallery
+    off), for tests about templates whose clips are not in yet."""
+    from billing.models import FeatureFlag
+    from billing.services.flags import TEMPLATES_WITH_CLIP_S17
+
+    FeatureFlag.objects.create(organization=None, key=TEMPLATES_WITH_CLIP_S17, enabled=False)

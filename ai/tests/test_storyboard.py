@@ -113,6 +113,7 @@ def test_with_the_flag_off_no_scene_is_served(
 # -----------------------------------------------------------------------------
 # The gallery: each template's scenes
 # -----------------------------------------------------------------------------
+@pytest.mark.usefixtures("all_templates")
 def test_the_gallery_lists_a_templates_scenes_with_the_flag_on(
     auth_client: Any, oil: Any, board_on: None
 ) -> None:

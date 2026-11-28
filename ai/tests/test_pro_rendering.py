@@ -824,6 +824,7 @@ def test_new_scenes_are_premium_on_essential_and_absent_with_the_flag_off(
     assert "light-sweep" not in keys and "pour-shot" in keys
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_a_new_scene_is_shown_but_does_not_fit_without_what_it_shows(
     auth_client: Any, pro: Any, make_png_upload: Any
 ) -> None:
@@ -895,6 +896,7 @@ def test_a_composer_that_cannot_make_frames_costs_the_frames_only(
 # -----------------------------------------------------------------------------
 # S19-14 (server side): the gallery says what is Pro and what cannot be made
 # -----------------------------------------------------------------------------
+@pytest.mark.usefixtures("all_templates")
 def test_the_gallery_marks_pro_scenes_and_what_the_model_cannot_do(
     auth_client: Any, pro: Any, make_png_upload: Any
 ) -> None:

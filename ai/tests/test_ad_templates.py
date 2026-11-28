@@ -175,6 +175,7 @@ def test_flag_off_is_the_studio_as_it_was(
     assert ad_templates.references_cap(workspace) is None
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_the_gallery_lists_every_template_with_its_fit_and_lock(
     auth_client: Any, workspace: Any, plans: Any, catalog: None, flag_on: None, make_png_upload: Any
 ) -> None:
@@ -203,6 +204,7 @@ def test_the_gallery_lists_every_template_with_its_fit_and_lock(
     ]
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_spark_sees_people_templates_locked_and_effects_open(
     auth_client: Any, workspace: Any, plans: Any, catalog: None, flag_on: None
 ) -> None:
@@ -213,6 +215,7 @@ def test_spark_sees_people_templates_locked_and_effects_open(
     assert rows["pour-shot"]["person_lock"]["feature"] == "ad_templates_people"
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_an_app_screenshot_tag_clears_the_need(
     auth_client: Any, growth: Any, make_png_upload: Any
 ) -> None:

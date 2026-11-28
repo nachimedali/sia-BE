@@ -98,6 +98,7 @@ def test_another_brands_posts_never_count(growth: Any, user: Any) -> None:  # no
     assert "pour-shot" not in template_results.results_for(growth)
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_the_gallery_shows_each_templates_results(
     auth_client: Any,
     growth: Any,  # noqa: F811

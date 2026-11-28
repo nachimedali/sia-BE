@@ -128,6 +128,7 @@ def test_the_gallery_recommends_three_of_different_kinds_that_can_be_made(
     assert len({rows[key]["category"] for key in recommended}) == 3
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_recommendations_follow_the_products_goal(
     auth_client: Any,
     growth: Any,  # noqa: F811

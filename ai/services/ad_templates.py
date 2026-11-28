@@ -34,7 +34,7 @@ from ai.ad_template_seed import CAPTURES, GOALS
 from ai.models import CreativeKind, CreativeOption, Generation, GenerationKind, GenerationMode
 from ai.services import claims, references, template_results, video_prompt
 from billing.services.entitlements import Entitlements, entitlements_for
-from billing.services.flags import AD_TEMPLATES_S17, flag_enabled
+from billing.services.flags import AD_TEMPLATES_S17, TEMPLATES_WITH_CLIP_S17, flag_enabled
 from billing.services.plans import suggest_upgrade
 from brand.services.kit import kit_for
 from common.exceptions import FeatureNotAvailable, OCCSError, StateConflict
@@ -487,9 +487,12 @@ def gallery(workspace: Workspace, product: Product | None) -> dict[str, Any]:
     product_name = product.name if product is not None else "the product"
     # Every template is checked against the routes since S17-43/S17-38, Pro or not.
     can = video_prompt.capabilities(workspace)
+    clip_only = flag_enabled(workspace.organization, TEMPLATES_WITH_CLIP_S17)
     for row in _rows():
         meta = row.metadata
         if meta.get("hidden") or (meta.get("pro") and not pro):
+            continue
+        if clip_only and not (meta.get("preview") and meta.get("poster")):
             continue
         feature = TIER_FEATURE[meta["tier"]]
         lock = None

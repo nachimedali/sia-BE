@@ -216,6 +216,12 @@ PRO_RENDERING_S19 = "pro_rendering_s19"
 #: behaviour.
 STUDIO_STORYBOARD_S20 = "studio_storyboard_s20"
 
+#: S17-17 — the gallery lists only templates whose clip and still are both in
+#: (`metadata.preview` and `metadata.poster`); the rest stay out until their
+#: files are delivered (owner, 2026-11-28). Off restores pre-step behaviour:
+#: every template is listed, a clipless one on its still or place picture.
+TEMPLATES_WITH_CLIP_S17 = "templates_with_clip_s17"
+
 ROLLOUT_DEFAULTS: dict[str, bool] = {
     TN_PAYMENTS_V1: False,
     PRO_RENDERING_S19: False,
@@ -249,6 +255,8 @@ ROLLOUT_DEFAULTS: dict[str, bool] = {
     TEMPLATE_RULES_S18: True,
     # On from deploy (owner, 2026-11-22), as S17 was.
     STUDIO_STORYBOARD_S20: True,
+    # On from deploy (owner, 2026-11-28).
+    TEMPLATES_WITH_CLIP_S17: True,
     # Off until trendgen serves them; see the declarations above.
     TRENDGEN_FEED: False,
     TRENDGEN_GENERATION: False,

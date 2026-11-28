@@ -134,6 +134,7 @@ def test_reviews_are_kept_with_their_consent_and_bounded(auth_client: Any, oil: 
         assert auth_client.patch(url, {"reviews": bad}, format="json").status_code == 400, bad
 
 
+@pytest.mark.usefixtures("all_templates")
 def test_the_proof_card_needs_a_review_given_with_consent(auth_client: Any, oil: Any) -> None:
     def fit() -> Any:
         rows = auth_client.get(f"{GALLERY}?product={oil.pk}").json()["templates"]
